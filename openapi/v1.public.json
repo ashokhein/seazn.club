@@ -17104,6 +17104,14 @@
                                 "z3+lns"
                               ]
                             },
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "build",
+                                "reflow",
+                                "polish"
+                              ]
+                            },
                             "status": {
                               "type": "string",
                               "enum": [
@@ -17137,6 +17145,11 @@
                               "maximum": 9007199254740991
                             },
                             "seeded": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "lost": {
                               "type": "integer",
                               "minimum": -9007199254740991,
                               "maximum": 9007199254740991
@@ -17202,6 +17215,7 @@
                     },
                     "solver": {
                       "engine": "greedy",
+                      "mode": "build",
                       "status": "ok",
                       "tiers_completed": -9007199254740991,
                       "tiers_total": -9007199254740991,

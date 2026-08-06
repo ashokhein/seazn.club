@@ -906,6 +906,24 @@ export type ScheduleMetrics = z.infer<typeof ScheduleMetrics>;
  *  engine's BuildStatus union one-for-one. */
 export const ScheduleSolverInfo = z.object({
   engine: z.enum(["greedy", "z3", "z3+lns"]),
+  /** Which solver the request asked for, echoed back.
+   *
+   *  NOT redundant with `engine`, which names what actually produced the board:
+   *  a REFLOW that timed out and a BUILD that expired before finishing its first
+   *  tier both come back `engine: "greedy"`, `budget_expired: true`,
+   *  `tiers_completed: 0`, `tiers_total: 4` — byte for byte the same payload,
+   *  describing two different events.
+   *
+   *  It matters because only the BUILD path has a tier ladder. `reflowExisting`
+   *  keeps `tiersCompleted` at 0 deliberately (reporting a number from a ladder
+   *  it never walked would make an optimality claim nothing proved) while
+   *  `tiers_total` stays the build ladder's size, so a reader with only those two
+   *  numbers renders "0 of 4 targets improved" about a run that was never on that
+   *  scale. This is the field that lets it say something true instead.
+   *
+   *  Optional and additive: absent, a reader keeps the tier sentence, which is
+   *  what it rendered before the field existed. */
+  mode: z.enum(["build", "reflow", "polish"]).optional(),
   status: z.enum([
     "ok",
     "already_optimal",
@@ -947,6 +965,26 @@ export const ScheduleSolverInfo = z.object({
    *  seed from a move. BUILD and POLISH re-place everything by definition, so
    *  the distinction does not arise and the field is absent. */
   seeded: z.number().int().optional(),
+  /** How many cards that HELD a slot on the organiser's board no longer have
+   *  one after this run (R21).
+   *
+   *  Its own field rather than folded into `moved`, because the two are
+   *  different events and only one of them is a rearrangement. Folded, a single
+   *  substitution — one card in, one card out — read as 2 moves on a board that
+   *  had only moved one thing, and `moved` could exceed the size of the board it
+   *  described. A strip printing "moved N" cannot honestly print an N larger
+   *  than the board.
+   *
+   *  Not derivable from `total - placed`, which counts every card with no slot
+   *  including ones that never had one. On a stage of 22 with 18 placed, four
+   *  cards are unplaced and only the ones the organiser had already scheduled
+   *  are a time somebody may have to be un-told about.
+   *
+   *  0 rather than absent whenever there is no baseline to lose from: the engine
+   *  measures it against `BuildInput.current`, and a BUILD that supplies none
+   *  reports 0 by definition. Optional on the wire only so a server one deploy
+   *  behind parses. */
+  lost: z.number().int().optional(),
   /** The PINNED fixtures an `infeasible` verdict is about, sorted.
    *
    *  `infeasible` has two sources and they say opposite things to an organiser.
