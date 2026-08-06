@@ -42,6 +42,9 @@
 //   # encoding size per tier, and per-check rlimit cost (Q8/Q9)
 //   node --experimental-strip-types packages/engine/scripts/bench-build.ts --probe=encode --sizes=200
 //
+//   # what R22's gate admits at two rest values — seconds, no z3, no child
+//   node --experimental-strip-types packages/engine/scripts/bench-build.ts --probe=gate
+//
 // Not collected by vitest: the suite's `include` is `src/**/*.test.ts` and
 // `test/**/*.test.ts`, and this file is neither. It costs minutes, so it must
 // stay out of the standard gate.
@@ -51,8 +54,10 @@ import {
   BUILD_MAIN_RLIMIT_SHARE,
   DEFAULT_BUILD_RLIMIT,
   DEFAULT_BUILD_WALL_MS,
+  MAX_SOLVE_ENCODING,
   buildSchedule,
   buildTiers,
+  canSolveWithin,
   type BuildResult,
 } from "../src/scheduling/build.ts";
 import { encodeBuild } from "../src/scheduling/build-encode.ts";
@@ -790,6 +795,59 @@ async function main(): Promise<void> {
   }
 
   // --- parent modes ---
+  if (probe === "gate") {
+    // R22's gate, asked of the SAME boards the knee sweep runs, at two rest
+    // values at once — which is the only way to read what the lattice step did
+    // to it. `hardRestMin` is the whole lever: 80 is two pitches and derives a
+    // 40-minute step, 45 derives `gcd(40, 0, 22, 45) = 1` floored to five, and
+    // the ~8x lattice that buys turns the SAME competition from one the solver
+    // is called on into one it is not.
+    //
+    // NO CHILD AND NO z3. `buildGrid` never boots the WASM and `canSolveWithin`
+    // only multiplies, so this mode is seconds and can be re-run beside a sweep
+    // without competing with it for the wall it is measuring.
+    const rests = nums("hard-rests", "80,45");
+    const gateWall = Number(arg("gate-wall", "8000"));
+    console.log(
+      `# canSolveWithin — wall ${gateWall} ms, gate ${MAX_SOLVE_ENCODING} fixture-slots, slack ${slack}\n`,
+    );
+    console.log(
+      `| n | per-entrant | ${rests.map((r) => `slots@${r} | n x slots@${r} | admitted@${r}`).join(" | ")} |`,
+    );
+    console.log(`|---|---|${rests.map(() => "---|---|---|").join("")}`);
+    let flipped = 0;
+    let rows = 0;
+    for (const n of nums("sizes", "10,20,40,60,80,120,140,160,200")) {
+      for (const pe of nums("per-entrant", "2,4")) {
+        const cells: string[] = [];
+        const verdicts: boolean[] = [];
+        for (const hardRestMin of rests) {
+          const b = benchBoard({
+            n,
+            perEntrant: pe,
+            slack,
+            hardRestMin,
+            dayCap,
+            offGridMin,
+            notAfterEntrants,
+          });
+          const slots = buildGrid({ config: b.config }).slots.length;
+          const admitted = canSolveWithin(b.fixtures, b.config, gateWall);
+          verdicts.push(admitted);
+          cells.push(String(slots), String(b.fixtures.length * slots), admitted ? "yes" : "NO");
+        }
+        rows++;
+        // The number the report owes: boards the gate USED to admit and now
+        // refuses, i.e. competitions on which z3 is no longer called at all.
+        if (verdicts[0] === true && verdicts[verdicts.length - 1] === false) flipped++;
+        console.log(`| ${n} | ${pe} | ${cells.join(" | ")} |`);
+      }
+    }
+    console.log(
+      `\nadmitted at ${rests[0]} but refused at ${rests[rests.length - 1]}: ${flipped} of ${rows} boards.`,
+    );
+    return;
+  }
   if (probe === "boot") {
     const out = spawnChild(["--probe=boot", "--child=1", `--reps=${arg("reps", "5")}`], 300_000);
     console.log(JSON.stringify(out, null, 2));
