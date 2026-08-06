@@ -118,7 +118,7 @@ describe.skipIf(!HAS_DB)("an Event Pass exempts its competition only while the p
   });
 
   const create = (name: string) =>
-    createCompetition(auth, { name: `${name} ${uniq()}`, visibility: "private", branding: {} });
+    createCompetition(auth, { ends_on: "2030-12-31", name: `${name} ${uniq()}`, visibility: "private", branding: {} });
 
   it("REGRESSION (#347): a pass on a LONG-ENDED live competition stops buying it out of the quota", async () => {
     await seedPlainActive(orgId, limit - 1);

@@ -87,6 +87,7 @@ const asRole = (orgId: string, userId: string | null, role: OrgRole | null): Aut
 /** Division rig: 4 entrants, generated + started league; returns 2 fixtures. */
 async function rig(owner: AuthCtx) {
   const competition = await createCompetition(owner, {
+    ends_on: "2030-12-31",
     name: "Cup " + randomUUID().slice(0, 6),
     visibility: "private",
     branding: {},

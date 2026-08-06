@@ -46,6 +46,9 @@ const compInput = (name: string) => ({
   name,
   visibility: "private" as const,
   branding: {},
+  // #376: mandatory at create. These tests are about SLUGS, so the date is
+  // only ever "still running" — nothing here reads the pass line.
+  ends_on: "2030-12-31",
 });
 
 const divInput = (name: string) => ({

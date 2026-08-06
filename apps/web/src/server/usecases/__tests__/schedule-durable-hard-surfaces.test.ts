@@ -134,6 +134,7 @@ describe.skipIf(!HAS_DB)("a durable constraints.hard rule on the board paths (#4
   it("binds on auto-schedule, the apply gate, the conflict report and the drag path", async () => {
     const auth = await seedProOrg();
     const competition = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Durable Rules",
       visibility: "public",
       branding: {},
@@ -306,6 +307,7 @@ describe.skipIf(!HAS_DB)("a durable constraints.hard rule on the board paths (#4
   it("reports nothing when the organiser stored no rule", async () => {
     const auth = await seedProOrg();
     const competition = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "No Rules",
       visibility: "public",
       branding: {},

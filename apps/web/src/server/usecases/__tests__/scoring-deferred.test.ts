@@ -78,6 +78,7 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
  *  branch. */
 async function discoverableFixtureRig(auth: AuthCtx): Promise<string> {
   const competition = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Deferred Cup " + randomUUID().slice(0, 6),
     visibility: "public",
     branding: {},

@@ -46,6 +46,7 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
 // two 7-a-side teams with numbered players
 async function seedDivision(auth: AuthCtx, visibility: "private" | "public" = "public") {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Stats Cup",
     visibility,
     branding: {},
@@ -215,6 +216,7 @@ describe.skipIf(!HAS_DB)("player statistics (Jul3/07)", () => {
       values ('generic', 'score', 'Score', ${sql.json(generic.variants.score as never)}, true)
       on conflict do nothing`;
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Generic Cup",
       visibility: "private",
       branding: {},

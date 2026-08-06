@@ -73,6 +73,7 @@ async function seedOrg(): Promise<AuthCtx> {
  *  zones disagree, which is the whole reason the two fields exist. */
 async function seedDivision(auth: AuthCtx): Promise<string> {
   const competition = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Wire Cup",
     visibility: "public",
     branding: {},

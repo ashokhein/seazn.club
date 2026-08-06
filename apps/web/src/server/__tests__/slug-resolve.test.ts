@@ -52,6 +52,7 @@ describe.skipIf(!HAS_DB)("slug-resolve (PROMPT-30)", () => {
   it("resolves a live org/comp/div chain and misses across parents", async () => {
     const { auth, orgSlug } = await seedOrg();
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Chain Cup",
       visibility: "private",
       branding: {},
@@ -80,6 +81,7 @@ describe.skipIf(!HAS_DB)("slug-resolve (PROMPT-30)", () => {
   it("answers renamedTo for a renamed competition slug", async () => {
     const { auth } = await seedOrg();
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Before Cup",
       visibility: "private",
       branding: {},
@@ -92,6 +94,7 @@ describe.skipIf(!HAS_DB)("slug-resolve (PROMPT-30)", () => {
   it("maps fixture ordinals per division", async () => {
     const { auth } = await seedOrg();
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Ordinal Cup",
       visibility: "private",
       branding: {},
@@ -127,6 +130,7 @@ describe.skipIf(!HAS_DB)("slug-resolve (PROMPT-30)", () => {
   it("breadcrumbNames maps slugs to display names", async () => {
     const { auth } = await seedOrg();
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Crumb Cup",
       visibility: "private",
       branding: {},

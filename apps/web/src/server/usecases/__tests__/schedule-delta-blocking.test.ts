@@ -53,6 +53,7 @@ interface Board {
 async function seedBoard(endAt?: string): Promise<Board> {
   const { auth } = await seedOrg("pro");
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Delta ${randomUUID().slice(0, 6)}`,
     visibility: "public",
     branding: {},

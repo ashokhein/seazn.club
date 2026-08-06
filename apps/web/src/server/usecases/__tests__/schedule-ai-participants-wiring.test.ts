@@ -93,6 +93,7 @@ async function seedRecursionClashBoard(): Promise<Board> {
   const { auth } = await seedOrg("pro");
   const tag = randomUUID().slice(0, 6);
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Wiring ${tag}`,
     visibility: "public",
     branding: {},

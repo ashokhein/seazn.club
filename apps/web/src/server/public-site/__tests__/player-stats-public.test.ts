@@ -60,6 +60,7 @@ async function seed() {
     keyId: null,
   };
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Ps Cup " + suffix,
     visibility: "public",
     branding: {},

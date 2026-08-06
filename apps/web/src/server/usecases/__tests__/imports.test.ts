@@ -41,6 +41,7 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
 
 async function seedDivision(auth: AuthCtx, slug = "u12") {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Import Cup",
     visibility: "private",
     branding: {},

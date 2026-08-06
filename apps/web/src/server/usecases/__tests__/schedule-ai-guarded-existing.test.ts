@@ -163,6 +163,7 @@ async function seedSiblingCollapseBoard(): Promise<{
   const { auth } = await seedOrg("pro");
   const tag = randomUUID().slice(0, 6);
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Sibling Collapse ${tag}`,
     visibility: "public",
     branding: {},
@@ -232,6 +233,7 @@ async function seedObstacleCollapseBoard(): Promise<{
   const { auth } = await seedOrg("pro");
   const tag = randomUUID().slice(0, 6);
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Obstacle Collapse ${tag}`,
     visibility: "public",
     branding: {},

@@ -63,6 +63,7 @@ describe.skipIf(!HAS_DB)("sponsors usecase", () => {
   it("pro: tiered + competition-scoped CRUD, reorder, tier-ranked list", async () => {
     const { auth } = await seedOrg("pro");
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Sponsor Cup",
       visibility: "public",
       branding: {},
@@ -114,6 +115,7 @@ describe.skipIf(!HAS_DB)("sponsors usecase", () => {
   it("resolveSponsors: table rows win over blob, scope + dedupe + rank", async () => {
     const { auth } = await seedOrg("pro");
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Resolve Cup",
       visibility: "public",
       branding: {},

@@ -51,6 +51,7 @@ async function seedCompWithDivision(): Promise<{
     keyId: null,
   };
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Cup ${randomUUID().slice(0, 6)}`,
     visibility: "private",
     branding: {},

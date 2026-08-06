@@ -63,6 +63,7 @@ const asOwner = (orgId: string, userId: string): AuthCtx => ({
 /** Public competition with a started division — passes the quality floor. */
 async function publicRig(owner: AuthCtx) {
   const competition = await createCompetition(owner, {
+    ends_on: "2030-12-31",
     name: "Showcase Cup " + randomUUID().slice(0, 6),
     visibility: "public",
     branding: {},
@@ -130,6 +131,7 @@ describe.skipIf(!HAS_DB)("public discovery (doc 15, PROMPT-19)", () => {
 
     // Public + discoverable at create → persisted and audited (opt_in).
     const created = await createCompetition(owner, {
+      ends_on: "2030-12-31",
       name: "Born Showcased " + randomUUID().slice(0, 6),
       visibility: "public",
       discoverable: true,
@@ -146,6 +148,7 @@ describe.skipIf(!HAS_DB)("public discovery (doc 15, PROMPT-19)", () => {
     // Same hard coupling as PATCH: non-public + discoverable → 422.
     await expect(
       createCompetition(owner, {
+        ends_on: "2030-12-31",
         name: "Private Sneak " + randomUUID().slice(0, 6),
         visibility: "private",
         discoverable: true,
@@ -156,6 +159,7 @@ describe.skipIf(!HAS_DB)("public discovery (doc 15, PROMPT-19)", () => {
     // Default stays off (unlisted — the org's one public-dashboard slot is
     // taken by the showcased competition above).
     const plain = await createCompetition(owner, {
+      ends_on: "2030-12-31",
       name: "Plain " + randomUUID().slice(0, 6),
       visibility: "unlisted",
       branding: {},
@@ -167,6 +171,7 @@ describe.skipIf(!HAS_DB)("public discovery (doc 15, PROMPT-19)", () => {
     const { orgId, ownerId } = await seedOrg();
     const owner = asOwner(orgId, ownerId);
     const competition = await createCompetition(owner, {
+      ends_on: "2030-12-31",
       name: "Private " + randomUUID().slice(0, 6), visibility: "private", branding: {},
     });
     await expect(
@@ -213,6 +218,7 @@ describe.skipIf(!HAS_DB)("public discovery (doc 15, PROMPT-19)", () => {
     const owner = asOwner(orgId, ownerId);
     // Public + discoverable but nothing published/decided: an empty shell.
     const shell = await createCompetition(owner, {
+      ends_on: "2030-12-31",
       name: "Shell " + randomUUID().slice(0, 6), visibility: "public", branding: {},
     });
     await patchCompetition(owner, shell.id, { discoverable: true });

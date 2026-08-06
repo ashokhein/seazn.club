@@ -150,6 +150,7 @@ async function seedJointRecursionBoard(): Promise<RecursionBoard> {
   const { auth } = await seedOrg("pro");
   const tag = randomUUID().slice(0, 6);
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Joint Wiring ${tag}`,
     visibility: "public",
     branding: {},
@@ -229,6 +230,7 @@ async function seedCrossDivisionSameNameBoard(): Promise<SameNameBoard> {
   const { auth } = await seedOrg("pro");
   const tag = randomUUID().slice(0, 6);
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Same Name ${tag}`,
     visibility: "public",
     branding: {},
@@ -286,6 +288,7 @@ async function seedMeasurementBoard(
   const { auth } = await seedOrg("pro");
   const tag = randomUUID().slice(0, 6);
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Measure ${tag}`,
     visibility: "public",
     branding: {},
@@ -486,6 +489,7 @@ describe.skipIf(!HAS_DB)("CompetitionPack.participants is wired into both joint 
     const { auth } = await seedOrg("pro");
     const tag = randomUUID().slice(0, 6);
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: `Twin Rows ${tag}`,
       visibility: "public",
       branding: {},

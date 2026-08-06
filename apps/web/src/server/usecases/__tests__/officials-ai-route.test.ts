@@ -124,6 +124,7 @@ async function seedOfficials(
   officialIds: string[];
 }> {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "AI Off",
     visibility: "public",
     branding: {},

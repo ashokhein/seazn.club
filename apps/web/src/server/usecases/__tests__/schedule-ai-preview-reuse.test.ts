@@ -189,6 +189,7 @@ async function seedPlusOrg(credits = 100): Promise<AuthCtx> {
 async function seedSingle(): Promise<{ auth: AuthCtx; division: SeededDivision }> {
   const auth = await seedPlusOrg();
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "W5 Reuse",
     visibility: "public",
     branding: {},
@@ -203,6 +204,7 @@ async function seedJoint(): Promise<{
 }> {
   const auth = await seedPlusOrg();
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "W5 Joint Reuse",
     visibility: "public",
     branding: {},
@@ -427,6 +429,7 @@ describe.skipIf(!HAS_DB)("the run reuses a confirmed compile (W5 #400, single di
   it("refuses a preview taken against a different division", async () => {
     const { auth } = await seedSingle();
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "W5 Scope",
       visibility: "public",
       branding: {},

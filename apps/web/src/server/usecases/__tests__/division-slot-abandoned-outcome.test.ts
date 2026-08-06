@@ -34,6 +34,7 @@ async function seedCommunityCompetition(): Promise<{ auth: AuthCtx; competitionI
     values (${auth.orgId}, 'divisions.per_competition.max', ${DIVISION_QUOTA}, 'abandoned-outcome probe')`;
   await invalidateOrgEntitlements(auth.orgId);
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Aband ${randomUUID().slice(0, 6)}`,
     visibility: "private",
     branding: {},

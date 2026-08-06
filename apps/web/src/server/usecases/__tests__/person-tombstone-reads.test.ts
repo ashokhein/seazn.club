@@ -33,6 +33,7 @@ async function seedPublicDivision(
   const [{ slug: orgSlug }] = await sql<{ slug: string }[]>`
     select slug from organizations where id = ${auth.orgId}`;
   const competition = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Tombstone Cup " + randomUUID().slice(0, 6),
     visibility: "public",
     branding: {},

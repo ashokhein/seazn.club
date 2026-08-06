@@ -43,6 +43,7 @@ async function seedOrgWithComp(): Promise<{
     keyId: null,
   };
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Cup ${uniq()}`,
     visibility: "private",
     branding: {},

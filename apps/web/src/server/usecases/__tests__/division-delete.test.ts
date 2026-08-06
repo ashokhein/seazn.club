@@ -54,6 +54,7 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
 
 async function seedDivision(auth: AuthCtx, name = "Open") {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Cup ${randomUUID().slice(0, 6)}`,
     visibility: "private",
     branding: {},
@@ -214,6 +215,7 @@ describe.skipIf(!HAS_DB)("division archive / restore (v3/09 §4)", () => {
       insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
       values (${auth.orgId}, 'divisions.per_competition.max', 1, 'test probe')`;
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: `Arch ${randomUUID().slice(0, 6)}`,
       visibility: "public",
       branding: {},

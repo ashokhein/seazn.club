@@ -55,6 +55,7 @@ describe.skipIf(!HAS_DB)("combined qualification round-trip (PROMPT-59)", () => 
   it("group → complete → combined-spec knockout generates with slotOrder honoured", async () => {
     const { auth } = await seedOrg();
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Cq Cup " + randomUUID().slice(0, 6),
       visibility: "private",
       branding: {},
