@@ -603,7 +603,8 @@ export function rejectedBlockingConflicts(
  * Three sources, in order of how well established they are, because a fabricated
  * reason is fed straight to the repair prompt:
  *
- *   1. greedy's own diagnosis, which names the binding constraint;
+ *   1. greedy's own diagnosis, which names the binding constraint — AND ONLY FOR
+ *      A CARD GREEDY DID NOT PLACE (see `greedyPlaced`);
  *   2. the blocking conflict that disqualified the row from the seed;
  *   3. only then a `no_slot` — and `proved` decides whether its detail claims a
  *      ceiling (T0 came back unsat) or admits the budget ran out.
@@ -622,6 +623,25 @@ export function conflictsFor(input: {
   dependencies: readonly OrderDependency[];
   /** `slotFixtures`' OWN conflicts for the raw greedy seed. */
   greedyConflicts: readonly Conflict[];
+  /**
+   * The fixtures the RAW greedy seed actually placed.
+   *
+   * Required, and required as its own field, because `greedyConflicts` cannot be
+   * read as "what greedy could not do". `slotFixtures` also files rows about
+   * cards it DID place — the `commit` person-overlap loop, and the clash it
+   * reports rather than fixes when a `locked` slot collides — and source 1
+   * short-circuits the two sources below it. So a card greedy placed and
+   * something later removed (the legalisation pass dropping it for a blocking
+   * conflict, or z3 dropping one while adding two, which `isStrictlyBetter`
+   * permits at equal `placed`) was handed a PLACED card's conflict and never got
+   * its own disqualifying row or a `no_slot`.
+   *
+   * The two sides of one collision then read differently: the card greedy
+   * committed first is told which fixture it double-booked with, the second only
+   * that "the locked slot clashes on C1", which names nobody — and that string
+   * is fed verbatim to the repair prompt.
+   */
+  greedyPlaced: ReadonlySet<string>;
   /** Seed rows dropped by the legalisation pass, and what disqualified them. */
   disqualified: ReadonlyMap<string, readonly Conflict[]>;
   /** Whether a proof backs an absence, or the budget merely ran out. */
@@ -632,7 +652,9 @@ export function conflictsFor(input: {
   const out: Conflict[] = validateAssignments(board, config, existing, dependencies);
   for (const f of fixtures) {
     if (onBoard.has(f.id)) continue;
-    const greedySaid = input.greedyConflicts.filter((c) => c.fixtureId === f.id);
+    const greedySaid = input.greedyPlaced.has(f.id)
+      ? []
+      : input.greedyConflicts.filter((c) => c.fixtureId === f.id);
     if (greedySaid.length > 0) {
       out.push(...greedySaid);
       continue;
@@ -820,6 +842,10 @@ function greedySeed(input: BuildInput): GreedySeed {
         existing,
         dependencies,
         greedyConflicts: rawSeed.conflicts,
+        // The RAW seed's rows, not the legalised ones: a card the legalisation
+        // dropped was still PLACED by greedy, and greedy's row about it is a
+        // statement about that placement rather than about its absence.
+        greedyPlaced: seedIds,
         disqualified,
         proved,
       }),
