@@ -380,6 +380,92 @@ describe("icehockey cascade — IIHF §220 hand-computed 3-team tie", () => {
   });
 });
 
+// #429 scope item 5 — IIHF Rule 87 / NHL Rule 84.4: the shoot-out winner is
+// credited ONE additional goal in the official score, so 2–2 won on the
+// shoot-out is recorded 3–2. It is derived at the score layer and never folded:
+// `state.goals`, `goalLog`, `kindCounts` and every per-person stat stay the
+// goals actually scored in play, because the same rules give shoot-out attempts
+// no player goals and no goals-against. A SPORT rule, not a kernel one — FIH
+// records the identical match as a draw plus a bonus point.
+describe("period kernel — the shoot-out winner's credited goal", () => {
+  const scorer = iceLineups.home.slots[1]!.personId;
+  // 2–2 through regulation and a scoreless OT, then away wins the shoot-out 3–0.
+  const gwsEvents: ModuleEvent[] = [
+    ...iceRegulation([iceGoal(IH, { person: scorer }), iceGoal(IA), iceGoal(IH), iceGoal(IA)]),
+    iceAdvance("FT"),
+    { type: "icehockey.shootout.attempt", payload: { by: IA, scored: true } },
+    { type: "icehockey.shootout.attempt", payload: { by: IH, scored: false } },
+    { type: "icehockey.shootout.attempt", payload: { by: IA, scored: true } },
+    { type: "icehockey.shootout.attempt", payload: { by: IH, scored: false } },
+    { type: "icehockey.shootout.attempt", payload: { by: IA, scored: true } },
+    { type: "icehockey.shootout.attempt", payload: { by: IH, scored: false } },
+  ];
+  const gws = (): PeriodState => foldIce(gwsEvents);
+  const iceDeltas = (state: PeriodState) =>
+    icehockey.standingsDelta(state.outcome!, state.cfg, { kind: "league" }, state);
+
+  it("ice: the official score is 2 — 3, and GF/GA/GD carry the credited goal", () => {
+    const state = gws();
+    expect(state.outcome).toEqual({ kind: "win", winner: IA, loser: IH, method: "shootout" });
+    expect(icehockey.summary(state).headline).toBe("2 — 3 (GWS 0–3)");
+    expect(icehockey.summary(state).perSide.map((s) => s.line)).toEqual(["2 (0)", "3 (3)"]);
+    const [h, a] = iceDeltas(state);
+    expect([h.metrics.gf, h.metrics.ga, h.metrics.gd]).toEqual([2, 3, -1]);
+    expect([a.metrics.gf, a.metrics.ga, a.metrics.gd]).toEqual([3, 2, 1]);
+    // The points ladder is untouched — the credited goal is a SCORE, not a result.
+    expect([h.points, a.points]).toEqual([1, 2]);
+  });
+
+  it("mints no goal: the fold, the goal log and the kind counts are unmoved", () => {
+    const state = gws();
+    // Nothing was added to the ledger, and nothing in the fold saw a goal.
+    expect(gwsEvents.filter((ev) => ev.type === "icehockey.goal")).toHaveLength(4);
+    expect(state.goals).toEqual({ home: 2, away: 2 });
+    expect(state.kindCounts).toEqual({ home: {}, away: {} });
+    expect(state.goalLog).toEqual([
+      { phase: "P1", by: "home", credited: "home", person: scorer },
+    ]);
+    // The credited goal exists ONLY in the derived score: away is 3 GF against
+    // 2 folded goals and not one entry in the goal log.
+    const [, a] = iceDeltas(state);
+    expect(a.metrics.gf).toBe(3);
+    expect(state.goals.away).toBe(2);
+    expect((state.goalLog ?? []).filter((entry) => entry.credited === "away")).toHaveLength(0);
+  });
+
+  it("per-person attribution is unchanged — no phantom scorer", () => {
+    const rows = aggregatePlayerStats(envelopes(gwsEvents), icehockey.playerStats!);
+    expect(rows.find((r) => r.personId === scorer)?.stats.goals).toBe(1);
+    expect(rows.reduce((sum, r) => sum + Number(r.stats.goals ?? 0), 0)).toBe(1);
+  });
+
+  it("FIH records the same match as a draw plus a bonus point — unchanged", () => {
+    const so: ModuleEvent[] = [
+      ...fihRegulation([fihGoal(FH), fihGoal(FA), fihGoal(FH), fihGoal(FA)]),
+      { type: "hockey.shootout.attempt", payload: { by: FA, scored: true } },
+      { type: "hockey.shootout.attempt", payload: { by: FH, scored: false } },
+      { type: "hockey.shootout.attempt", payload: { by: FA, scored: true } },
+      { type: "hockey.shootout.attempt", payload: { by: FH, scored: false } },
+      { type: "hockey.shootout.attempt", payload: { by: FA, scored: true } },
+      { type: "hockey.shootout.attempt", payload: { by: FH, scored: false } },
+    ];
+    const state = foldFih(so, "fih-shootout");
+    expect(state.outcome).toMatchObject({ kind: "win", winner: FA, method: "shootout" });
+    expect(hockey.summary(state).headline).toBe("2 — 2 (SO 0–3)");
+    expect(hockey.summary(state).perSide.map((s) => s.line)).toEqual(["2 (0)", "2 (3)"]);
+    const [h, a] = hockey.standingsDelta(state.outcome!, state.cfg, { kind: "league" }, state);
+    expect([h.metrics.gf, h.metrics.ga, h.metrics.gd]).toEqual([2, 2, 0]);
+    expect([a.metrics.gf, a.metrics.ga, a.metrics.gd]).toEqual([2, 2, 0]);
+    expect([h.points, a.points]).toEqual([1, 2]);
+  });
+
+  it("an UNDECIDED shoot-out credits nothing — the score moves only on the decision", () => {
+    const running = foldIce(gwsEvents.slice(0, -4));
+    expect(running.outcome).toBeNull();
+    expect(icehockey.summary(running).headline).toBe("2 — 2 (GWS 0–1)");
+  });
+});
+
 // Cross-sport invariants over generated streams — both hockeys, plus the
 // structurally different variants (rec ice = draws; FIH shootout).
 conformanceSuite(icehockey);
