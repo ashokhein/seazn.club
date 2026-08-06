@@ -100,13 +100,44 @@ export interface BenchBoardOptions {
   /** Matches each entrant plays. Higher is DENSER — more shared entrants, so
    *  more rest and person clauses per fixture. */
   perEntrant: number;
-  /** Lattice slots per fixture. 1.0 is a board with no room at all. */
+  /**
+   * Lattice slots per fixture. 1.0 is a board with no room at all.
+   *
+   * HELD ACROSS THE SWEEP, which it was not. `slotsPerCourtDay` is clamped at
+   * `SLOTS_PER_COURT_DAY` while `days` used to derive from the full-day
+   * `PER_DAY`, so `--slack=2` actually delivered 2.0 / 2.0 / 1.8 / 1.2 / 1.8 /
+   * 1.2 / 1.08 at n = 10…200: the R18 knee sweep varied board size and board
+   * TIGHTNESS together while reporting only size, and n=60 was materially
+   * tighter than the n=80 row beside it. `days` now derives from the same slot
+   * count `slack` asks for, and the REALISED ratio is reported per row so the
+   * residual granularity at small n is visible rather than assumed away.
+   */
   slack: number;
-  /** The typed `min_rest_minutes` rule, in minutes. Must exceed
-   *  `perEntrantMinRest` or the rule is inert and the board is #455 again. */
+  /**
+   * The typed `min_rest_minutes` rule, in minutes. Must exceed
+   * `perEntrantMinRest` or the rule is inert and the board is #455 again.
+   *
+   * KEEP IT A MULTIPLE OF TWICE `MATCH_MIN`. The lattice step is the gcd over
+   * every interval that can displace a start, rest included, so the old default
+   * of 45 (with its derived `perEntrantMinRest` of 22) gives `gcd(40, 0, 22,
+   * 45) = 1`, floored to five minutes — an EIGHT-fold lattice on a board whose
+   * header claims the step is the pitch. That is a property of the config, not a
+   * defect: a real competition with incommensurate rest really does get that
+   * lattice, and running `--hard-rest=45` to measure it is a legitimate use.
+   * The default just must not do it silently, so the derived step is printed in
+   * the run header.
+   */
   hardRestMin: number;
-  /** `max_fixtures_per_day` count, per division. `0` means "derive one that
-   *  binds at the margin": the even per-division per-day share, rounded up. */
+  /**
+   * `max_fixtures_per_day` count, per division. `0` means "derive one that binds
+   * at the margin": the even per-division per-day share, rounded up.
+   *
+   * THAT DERIVATION IS INERT ON A ONE-DAY BOARD, and it used to be one-day for
+   * every size up to 72: with a single day the even share IS the division's
+   * whole fixture count, so the cap is satisfied by construction and cannot
+   * bind — exactly the #455 shape the file header says this board exists to
+   * avoid, for the smaller half of the sweep. `days` is therefore floored at 2.
+   */
   dayCap: number;
   /**
    * Minutes past the session open to pin one entrant's earliest start, as a
@@ -159,6 +190,9 @@ export interface BenchBoard {
   /** One day's session length in ms — the horizon a tier bound is stated
    *  against. */
   sessionMs: number;
+  /** Lattice slots per fixture as BUILT, which is not always the `slack` that
+   *  was asked for. Reported per row; see `BenchBoardOptions.slack`. */
+  slackRealised: number;
 }
 
 const idOf = (f: number): string => `f${String(f).padStart(4, "0")}`;
@@ -171,12 +205,28 @@ export function benchBoard(opts: BenchBoardOptions): BenchBoard {
   // same 72 slots a 70-fixture one does — `slack` then does nothing below day
   // granularity and every small board is measured at slack 7, which is not a
   // shape any organiser runs and not one greedy can fail on.
-  const days = Math.max(1, Math.ceil(n / PER_DAY));
+  //
+  // BOTH DIMENSIONS COME OFF THE SAME NUMBER, and that is the fix. `days` used
+  // to derive from the full-day `PER_DAY` while `slotsPerCourtDay` was clamped
+  // at `SLOTS_PER_COURT_DAY`, so the two disagreed about how big a day is and
+  // the realised slack collapsed as n grew (2.0 at 10, 1.08 at 200). Deriving
+  // the day count from the slot count `slack` actually asks for keeps the ratio
+  // flat, which is what makes a size sweep a size sweep.
+  //
+  // FLOORED AT TWO DAYS so the per-division `max_fixtures_per_day` can bind at
+  // all: on one day the even per-division share IS that division's whole
+  // fixture count. See `BenchBoardOptions.dayCap`.
+  const slotsWanted = Math.max(1, Math.ceil(n * slack));
+  const days = Math.max(2, Math.ceil(slotsWanted / PER_DAY));
   const slotsPerCourtDay = Math.max(
     1,
-    Math.min(SLOTS_PER_COURT_DAY, Math.ceil((n * slack) / (COURTS.length * days))),
+    Math.min(SLOTS_PER_COURT_DAY, Math.ceil(slotsWanted / (COURTS.length * days))),
   );
   const sessionMs = slotsPerCourtDay * MATCH_MIN * MIN;
+  /** What the board ACTUALLY delivers, against the `slack` that was asked for.
+   *  Rounding up at both stages overshoots at small n (2.4 at n=10), and a
+   *  sweep that reports only the requested ratio hides it. */
+  const slackRealised = (COURTS.length * days * slotsPerCourtDay) / Math.max(1, n);
   // Two entrants a fixture, so `2n` entrant-slots to hand out. A pool of
   // `2n / perEntrant` gives every entrant exactly `perEntrant` matches.
   const pool = Math.max(4, Math.ceil((2 * n) / perEntrant));
@@ -242,6 +292,10 @@ export function benchBoard(opts: BenchBoardOptions): BenchBoard {
     // Half the typed rule, so `min_rest_minutes` always RAISES the bound the
     // verifier uses rather than restating it. Equal values make the rule inert
     // and the board is #455 again.
+    //
+    // The DEFAULT `hardRestMin` is two pitches for a reason — see the field's
+    // doc. Halving an odd number here is what put a 22 next to a 45 and a 40 and
+    // collapsed the lattice step to one minute.
     perEntrantMinRest: Math.max(1, Math.floor(hardRestMin / 2)),
     blackouts: [],
     sessionWindows,
@@ -267,13 +321,19 @@ export function benchBoard(opts: BenchBoardOptions): BenchBoard {
       fieldFairness: "off",
       parallelism: "mixed",
       crossPersonClash: "warn",
-      hard,
+      // NO `hard` HERE. `effectiveHard` is `[...compiled, ...stored]` whenever
+      // both are non-empty, and this used to be the SAME ARRAY as the top-level
+      // `hard` below — so every typed rule was registered twice and the encoder
+      // emitted each per-division cap clause twice. Q8's `encodeAssertions` and
+      // `tierSetupAssertions`, and Q9's per-check `spent`, were all measured
+      // against a rule set of twice the production size. One channel, and the
+      // compiled one, because that is where an organiser's instruction arrives.
     },
     ruleFixtures,
     hard,
   };
 
-  return { fixtures, config, days, pool, dayCap, sessionMs };
+  return { fixtures, config, days, pool, dayCap, sessionMs, slackRealised };
 }
 
 // --- one case ----------------------------------------------------------------
@@ -287,6 +347,13 @@ interface CaseRow {
   pool: number;
   dayCap: number;
   slots: number;
+  /** Lattice slots per fixture as BUILT. The R18 knee sweep varies board size;
+   *  this is the column that says whether it varied anything else. */
+  slackRealised: number;
+  /** The lattice step in minutes, which is the gcd over match, gap and every
+   *  rest — printed because an incommensurate rest silently multiplies the
+   *  lattice, and the slot count alone does not say why. */
+  stepMinutes: number;
   overCap: boolean;
   rlimit: number;
   wallMs: number;
@@ -376,6 +443,8 @@ async function runCase(opts: {
     pool: board.pool,
     dayCap: board.dayCap,
     slots: grid.slots.length,
+    slackRealised: board.slackRealised,
+    stepMinutes: grid.stepMinutes,
     overCap: grid.overCap,
     rlimit: opts.rlimit,
     wallMs: opts.wallMs,
@@ -636,7 +705,15 @@ const f1 = (x: number): string => x.toFixed(1);
  *  declines a check (the rlimit run total is gone) and when `elapsed() >=
  *  wallMs` (the backstop fired). The two are told apart by comparing what the
  *  run drew against what each cap allowed — the MAIN phase's share for the
- *  rlimit, `wallMs` for the clock. */
+ *  rlimit, `wallMs` for the clock.
+ *
+ *  ONLY MEANINGFUL NEAR THE 30M DEFAULT. Below roughly 38 000 rlimit the two
+ *  caps cannot be separated at all: an ABORTED check costs about 28 500 units
+ *  whatever limit it was handed, so `rlimitSpent >= phaseCap` is satisfied by
+ *  the abort itself and every small-rlimit row reads `rlimit` or `both` however
+ *  the run actually ended. A `--rlimit` under ~38 000 is a lever for reaching
+ *  the fallback, not a measurement of which cap binds; read this column at the
+ *  default and nowhere else. */
 function whichBound(row: CaseRow): string {
   if (!row.expired) return "neither";
   const phaseCap = Math.max(1, Math.floor(row.rlimit * BUILD_MAIN_RLIMIT_SHARE));
@@ -661,7 +738,12 @@ function improvement(row: CaseRow): string {
 
 async function main(): Promise<void> {
   const slack = Number(arg("slack", "2"));
-  const hardRestMin = Number(arg("hard-rest", "45"));
+  // Two pitches, and the derived `perEntrantMinRest` is then one. Both divide
+  // `MATCH_MIN`, so the lattice step stays the pitch and the slot count stays
+  // the ~`slack x n` this file's header claims. The old default of 45 gave
+  // `gcd(40, 0, 22, 45) = 1`, floored to a five-minute step — an eight-fold
+  // lattice, measured by nothing and reported by no column.
+  const hardRestMin = Number(arg("hard-rest", "80"));
   const dayCap = Number(arg("day-cap", "0"));
   const offGridMin = Number(arg("off-grid", "0"));
   const notAfterEntrants = Number(arg("not-after", "0"));
@@ -748,9 +830,9 @@ async function main(): Promise<void> {
     `# build bench — rlimit ${rlimit}, wall ${wallMs} ms, slack ${slack}, hard rest ${hardRestMin} min, off-grid ${offGridMin} min, not-after ${notAfterEntrants} entrant(s), ${repeats} repeat(s), one child process per run\n`,
   );
   console.log(
-    "| n | per-entrant | rep | slots | days | cap | greedy placed | z3 placed | engine | status | tiers | expired | bound | improved | moved | lost | rlimit spent | elapsed ms | LNS windows |",
+    "| n | per-entrant | rep | slots | step | slack | days | cap | greedy placed | z3 placed | engine | status | tiers | expired | bound | improved | moved | lost | rlimit spent | elapsed ms | LNS windows |",
   );
-  console.log("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+  console.log("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
 
   let aborts = 0;
   let runs = 0;
@@ -777,14 +859,14 @@ async function main(): Promise<void> {
           aborts++;
           const a = out as Abort;
           console.log(
-            `| ${n} | ${pe} | ${rep} | — | — | — | — | — | **${a.kind}** (signal ${a.signal ?? "-"}, code ${a.code ?? "-"}) | — | — | — | — | — | — | — | — | — |`,
+            `| ${n} | ${pe} | ${rep} | — | — | — | — | — | — | — | **${a.kind}** (signal ${a.signal ?? "-"}, code ${a.code ?? "-"}) | — | — | — | — | — | — | — | — | — |`,
           );
           console.log(`<!-- ${a.tail} -->`);
           continue;
         }
         const row = out as CaseRow;
         console.log(
-          `| ${row.n} | ${row.perEntrant} | ${row.rep} | ${row.slots} | ${row.days} | ${row.dayCap} | ${row.g.placed}/${row.g.total} | ${row.z.placed}/${row.z.total} | ${row.engine} | ${row.status} | ${row.tiers} | ${row.expired} | ${whichBound(row)} | ${improvement(row)} | ${row.moved} | ${row.lost} | ${row.rlimitSpent} | ${f0(row.elapsedMs)} | ${row.lnsWindowRlimits.length === 0 ? "—" : row.lnsWindowRlimits.join("/")} |`,
+          `| ${row.n} | ${row.perEntrant} | ${row.rep} | ${row.slots} | ${row.stepMinutes} | ${f1(row.slackRealised)} | ${row.days} | ${row.dayCap} | ${row.g.placed}/${row.g.total} | ${row.z.placed}/${row.z.total} | ${row.engine} | ${row.status} | ${row.tiers} | ${row.expired} | ${whichBound(row)} | ${improvement(row)} | ${row.moved} | ${row.lost} | ${row.rlimitSpent} | ${f0(row.elapsedMs)} | ${row.lnsWindowRlimits.length === 0 ? "—" : row.lnsWindowRlimits.join("/")} |`,
         );
         console.log(
           `<!-- n=${row.n} pe=${row.perEntrant} rep=${row.rep} pool=${row.pool} greedy(mk=${f1(row.g.makespan)},idle=${f1(row.g.idle)},imb=${f1(row.g.imbalance)},ms=${f0(row.gElapsedMs)},rl=${row.gRlimitSpent},engine=${row.gEngine}) z3(mk=${f1(row.z.makespan)},idle=${f1(row.z.idle)},imb=${f1(row.z.imbalance)}) rss=${f0(row.rssPeakMB)}MB overCap=${row.overCap} -->`,
