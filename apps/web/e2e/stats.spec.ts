@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { seedScoredDivision } from "./helpers";
+import { seedScoredDivision, divisionPath } from "./helpers";
 
 // PROMPT-27 player stats: the leaderboard tab renders one of its settled
 // states. seedScoredDivision scores at result level, and W4 gave the generic
@@ -17,7 +17,7 @@ test("stats tab renders the requires-detailed notice for result-level scoring", 
 }) => {
   const { divisionId } = await seedScoredDivision(request);
 
-  await page.goto(`/divisions/${divisionId}?tab=stats`);
+  await page.goto(await divisionPath(page.request, divisionId, "?tab=stats"));
   await expect(page.getByTestId("stats-requires-detailed")).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId("stats-board")).toHaveCount(0);
 });

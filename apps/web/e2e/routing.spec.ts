@@ -1,20 +1,24 @@
 // PROMPT-30 acceptance (v3/01): slug URLs are the source of truth.
 // - login lands on /o/[orgSlug]
-// - legacy /divisions/[id] 301s to the slug chain
 // - two tabs on two orgs don't corrupt each other (URL beats cookie)
 // - breadcrumbs link every level; the back button reaches the parent
 // - a renamed competition's old slug keeps redirecting
 //
+// The "legacy /divisions/[id] 301s to the slug chain" case went with the route
+// it tested (deleted 2026-08-06). It is not replaced by a 404 probe: that would
+// pin a URL we have deliberately stopped serving. Slug REDIRECTS are a separate
+// mechanism (`slug_history`) and are still covered, two tests down.
+//
 // Magic-link budget (rate limit 5/5min/IP): this file mints ONE new user —
 // the fresh-login + two-tab checks share it.
 import { test, expect } from "@playwright/test";
-import { apiJson, loginUi, activeOrg, seedScoredDivision, setOrgPlanBySql } from "./helpers";
-
-test("legacy division id URL 301s to the slug chain and keeps ?tab=", async ({ page }) => {
-  const { divisionId } = await seedScoredDivision(page.request, ["A", "B"], { decide: false });
-  await page.goto(`/divisions/${divisionId}?tab=fixtures`);
-  await page.waitForURL(/\/o\/[^/]+\/c\/[^/]+\/d\/[^/?]+\?tab=fixtures/, { timeout: 20_000 });
-});
+import {
+  apiJson,
+  loginUi,
+  activeOrg,
+  seedScoredDivision,
+  setOrgPlanBySql,
+} from "./helpers";
 
 test("breadcrumbs link each level and the back button targets the parent", async ({ page }) => {
   const { divisionId, competitionId } = await seedScoredDivision(page.request, ["A", "B"], {

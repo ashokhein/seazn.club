@@ -330,3 +330,165 @@ describe("_hook-harness walk (the tree every assertion reads)", () => {
     expect(tree.map((el) => el.type)).toEqual(["div", "span", "p", "em"]);
   });
 });
+
+describe("_hook-harness render-phase updates (the 'derive from props' pattern)", () => {
+  // React sanctions `setX(...)` from inside the component body as the way to
+  // adjust state when a prop changes, and this repo relies on it — the board's
+  // day tab re-derives that way, `useBoardActions` clears its optimistic
+  // overrides that way. React does not RE-ENTER for it: it throws the
+  // half-finished pass away and runs the body again from the top.
+  //
+  // The harness used to call `run()` re-entrantly, which reset the hook cursors
+  // underneath the render still executing. Every hook read AFTER the set landed
+  // on the wrong cell, and the component rendered garbage with no error at all —
+  // `useState<Density>("board")` came back as none of its three legal values.
+  it("re-runs from the top instead of re-entering, so later hooks keep their cells", () => {
+    const seen: { colour: string; label: string }[] = [];
+
+    function Island({ tag }: { tag: string }) {
+      const [seenTag, setSeenTag] = useState(tag);
+      const [colour, setColour] = useState("red");
+      // Two hooks AFTER the adjustment: a re-entrant re-render shifts both onto
+      // the wrong cells, so their values are what discriminates.
+      const [label] = useState("hello");
+      const box = useRef("box");
+      if (seenTag !== tag) {
+        setSeenTag(tag);
+        setColour("blue");
+      }
+      seen.push({ colour, label });
+      return (
+        <button type="button" data-box={box.current}>
+          {`${colour}/${label}`}
+        </button>
+      );
+    }
+
+    const island = renderIsland(Island, { tag: "a" });
+    expect(island.text()).toContain("red/hello");
+    expect(seen).toHaveLength(1);
+
+    island.rerender({ tag: "b" });
+
+    // The adjusted value renders in the SAME commit — no intermediate output is
+    // observable, exactly as in React.
+    expect(island.text()).toContain("blue/hello");
+    // …and the hooks below the adjustment still hold their own values, which is
+    // the thing re-entrancy destroyed.
+    const button = island.tree().find((el) => el.type === "button")!;
+    expect(propsOf(button)["data-box"]).toBe("box");
+    // Two passes for the second render (the discarded one, then the survivor)
+    // and neither of them corrupted: `label` is "hello" every time.
+    expect(seen.map((s) => s.label)).toEqual(["hello", "hello", "hello"]);
+    expect(seen.map((s) => s.colour)).toEqual(["red", "red", "blue"]);
+  });
+
+  it("runs an effect whose deps changed on the pass that was thrown away", () => {
+    // The bookkeeping half. A discarded pass must not record its dependency
+    // array: if it does, the surviving pass compares against ITSELF, reads
+    // "unchanged", and the effect never runs at all.
+    const ran: string[] = [];
+
+    function Island({ tag }: { tag: string }) {
+      const [seenTag, setSeenTag] = useState(tag);
+      if (seenTag !== tag) setSeenTag(tag);
+      useEffect(() => {
+        ran.push(tag);
+      }, [tag]);
+      return <button type="button">{tag}</button>;
+    }
+
+    const island = renderIsland(Island, { tag: "a" });
+    expect(ran).toEqual(["a"]);
+
+    island.rerender({ tag: "b" });
+    expect(ran).toEqual(["a", "b"]);
+  });
+
+  /**
+   * The CACHE half of the same bookkeeping, and the one that survived the first
+   * fix. `useState`/`useReducer` writes made during a discarded pass MUST stand
+   * — React queues render-phase updates and applies them, which is the whole
+   * mechanism (the test above pins it: `colour` really does become "blue").
+   * `useMemo`/`useCallback` are the opposite: on the re-run React compares
+   * against the LAST COMMITTED render's deps, not against the pass it threw
+   * away. So a memo whose deps moved since the commit but not between the two
+   * passes recomputes in React and did NOT here — the harness handed back a
+   * value computed before the adjustment, closing over pre-adjustment state.
+   *
+   * Deps naming the prop but not the adjusted state is exactly the shape that
+   * makes this observable, and exactly what production writes when a value is
+   * "derived once per prop change".
+   */
+  it("re-derives a memo whose deps moved since the COMMIT, not since the last pass", () => {
+    const computed: string[] = [];
+
+    function Island({ tag }: { tag: string }) {
+      const [seenTag, setSeenTag] = useState(tag);
+      const [colour, setColour] = useState("red");
+      if (seenTag !== tag) {
+        setSeenTag(tag);
+        setColour("blue");
+      }
+      // The omitted `colour` IS the mechanism: with it in the deps the array
+      // moves between the two passes and the memo recomputes for that reason
+      // instead, so "fixing" this lint warning deletes the test.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const badge = useMemo(() => `${tag}-${colour}`, [tag]);
+      computed.push(badge);
+      return <button type="button">{badge}</button>;
+    }
+
+    const island = renderIsland(Island, { tag: "a" });
+    expect(island.text()).toContain("a-red");
+
+    island.rerender({ tag: "b" });
+
+    // The discarded pass computed "b-red" — `colour` was still the pre-
+    // adjustment value when that pass ran. Keeping it made the surviving pass
+    // read a cache entry from a render that never happened.
+    expect(island.text()).toContain("b-blue");
+    expect(computed[computed.length - 1]).toBe("b-blue");
+  });
+
+  it("re-derives a callback the same way, so it cannot close over pre-adjustment state", () => {
+    // Same rule, other cell list. A stale callback is worse than a stale memo:
+    // nothing renders it, so it is invisible until it fires.
+    const fired: string[] = [];
+
+    function Island({ tag }: { tag: string }) {
+      const [seenTag, setSeenTag] = useState(tag);
+      const [colour, setColour] = useState("red");
+      if (seenTag !== tag) {
+        setSeenTag(tag);
+        setColour("blue");
+      }
+      // Omitted deliberately — see the memo case above.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const onPick = useCallback(() => fired.push(`${tag}-${colour}`), [tag]);
+      return (
+        <button type="button" onClick={onPick}>
+          {colour}
+        </button>
+      );
+    }
+
+    const island = renderIsland(Island, { tag: "a" });
+    clickButton(island.tree());
+    expect(fired).toEqual(["a-red"]);
+
+    island.rerender({ tag: "b" });
+    clickButton(island.tree());
+    expect(fired).toEqual(["a-red", "b-blue"]);
+  });
+
+  it("fails loudly rather than hanging when an adjustment never converges", () => {
+    function Island() {
+      const [n, setN] = useState(0);
+      setN(n + 1);
+      return <button type="button">{String(n)}</button>;
+    }
+
+    expect(() => renderIsland(Island, {})).toThrow(/Too many re-renders/);
+  });
+});

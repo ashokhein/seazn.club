@@ -2357,18 +2357,24 @@ async function planForCompetition(
   const requested = [...new Set(input.division_ids)];
   if (requested.length < 2) throw singleDivision();
 
+  // A competition frozen by competitions.max_active (a downgrade left more
+  // active competitions than the plan allows) is read-only: applySchedule
+  // refuses with a 402 (schedule.ts:496). Exactly the argument the
+  // schedule_locked 409 below makes — planning one spends credits and tokens
+  // on a proposal the organiser is then blocked from applying — except a
+  // joint run's charge is N times larger, so it is checked here rather than
+  // inherited from the single-division path, which does not check it.
+  //
+  // OUTSIDE the transaction: the freeze lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. An unknown competition is never a
+  // member of the frozen set, so the entity's own 404 still fires first.
+  await assertCompetitionNotFrozen(auth.orgId, competitionId);
+
   const rows = await withTenant(auth.orgId, async (tx) => {
     const [comp] = await tx<{ id: string }[]>`
       select id from competitions where id = ${competitionId}`;
     if (!comp) throw new HttpError(404, "competition not found");
-    // A competition frozen by competitions.max_active (a downgrade left more
-    // active competitions than the plan allows) is read-only: applySchedule
-    // refuses with a 402 (schedule.ts:496). Exactly the argument the
-    // schedule_locked 409 below makes — planning one spends credits and tokens
-    // on a proposal the organiser is then blocked from applying — except a
-    // joint run's charge is N times larger, so it is checked here rather than
-    // inherited from the single-division path, which does not check it.
-    await assertCompetitionNotFrozen(auth.orgId, competitionId, tx);
     // One query for every per-division gate below — locked state, slot config
     // and the movable count that decides the R6 drop. The count is un-scoped
     // `status = MOVABLE_STATUS`, which is exactly what the joint builder plans

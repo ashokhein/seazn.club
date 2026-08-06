@@ -1,0 +1,284 @@
+"use client";
+
+// Result strip (z3 auto-schedule, Task 11) — what the solver actually achieved,
+// stated plainly, directly under the green "Placed N matches" notice.
+//
+// WHY IT EXISTS. The solver is *anytime*: it returns the best board it found
+// inside a time budget, which may be neither optimal nor complete. Every number
+// it reports is therefore a claim that has to be qualified, and the strip is
+// where that qualification lives. A strip showing only the happy numbers would
+// be worse than no strip, because it implies a completeness the run did not
+// deliver. Three rules follow from that, and they are what the tests pin:
+//
+//   1. `placed` vs `total` is stated whenever they differ. The green notice
+//      above says how many landed; only this line says how many did not.
+//   2. `budget_expired` is never swallowed. "Improved 2 of 4 targets and then
+//      stopped" is the honest reading of a truncated anytime run.
+//   3. `infeasible` is a proof about the PINNED cards, not about the board.
+//      Measured on the engine lane: 20 clean fixtures + 2 contradictory pins
+//      returns 20 placed with exactly those 2 dropped. Rendering that as "no
+//      schedule is possible" would be false and unactionable, so the copy names
+//      the placement split and the pins and nothing else.
+//
+// DESIGN. Deliberately never green: the emerald notice directly above already
+// carries the good news, and the strip's whole job is the part that line does
+// not say. Two tones only — neutral slate when there is nothing to flag, amber
+// when there is. The metrics sit in a hairline grid (gap-px over a tinted
+// container) that reflows 4 -> 2 columns at mobile without ever overflowing the
+// page, and a plain-language legend under it explains the two labels that are
+// jargon, so the explanation survives on touch where a tooltip would not.
+import { useMsg, usePlural } from "@/components/i18n/dict-provider";
+import type { ScheduleMetrics, ScheduleSolverInfo } from "@/server/api-v1/schemas";
+
+const ENGINE_KEY = {
+  greedy: "board.result.engine.greedy",
+  z3: "board.result.engine.z3",
+  "z3+lns": "board.result.engine.z3lns",
+} as const;
+
+/** Status -> the one sentence that says what the solver did. `ok` splits on the
+ *  engine: a greedy `ok` means the quick pass produced the board and nothing was
+ *  optimised, which is a different statement from an optimised `ok`. */
+function statusKey(solver: ScheduleSolverInfo) {
+  switch (solver.status) {
+    case "ok":
+      return solver.engine === "greedy" ? "board.result.quick" : "board.result.ok";
+    case "already_optimal":
+      return "board.result.alreadyOptimal";
+    case "solver_busy":
+      return "board.result.busy";
+    case "z3_unavailable":
+      return "board.result.unavailable";
+    case "verifier_rejected":
+      return "board.result.verifierRejected";
+    case "infeasible":
+      return "board.result.infeasibleAllPlaced";
+    // The solver could not put this board on its lattice, so it never searched
+    // it. Its own sentence rather than a fallback onto `quick`: "scheduled
+    // quickly, without the optimiser" is true of the how and silent on the WHY,
+    // and the why is the only part the organiser can do anything about.
+    case "not_searched":
+      return "board.result.notSearched";
+  }
+}
+
+export function ScheduleResultStrip({
+  metrics,
+  solver,
+  pinnedConflictCount,
+}: {
+  metrics: ScheduleMetrics;
+  solver: ScheduleSolverInfo;
+  /** An explicit override for the pin count. Rarely needed now: Task 9 put
+   *  `solver.contradictory_pins` on the wire and it is preferred over this. Kept
+   *  because a caller that knows better than the payload should be able to say
+   *  so, and removing a prop is not this component's problem to solve. */
+  pinnedConflictCount?: number;
+}) {
+  const msg = useMsg();
+  const plural = usePlural();
+
+  const dur = (mins: number): string => {
+    const m = Math.max(0, Math.round(mins));
+    const h = Math.floor(m / 60);
+    return h > 0 ? msg("board.result.dur.hm", { h, m: m % 60 }) : msg("board.result.dur.m", { m });
+  };
+  const elapsed =
+    solver.elapsed_ms >= 1000
+      ? msg("board.result.dur.s", { s: (solver.elapsed_ms / 1000).toFixed(1) })
+      : msg("board.result.dur.ms", { ms: Math.round(solver.elapsed_ms) });
+
+  const dropped = Math.max(0, metrics.total - metrics.placed);
+  const partial = dropped > 0;
+  /**
+   * How many PINNED cards the infeasibility proof is about.
+   *
+   * THREE sources, in descending order of how much they actually know:
+   *
+   *   1. `solver.contradictory_pins` — the engine naming the pinned set its
+   *      proof is about. The only one of the three that is a fact.
+   *   2. an explicit prop, for a caller that knows better than the payload.
+   *   3. `total - placed`, the fallback from before the field existed. It is
+   *      right only when every unplaced card is a pinned one, and silently
+   *      overstates the moment that stops holding — a board that also lost two
+   *      cards to a full court reports four contradictory pins where there are
+   *      two. Kept because a server one deploy behind sends no pins at all, and
+   *      a wrong count reads better than a blank sentence.
+   */
+  const pinCount = solver.contradictory_pins?.length ?? pinnedConflictCount ?? dropped;
+
+  /**
+   * "12 matches moved" or "12 matches scheduled".
+   *
+   * A card that was never on the timetable cannot be MOVED, and a re-flow over
+   * an unscheduled stage places the whole board — so the plain churn sentence is
+   * wrong about every card in exactly the case an organiser is most likely to
+   * meet. `solver.seeded` is how many of `moved` were first-time placements.
+   *
+   * The choice lives here and the DATA comes off the wire, deliberately.
+   * Deriving "was this seeded" locally would mean testing `moved === placed`,
+   * which is true on plenty of ordinary re-flows that seeded nothing, and would
+   * relabel them.
+   *
+   * The mixed run — some seeded, some relocated — keeps the "moved" wording:
+   * it is the sentence that is true of the set as a whole, and inventing a third
+   * string for a rare case is worse copy than a slightly loose one.
+   */
+  const churn =
+    solver.moved === 0
+      ? msg("board.result.movedNone")
+      : solver.seeded === solver.moved
+        ? plural("board.result.placed", solver.moved)
+        : plural("board.result.moved", solver.moved);
+  /**
+   * Cards that HELD a slot on the organiser's board and no longer have one.
+   *
+   * A different fact from `dropped`, and deliberately not derived from it: a
+   * card that was never on the timetable cannot lose a slot, so on a stage of 22
+   * with 18 placed the four unplaced cards may include two that nobody was ever
+   * told a time for. Only the ones counted here are a time somebody may have to
+   * be un-told about, which is the whole reason R21 split `lost` out of `moved`
+   * in the engine — re-deriving it here would fold them straight back together.
+   *
+   * Absent means "the run had no baseline to lose from" (a BUILD supplies no
+   * `current`) or "the server predates the field". Neither is a proof that
+   * nothing was lost, so both stay silent rather than claiming zero.
+   */
+  const lost = solver.lost ?? 0;
+  // Amber is reserved for "there is something here you need to know about your
+  // board". `verifier_rejected` deliberately does NOT qualify: it is an internal
+  // fault the organiser cannot act on, their board is valid either way, and the
+  // loud part of that failure belongs in our logs, not on their screen.
+  // `solver_busy` and `z3_unavailable` are likewise ordinary, not alarming.
+  //
+  // `infeasible` DOES qualify even when nothing was dropped: the numbers are
+  // fine, but a card the organiser pinned has been moved off the time they
+  // pinned it to, and they may already have told somebody about it.
+  //
+  // `not_searched` ALSO qualifies, and the split from the two statuses named
+  // above is the whole judgement. `solver_busy` and `z3_unavailable` are
+  // transient and outside the organiser's hands — the same click a minute later
+  // can return an optimised board, so a plain band plus "try again" is the
+  // complete and honest answer. `not_searched` is neither transient nor ours:
+  // the run could not put this board on its lattice because of the durations
+  // the organiser configured, re-running reproduces it exactly, and no amount
+  // of waiting turns it into an optimised board. It is the one status here
+  // where something has to CHANGE, and a change to their settings is a thing
+  // they need to know about their board.
+  //
+  // `lost` is NOT a third term here, and its absence is deliberate rather than
+  // an oversight: a lost card is by construction a card with no slot, so
+  // `placed < total` and `partial` is already true. A term that cannot change
+  // the answer would read as a guard and be tested as one.
+  const flagged = partial || solver.status === "infeasible" || solver.status === "not_searched";
+
+  // The headline is the single most honest thing we can say. An incomplete board
+  // outranks the status sentence for that slot; a complete one lets the status
+  // speak for itself.
+  const headline = partial
+    ? solver.status === "infeasible"
+      ? plural("board.result.partialPinned", pinCount, {
+          placed: metrics.placed,
+          total: metrics.total,
+        })
+      : plural("board.result.partial", dropped, { placed: metrics.placed, total: metrics.total })
+    : msg(statusKey(solver));
+  // `infeasible` already spent its sentence on the headline — repeating it would
+  // say the same thing twice in two different registers.
+  const secondary = partial && solver.status !== "infeasible" ? msg(statusKey(solver)) : null;
+
+  const cells: { label: string; value: string; alert?: boolean }[] = [
+    { label: msg("board.result.metric.length"), value: dur(metrics.makespan_minutes) },
+    { label: msg("board.result.metric.longestGap"), value: dur(metrics.worst_idle_gap_minutes) },
+    { label: msg("board.result.metric.courtSpread"), value: dur(metrics.court_imbalance_minutes) },
+    {
+      label: msg("board.result.metric.scheduled"),
+      value: `${metrics.placed} / ${metrics.total}`,
+      alert: partial,
+    },
+  ];
+
+  return (
+    <section
+      data-testid="schedule-result-strip"
+      data-tone={flagged ? "flag" : "plain"}
+      data-status={solver.status}
+      aria-label={msg("board.result.aria")}
+      className={`rounded-lg border px-3 py-2.5 ${
+        flagged ? "border-amber-200 bg-amber-50/70" : "border-slate-200 bg-slate-50"
+      }`}
+    >
+      <p
+        data-testid="schedule-result-headline"
+        className={`text-sm font-semibold ${flagged ? "text-amber-900" : "text-slate-800"}`}
+      >
+        {headline}
+      </p>
+      {secondary && <p className="mt-0.5 text-xs text-slate-600">{secondary}</p>}
+      {/* Above the metrics rather than below them: this is the only line that
+          names a consequence outside the board — somebody was told a time that
+          is no longer true — and it belongs beside the headline, not filed under
+          the numbers. */}
+      {lost > 0 && (
+        <p data-testid="schedule-result-lost" className="mt-0.5 text-xs font-medium text-amber-800">
+          {plural("board.result.lost", lost)}
+        </p>
+      )}
+
+      {/* Capped rather than stretched: on a wide board a full-bleed rail leaves
+          each number stranded at the left of a 250px cell, which reads as an
+          empty table. 2 columns on mobile, 4 from `sm`, never wider than this. */}
+      <dl className="mt-2.5 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-slate-200 bg-slate-200 sm:max-w-xl sm:grid-cols-4">
+        {cells.map((c) => (
+          // col-reverse so the number reads first while <dt> keeps its required
+          // source position ahead of <dd>.
+          <div key={c.label} className="flex flex-col-reverse bg-white px-2.5 py-1.5">
+            <dt className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+              {c.label}
+            </dt>
+            <dd
+              className={`text-[15px] font-semibold tabular-nums ${
+                c.alert ? "text-amber-700" : "text-slate-800"
+              }`}
+            >
+              {c.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      {solver.budget_expired && (
+        // The denominator comes off the WIRE (`tiers_total`), not from a
+        // constant here. The tier ladder lives in the engine, this component
+        // lives two packages away, and a copy of its length in each is a
+        // divergence with nothing to notice it — which is exactly what a
+        // hardcoded `IMPROVEMENT_TARGETS = 4` was.
+        //
+        // …but the ladder is the BUILD path's, and REFLOW runs the repair solver,
+        // which has no tiers at all. It reports `tiersCompleted: 0` deliberately
+        // — a number from a ladder it never walked would make an optimality
+        // claim nothing proved — while `tiers_total` stays 4, so the tier
+        // sentence renders "0 of 4 targets improved" about a run that was never
+        // on that scale. True, and useless. `mode` is the only thing in the
+        // payload that can tell the two apart: an expired build and an expired
+        // reflow are otherwise byte-identical here.
+        <p data-testid="schedule-result-budget" className="mt-2 text-xs text-slate-600">
+          {solver.mode === "reflow"
+            ? msg("board.result.repairBudget")
+            : msg("board.result.budgetExpired", {
+                n: solver.tiers_completed,
+                total: solver.tiers_total,
+              })}
+        </p>
+      )}
+
+      <p className="mt-1.5 text-[11px] leading-snug text-slate-400">{msg("board.result.legend")}</p>
+      <p
+        data-testid="schedule-result-provenance"
+        className="mt-1 text-[11px] tabular-nums text-slate-400"
+      >
+        {msg(ENGINE_KEY[solver.engine])} · {elapsed} · {churn}
+      </p>
+    </section>
+  );
+}

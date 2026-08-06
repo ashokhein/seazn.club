@@ -1,7 +1,14 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { addEntrantsViaApi, apiJson, createStageAndGenerate, TAG } from "./helpers";
+import {
+  addEntrantsViaApi,
+  apiJson,
+  createStageAndGenerate,
+  TAG,
+  competitionPath,
+  divisionPath,
+} from "./helpers";
 
 // The two sentences #376 part D added, read from the SHIPPED catalogue rather
 // than retyped: this suite's whole point is that the customer meets that exact
@@ -67,7 +74,7 @@ test("deleting a setup division lifts the free-plan divisions gate", async ({ pa
 
   // Delete through the UI: Danger zone → typed-name confirm.
   // v8: delete lives in Settings → Danger zone.
-  await page.goto(`/divisions/${divisionId}?tab=settings`);
+  await page.goto(await divisionPath(page.request, divisionId, "?tab=settings"));
   await page.getByRole("button", { name: /Danger zone/ }).click({ timeout: 20_000 });
   await page.getByRole("button", { name: /Delete division/ }).click({ timeout: 20_000 });
   const dialog = page.getByRole("dialog");
@@ -161,7 +168,7 @@ test("a played division keeps its slot, and both surfaces say so", async ({ page
     ),
     "Filler 2",
   );
-  await page.goto(`/divisions/${unplayed}?tab=settings`);
+  await page.goto(await divisionPath(page.request, unplayed, "?tab=settings"));
   await page.getByRole("button", { name: /Danger zone/ }).click({ timeout: 20_000 });
   await expect(page.getByRole("button", { name: "Archive division" })).toBeVisible({
     timeout: 20_000,
@@ -169,7 +176,7 @@ test("a played division keeps its slot, and both surfaces say so", async ({ page
   await expect(page.locator("[data-slot-warning]")).toHaveCount(0);
 
   // Surface 1: the warning is on screen BEFORE the archive button is clicked.
-  await page.goto(`/divisions/${playedId}?tab=settings`);
+  await page.goto(await divisionPath(page.request, playedId, "?tab=settings"));
   await page.getByRole("button", { name: /Danger zone/ }).click({ timeout: 20_000 });
   const warning = page.locator("[data-slot-warning]");
   await expect(warning).toBeVisible({ timeout: 20_000 });
@@ -192,7 +199,7 @@ test("a played division keeps its slot, and both surfaces say so", async ({ page
   expect(gated.status).toBe(402);
 
   // Surface 2: the same refusal through the wizard names the invisible cause.
-  await page.goto(`/competitions/${compId}/divisions/new`);
+  await page.goto(await competitionPath(page.request, compId, "/d/new"));
   await page.getByRole("textbox").first().fill("Fifth");
   await page.getByRole("button", { name: "Scheduling", exact: true }).click();
   await page.getByRole("button", { name: /create division/i }).click();

@@ -205,7 +205,7 @@ describe.skipIf(!HAS_DB)("a durable constraints.hard rule on the board paths (#4
     // The times are asserted explicitly and the conflict list only afterwards —
     // a bare "no instruction conflicts" is equally satisfied by a placer that
     // proposed nothing at all, and by one that proposed a board it never judged.
-    const proposal = await autoSchedule(auth, groups!.id, false);
+    const proposal = await autoSchedule(auth, groups!.id, { only_unlocked: false, mode: "build" });
     expect(proposal.assignments).toHaveLength(6);
     // The org zone is UTC here, so the UTC clock IS the wall clock the rule is
     // stated in — no offset arithmetic, just the time-of-day the rule names.
@@ -357,7 +357,7 @@ describe.skipIf(!HAS_DB)("a durable constraints.hard rule on the board paths (#4
     });
     await generateStageFixtures(auth, groups!.id);
 
-    const proposal = await autoSchedule(auth, groups!.id, false);
+    const proposal = await autoSchedule(auth, groups!.id, { only_unlocked: false, mode: "build" });
     expect(proposal.conflicts.filter((c) => c.code === "warn.instruction")).toHaveLength(0);
     await applySchedule(auth, groups!.id, {
       assignments: proposal.assignments.map((a) => ({

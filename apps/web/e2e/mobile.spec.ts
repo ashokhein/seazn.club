@@ -1,6 +1,14 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { TAG, apiJson, activeOrg, expectNoHorizontalScroll, addEntrantsViaApi } from "./helpers";
+import {
+  TAG,
+  apiJson,
+  activeOrg,
+  expectNoHorizontalScroll,
+  addEntrantsViaApi,
+  createStageAndGenerate,
+  divisionPath,
+} from "./helpers";
 
 // v3/02 §4 viewport gate — runs ONLY in the mobile-se / mobile-14 projects
 // (375×667, 390×844). Every audited route must render with zero page-level
@@ -268,4 +276,235 @@ test("LCP < 2.5s on Fast-3G: public dashboard + registration (v3/11 gap 15)", as
   } finally {
     await anonCtx.close();
   }
+});
+
+/**
+ * #230 item 2 follow-up — the publish gate's confirm step at phone width.
+ *
+ * It is a bottom sheet under `sm` and it lists an arbitrary number of conflicts,
+ * so it is exactly the shape that overflows a 375px page. This file is the ONLY
+ * place a 375px assertion actually runs: the mobile projects are
+ * `testMatch: /mobile\.spec\.ts/`, so the same assertion written into
+ * schedule-board.spec.ts would silently run at desktop and pass.
+ */
+test("the publish gate's confirm sheet holds at phone width", async ({ page, request }) => {
+  const DAY = Date.UTC(2026, 9, 19);
+  const at = (hour: number) => new Date(DAY + hour * 3_600_000).toISOString();
+
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    ends_on: "2030-12-31",
+    name: `Mobile Gate Sheet ${TAG}`,
+    visibility: "private",
+  });
+  const div = await apiJson<{ id: string }>(
+    request,
+    `/api/v1/competitions/${comp.data!.id}/divisions`,
+    "POST",
+    {
+      name: "Gate Sheet",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    },
+  );
+  const gateDivisionId = div.data!.id;
+  await addEntrantsViaApi(request, gateDivisionId, ["Eve M", "Fay M", "Gus M", "Hal M"]);
+  const { fixtureIds } = await createStageAndGenerate(request, gateDivisionId);
+  const settings = await apiJson(
+    request,
+    `/api/v1/divisions/${gateDivisionId}/schedule-settings`,
+    "PUT",
+    {
+      tz: "UTC",
+      config: {
+        startAt: at(9),
+        matchMinutes: 30,
+        gapMinutes: 0,
+        courts: ["Court A", "Court B"],
+        // A two-hour floor, so the hour-apart pair below is a `warn.rest` — a
+        // warning, which is the case that HAS a confirm affordance to size.
+        perEntrantMinRest: 120,
+      },
+    },
+  );
+  // Every ScheduleConfig field carries a `.default()`, so a rejected PUT still
+  // leaves a usable config behind and the only symptom is "the dialog never
+  // appeared" — a failure reported against the sheet, three screens from its
+  // cause.
+  expect(settings.status).toBe(200);
+
+  type Row = { id: string; home_entrant_id: string | null; away_entrant_id: string | null };
+  const rows = await Promise.all(
+    fixtureIds.map(async (id) => (await apiJson<Row>(request, `/api/v1/fixtures/${id}`)).data!),
+  );
+  const first = rows[0]!;
+  const sharer = rows.find(
+    (f) =>
+      f.id !== first.id &&
+      [f.home_entrant_id, f.away_entrant_id].some((e) =>
+        [first.home_entrant_id, first.away_entrant_id].includes(e),
+      ),
+  )!;
+  await apiJson(request, `/api/v1/fixtures/${first.id}`, "PATCH", {
+    scheduled_at: at(9),
+    court_label: "Court A",
+  });
+  await apiJson(request, `/api/v1/fixtures/${sharer.id}`, "PATCH", {
+    scheduled_at: at(10),
+    court_label: "Court B",
+  });
+
+  await page.goto(await divisionPath(page.request, gateDivisionId, "/schedule?tab=board"), { waitUntil: "load" });
+  const publish = page.getByTestId("board-publish-schedule");
+  await expect(publish).toBeVisible({ timeout: 30_000 });
+  await publish.click();
+
+  const dialog = page.getByTestId("board-gate");
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  await expect(dialog.locator('[data-testid="board-gate-conflict"]').first()).toBeVisible();
+
+  // The sheet is what is being audited: the page must not scroll sideways
+  // behind it, and the sheet's own body must not either — the conflict list is
+  // the part that grows without a ceiling.
+  await expectNoHorizontalScroll(page);
+  const clipped = await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>('[data-testid="board-gate"]');
+    if (!root) return ["the gate sheet was not in the DOM"];
+    const suspects: HTMLElement[] = [
+      root,
+      ...Array.from(root.querySelectorAll<HTMLElement>("p,ul,li")),
+    ];
+    return suspects
+      .filter((el) => el.scrollWidth - el.clientWidth > 1)
+      .map((el) => `${el.tagName.toLowerCase()} ${el.scrollWidth}px content in ${el.clientWidth}px`);
+  });
+  expect(clipped, "the gate sheet's content is clipped at this width").toEqual([]);
+
+  for (const id of ["board-gate-confirm", "board-gate-cancel"]) {
+    const box = await page.getByTestId(id).boundingBox();
+    expect(box, `${id} has no box`).not.toBeNull();
+    expect(box!.height, `${id} touch target is ${box!.height}px`).toBeGreaterThanOrEqual(44);
+  }
+  await page.screenshot({ path: "test-results/publish-gate-sheet-375.png" });
+
+  // And it works from here — a sheet that renders but cannot be confirmed on a
+  // phone is the same dead end in a nicer wrapper.
+  await page.getByTestId("board-gate-confirm").click();
+  await expect(dialog).toBeHidden({ timeout: 30_000 });
+  const after = await apiJson<{ status: string }>(request, `/api/v1/divisions/${gateDivisionId}`);
+  expect(after.data!.status).toBe("scheduled");
+  await expectNoHorizontalScroll(page);
+});
+
+/**
+ * T15 — the z3 solver action bar and its result strip at phone width.
+ *
+ * THIS TEST CANNOT LIVE IN `z3-auto-schedule.spec.ts`. The `mobile-se`
+ * (375×667) and `mobile-14` (390×844) projects are declared with
+ * `testMatch: /mobile\.spec\.ts/`, so they run this one file and nothing else —
+ * a new spec file gets desktop coverage only, however it is named. The 375px
+ * gate for the feature is therefore a section here, by construction.
+ *
+ * Self-contained: it seeds its own competition rather than borrowing the file's
+ * shared division, which has no stage and so renders no action bar at all.
+ *
+ * Three things are asserted, in the order they can be:
+ *   - the three actions are hit-testable. `min-h-11 sm:min-h-0` on all three is
+ *     the only reason they clear 44px — the shared `py-1.5 text-xs` button
+ *     renders 28px, and the override is mobile-only, so nothing at desktop
+ *     width would notice it being dropped.
+ *   - the strip renders and its own content is not clipped. The metrics grid
+ *     carries `overflow-hidden`, which means a grid that outgrew its container
+ *     would silently truncate rather than push the page wide — invisible to the
+ *     page-level scroll check below, and the reason this is measured separately.
+ *   - no horizontal page scroll, checked AFTER the strip has rendered. The strip
+ *     is the widest thing this surface ever shows; running the check on the
+ *     board before a run would prove nothing about the element under test.
+ */
+// LAST IN THE FILE, DELIBERATELY. This whole spec is
+// `test.describe.configure({ mode: "serial" })`, so a failure SKIPS every case
+// after it — and this is the only case here that depends on a z3 solve, i.e. the
+// one most likely to fail for a reason that is nothing to do with layout (a
+// solver hiccup, a busy queue, a WASM that will not boot). Sitting mid-file it
+// took the public-surface, news, axe, page-smoke and LCP cases down with it.
+// Anything added below this line inherits that risk; add it above.
+test("z3 schedule actions + result strip hold at phone width", async ({ page, request }) => {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    ends_on: "2030-12-31",
+    name: `Mobile Solver ${TAG}`,
+    visibility: "private",
+  });
+  const div = await apiJson<{ id: string }>(
+    request,
+    `/api/v1/competitions/${comp.data!.id}/divisions`,
+    "POST",
+    {
+      name: "Solver",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    },
+  );
+  const solverDivisionId = div.data!.id;
+  await addEntrantsViaApi(request, solverDivisionId, ["Ash M", "Brook M", "Clay M", "Dune M"]);
+  const { fixtureIds } = await createStageAndGenerate(request, solverDivisionId);
+  expect(fixtureIds.length).toBe(6);
+  const settings = await apiJson(
+    request,
+    `/api/v1/divisions/${solverDivisionId}/schedule-settings`,
+    "PUT",
+    {
+      tz: "UTC",
+      config: {
+        startAt: new Date(Date.UTC(2026, 8, 21, 9, 0)).toISOString(),
+        matchMinutes: 30,
+        gapMinutes: 0,
+        courts: ["Court A", "Court B"],
+        perEntrantMinRest: 0,
+        blackouts: [],
+        sessionWindows: [],
+      },
+    },
+  );
+  expect(settings.status).toBe(200);
+
+  await page.goto(await divisionPath(page.request, solverDivisionId, "/schedule?tab=board"), { waitUntil: "load" });
+
+  // Ids, not labels (#465): "Auto-schedule {name}" interpolates the division
+  // name and "Improve times" is not the word "Polish".
+  const auto = page.getByTestId("schedule-auto");
+  const reflow = page.getByTestId("schedule-reflow");
+  const polish = page.getByTestId("schedule-polish");
+  for (const [name, button] of [
+    ["schedule-auto", auto],
+    ["schedule-reflow", reflow],
+    ["schedule-polish", polish],
+  ] as const) {
+    await expect(button, `${name} is not visible at this width`).toBeVisible({ timeout: 30_000 });
+    const box = await button.boundingBox();
+    expect(box, `${name} has no box`).not.toBeNull();
+    expect(box!.height, `${name} touch target is ${box!.height}px`).toBeGreaterThanOrEqual(44);
+  }
+
+  await auto.click();
+  const strip = page.getByTestId("schedule-result-strip");
+  await expect(strip).toBeVisible({ timeout: 45_000 });
+  // The whole round trip, not just the proposal: `autoRun` clears `busy` in its
+  // `finally`, after the apply POST and the refresh.
+  await expect(auto).toBeEnabled({ timeout: 45_000 });
+  await expect(page.getByTestId("schedule-result-headline")).toBeVisible();
+
+  // Nothing inside the strip is clipped or scrolled sideways — including the
+  // metrics grid, whose `overflow-hidden` would otherwise hide the failure.
+  const clipped = await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>('[data-testid="schedule-result-strip"]');
+    if (!root) return ["the strip was not in the DOM"];
+    const suspects: HTMLElement[] = [root, ...Array.from(root.querySelectorAll<HTMLElement>("dl,p"))];
+    return suspects
+      .filter((el) => el.scrollWidth - el.clientWidth > 1)
+      .map((el) => `${el.tagName.toLowerCase()} ${el.scrollWidth}px content in ${el.clientWidth}px`);
+  });
+  expect(clipped, "result strip content is clipped at this width").toEqual([]);
+
+  await expectNoHorizontalScroll(page);
 });

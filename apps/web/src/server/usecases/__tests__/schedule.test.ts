@@ -27,7 +27,13 @@ import {
 import { patchFixture } from "../fixtures";
 import { scoreEvent } from "../scoring";
 import { publicSchedule } from "../public";
-import { ApplyScheduleRequest } from "@/server/api-v1/schemas";
+import {
+  ApplyScheduleRequest,
+  AutoScheduleRequest,
+  AutoScheduleResult,
+  ScheduleMetrics,
+  ScheduleSolverInfo,
+} from "@/server/api-v1/schemas";
 import { seedOrg as seedOfficialsOrg, seedFutureDivision } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -175,7 +181,7 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
     const generated = await generateStageFixtures(auth, groups.id);
     expect(generated.created).toBe(12);
 
-    const proposal = await autoSchedule(auth, groups.id, false);
+    const proposal = await autoSchedule(auth, groups.id, { only_unlocked: false, mode: "build" });
     expect(proposal.assignments).toHaveLength(12);
     expect(proposal.conflicts.filter((c) => c.blocking)).toHaveLength(0);
     // Both courts in use; per-entrant rest ≥ 30 min in the proposal.
@@ -258,7 +264,7 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
     const pinB = board[3]!;
     await patchFixture(auth, pinA.id, { schedule_locked: true });
     await patchFixture(auth, pinB.id, { schedule_locked: true });
-    const reflow = await autoSchedule(auth, groups.id, true);
+    const reflow = await autoSchedule(auth, groups.id, { only_unlocked: true, mode: "reflow" });
     const pinnedOut = new Map(reflow.assignments.map((a) => [a.fixture_id, a]));
     expect(pinnedOut.get(pinA.id)?.scheduled_at).toBe(pinA.scheduled_at.toISOString());
     expect(pinnedOut.get(pinA.id)?.court_label).toBe(pinA.court_label);
@@ -374,7 +380,7 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
       tz: "UTC",
     });
     const { fixtures } = await generateStageFixtures(auth, stage.id);
-    const proposal = await autoSchedule(auth, stage.id, false);
+    const proposal = await autoSchedule(auth, stage.id, { only_unlocked: false, mode: "build" });
     expect(proposal.assignments).toHaveLength(6);
     await applySchedule(auth, stage.id, {
       assignments: proposal.assignments.map((a) => ({
@@ -619,5 +625,158 @@ describe.skipIf(!HAS_DB)("loadSettings resolves the organisation zone separately
     const { auth, divisionId } = await seedDivisionWithOrgTz("Pacific/Atlantis");
     const settings = await load(auth, divisionId);
     expect(settings.orgTz).toBe("UTC");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auto-schedule API contract (z3 solver programme, task 8). Pure schema tests —
+// no DB, so they are deliberately OUTSIDE the skipIf(!HAS_DB) blocks above.
+// ---------------------------------------------------------------------------
+
+describe("AutoScheduleRequest.mode", () => {
+  it("defaults to reflow when only_unlocked is true", () => {
+    expect(AutoScheduleRequest.parse({ only_unlocked: true }).mode).toBe("reflow");
+  });
+
+  it("defaults to build when only_unlocked is false", () => {
+    expect(AutoScheduleRequest.parse({ only_unlocked: false }).mode).toBe("build");
+  });
+
+  it("defaults to reflow for an empty body, matching today's only_unlocked default", () => {
+    expect(AutoScheduleRequest.parse({}).mode).toBe("reflow");
+  });
+
+  it("takes an explicit mode over the derived one", () => {
+    expect(AutoScheduleRequest.parse({ only_unlocked: true, mode: "polish" }).mode).toBe("polish");
+  });
+
+  /** Sharper than the "polish" case: here the explicit value is one the
+   *  derivation could also produce, but for the OTHER only_unlocked. An
+   *  implementation that always derives returns "build" and is caught. */
+  it("keeps an explicit mode that contradicts the derivation", () => {
+    expect(AutoScheduleRequest.parse({ only_unlocked: false, mode: "reflow" }).mode).toBe("reflow");
+  });
+
+  it("rejects an unknown mode", () => {
+    expect(() => AutoScheduleRequest.parse({ mode: "magic" })).toThrow();
+  });
+
+  /** Regression guard: adding `mode` must not disturb the pre-existing field
+   *  the route still reads (`body.only_unlocked`). */
+  it("leaves only_unlocked defaulting to true and still type-checked", () => {
+    expect(AutoScheduleRequest.parse({}).only_unlocked).toBe(true);
+    expect(AutoScheduleRequest.parse({ only_unlocked: false }).only_unlocked).toBe(false);
+    expect(() => AutoScheduleRequest.parse({ only_unlocked: "yes" })).toThrow();
+  });
+});
+
+describe("AutoScheduleResult metrics + solver contract", () => {
+  const metrics = {
+    makespan_minutes: 240,
+    worst_idle_gap_minutes: 45,
+    court_imbalance_minutes: 30,
+    placed: 11,
+    total: 14,
+  };
+  const solver = {
+    engine: "z3" as const,
+    status: "ok" as const,
+    tiers_completed: 2,
+    tiers_total: 4,
+    budget_expired: false,
+    elapsed_ms: 1234,
+    moved: 6,
+  };
+
+  /** A round-trip toEqual, not a field-by-field check: a key declared twice in
+   *  one z.object is silent both ways, and only the round-trip sees it. */
+  it("round-trips the metrics block Task 9 fills and Task 11 renders", () => {
+    expect(ScheduleMetrics.parse(metrics)).toEqual(metrics);
+  });
+
+  it("round-trips the solver telemetry block", () => {
+    expect(ScheduleSolverInfo.parse(solver)).toEqual(solver);
+  });
+
+  it("carries metrics and solver through the full result envelope", () => {
+    const result = { assignments: [], conflicts: [], metrics, solver };
+    expect(AutoScheduleResult.parse(result)).toEqual(result);
+  });
+
+  it("requires metrics and solver — they are not optional add-ons", () => {
+    expect(() => AutoScheduleResult.parse({ assignments: [], conflicts: [] })).toThrow();
+  });
+
+  /** These seven must stay one-for-one with the engine's BuildStatus union.
+   *  Pinned as literals rather than imported: packages/engine is under
+   *  concurrent edit in sibling lanes, and this is the API-side contract. */
+  it("accepts exactly the seven BuildStatus values", () => {
+    for (const status of [
+      "ok",
+      "already_optimal",
+      "infeasible",
+      "verifier_rejected",
+      "z3_unavailable",
+      "solver_busy",
+      "not_searched",
+    ]) {
+      expect(ScheduleSolverInfo.parse({ ...solver, status }).status).toBe(status);
+    }
+    expect(() => ScheduleSolverInfo.parse({ ...solver, status: "partial" })).toThrow();
+  });
+
+  /**
+   * The whole envelope, with `not_searched` on it.
+   *
+   * Separate from the enum loop above because the enum loop parses the solver
+   * block alone, and the shape that actually leaves `autoSchedule` is the
+   * envelope. `schedule.ts` assigns the engine's `BuildStatus` straight into
+   * this object, so a member the enum does not list is a board the API cannot
+   * describe: the assignment does not compile, and in a build that skipped the
+   * typecheck the value reaches the wire as a status no reader has a sentence
+   * for.
+   *
+   * `not_searched` is the one status whose whole purpose is to REFUSE a claim —
+   * the solver could not put this board on its lattice, so it never searched it
+   * — and the previous behaviour it replaces was telling the organiser
+   * `already_optimal` about a board nothing had looked at. Dropping it on the
+   * wire would reinstate exactly that silence.
+   */
+  it("carries a not_searched run through the full result envelope", () => {
+    const result = {
+      assignments: [],
+      conflicts: [],
+      metrics,
+      solver: { ...solver, status: "not_searched" as const, engine: "greedy" as const },
+    };
+    expect(AutoScheduleResult.parse(result)).toEqual(result);
+  });
+
+  it("accepts exactly the three solver engines", () => {
+    for (const engine of ["greedy", "z3", "z3+lns"]) {
+      expect(ScheduleSolverInfo.parse({ ...solver, engine }).engine).toBe(engine);
+    }
+    expect(() => ScheduleSolverInfo.parse({ ...solver, engine: "cpsat" })).toThrow();
+  });
+
+  /** REQUIRED, not optional. `tiers_completed` is a numerator and the strip has
+   *  to render "N of M"; an optional denominator is one the component would
+   *  have to guess at, which is the hardcoded `IMPROVEMENT_TARGETS = 4` this
+   *  field exists to retire. */
+  it("requires tiers_total — a numerator with no denominator is not telemetry", () => {
+    const withoutTotal: Record<string, unknown> = { ...solver };
+    delete withoutTotal.tiers_total;
+    expect(() => ScheduleSolverInfo.parse(withoutTotal)).toThrow();
+    expect(() => ScheduleSolverInfo.parse({ ...solver, tiers_total: 4.5 })).toThrow();
+  });
+
+  /** OPTIONAL, and its absence is meaningful: an `infeasible` without it is the
+   *  engine saying the proof is about the BOARD, not about the pinned set. A
+   *  reader that has not been taught about it falls back to `total - placed`. */
+  it("carries contradictory_pins only when the engine named them", () => {
+    expect(ScheduleSolverInfo.parse(solver).contradictory_pins).toBe(undefined);
+    const pinned = { ...solver, status: "infeasible" as const, contradictory_pins: ["f-2", "f-9"] };
+    expect(ScheduleSolverInfo.parse(pinned)).toEqual(pinned);
+    expect(() => ScheduleSolverInfo.parse({ ...solver, contradictory_pins: [7] })).toThrow();
   });
 });

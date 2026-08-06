@@ -1,5 +1,12 @@
 import { test, expect } from "@playwright/test";
-import { TAG, apiJson, addEntrantsViaApi, createStageAndGenerate, scoreFixture } from "./helpers";
+import {
+  TAG,
+  apiJson,
+  addEntrantsViaApi,
+  createStageAndGenerate,
+  scoreFixture,
+  divisionPath,
+} from "./helpers";
 
 // Bracket progression (the engine path the league journeys never touch):
 // semi winners must flow into the final via winner_to slots, and the scoring
@@ -80,7 +87,7 @@ test("knockout: semi winners advance into the final and decide the cup", async (
   const decidedFinal = await getFixture(request, final!.id);
   expect(["decided", "finalized"]).toContain(decidedFinal.status);
 
-  await page.goto(`/divisions/${divisionId}?tab=fixtures`);
+  await page.goto(await divisionPath(page.request, divisionId, "?tab=fixtures"));
   await expect(page.getByRole("link", { name: /^(Score|View)/ })).toHaveCount(3, {
     timeout: 20_000,
   });
@@ -128,7 +135,7 @@ test("double-elim division renders the two-lane bracket on the fixtures tab (con
   await addEntrantsViaApi(request, divisionId, ["A", "B", "C", "D"]);
   await createStageAndGenerate(request, divisionId, { kind: "double_elim", name: "DE" });
 
-  await page.goto(`/divisions/${divisionId}?tab=fixtures`);
+  await page.goto(await divisionPath(page.request, divisionId, "?tab=fixtures"));
   await expect(page.getByTestId("bracket-panel-de")).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText("Winners bracket")).toBeVisible();
   await expect(page.getByText("Losers bracket")).toBeVisible();

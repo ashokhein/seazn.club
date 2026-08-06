@@ -6,6 +6,8 @@ import {
   expectNoHorizontalScroll,
   seedScoredDivision,
   TAG,
+  divisionPath,
+  fixturePath,
 } from "./helpers";
 
 // Scoring discoverability + sport-shaped pads (organiser feedback: the score
@@ -13,7 +15,7 @@ import {
 
 test("every fixture row has a Score entry point", async ({ page, request }) => {
   const { divisionId } = await seedScoredDivision(request);
-  await page.goto(`/divisions/${divisionId}?tab=fixtures`);
+  await page.goto(await divisionPath(page.request, divisionId, "?tab=fixtures"));
   // decided fixtures show "View", live/scheduled show "Score"
   await expect(page.getByRole("link", { name: /^(Score|View)/ }).first()).toBeVisible({
     timeout: 20_000,
@@ -39,7 +41,7 @@ test("forfeit dropdown closes when clicking outside", async ({ page, request }) 
   });
   await apiJson(request, `/api/v1/divisions/${divisionId}/start`, "POST");
 
-  await page.goto(`/fixtures/${fixtureIds[0]}`);
+  await page.goto(await fixturePath(page.request, fixtureIds[0]));
   await page.getByRole("button", { name: /Forfeit/ }).click({ timeout: 20_000 });
   await expect(page.getByRole("button", { name: /forfeits$/ }).first()).toBeVisible();
 
@@ -85,7 +87,7 @@ test("badminton pad shows the current game number, not always game 1", async ({
     });
   }
 
-  await page.goto(`/fixtures/${fixtureId}`);
+  await page.goto(await fixturePath(page.request, fixtureId));
   await expect(page.getByText("Game 2", { exact: false })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText(/1 game won/)).toBeVisible();
 });
@@ -118,7 +120,7 @@ test("badminton: an entered game score lands in the header summary live (v3/09 �
     payload: {},
   });
 
-  await page.goto(`/fixtures/${fixtureId}`);
+  await page.goto(await fixturePath(page.request, fixtureId));
   // Coarse entry: record game 1 as 21-15 through the Game-totals form. Under
   // load the fill can land before React hydrates — re-fill until it sticks.
   await page.getByRole("button", { name: /Game totals/ }).click({ timeout: 20_000 });
@@ -188,7 +190,7 @@ test("cricket: undo mid-over keeps the scoring panel usable (v3/09 §2)", async 
     payload: { runs: 12, wickets: 1, legalBalls: 6, partial: true },
   });
 
-  await page.goto(`/fixtures/${fixtureId}`);
+  await page.goto(await fixturePath(page.request, fixtureId));
   await expect(page.getByText(/— total/)).toContainText("12/1", { timeout: 20_000 });
 
   // The intake #29 repro action: Undo last (voids the over).
@@ -264,7 +266,7 @@ test("cricket scores over-by-over: add an over grows the total, then close innin
     payload: {},
   });
 
-  await page.goto(`/fixtures/${fixtureId}`);
+  await page.goto(await fixturePath(page.request, fixtureId));
 
   // over-by-over is the default mode
   await expect(page.getByRole("button", { name: "Over-by-over" })).toBeVisible({ timeout: 20_000 });
@@ -375,7 +377,7 @@ test("cricket DLS scales a five-ball-over format onto the published table", asyn
   expect(fold.revisedTarget).toBe(84);
 
   // And the shortened match is still scoreable — the pad opens on the chase.
-  await page.goto(`/fixtures/${fixtureId}`);
+  await page.goto(await fixturePath(page.request, fixtureId));
   await expect(page.getByText(/— total/)).toContainText("0/0", { timeout: 20_000 });
 
   // #467 — the 84 asserted off the state API above must also be ON SCREEN.

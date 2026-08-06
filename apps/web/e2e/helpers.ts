@@ -702,6 +702,90 @@ export async function activeOrg(page: Page): Promise<OrgInfo> {
   return orgs.find((o) => o.id === activeId) ?? orgs[0]!;
 }
 
+/* ------------------------------------------------------------------ *
+ * Slug-chain paths for a resource a test only holds the id of.
+ *
+ * The console has exactly one address for a competition, division or
+ * fixture: `/o/{org}/c/{comp}/d/{div}/f/{no}` (`src/lib/routes.ts`). Until
+ * 2026-08-06 the id forms `/competitions/{id}`, `/divisions/{id}` and
+ * `/fixtures/{id}` also answered, as permanent-redirect shims, and specs
+ * navigated those because the id is what the API hands back when a test
+ * creates something. The shims are gone, so the chain has to be resolved.
+ *
+ * Deliberately NOT cached. A rename rewrites a slug mid-run (that is what
+ * `slug_history` exists for), and a memoised chain would then navigate the
+ * OLD address — which still 200s via slug history, so the staleness would be
+ * invisible rather than loud. These are one or two localhost GETs.
+ *
+ * The org slug comes from the resource's own `org_id` joined against the
+ * caller's membership list, NOT from the `seazn_org` cookie: `request` and
+ * `page` have separate cookie jars, so the active org is not reliably the
+ * org that owns the thing being navigated to.
+ * ------------------------------------------------------------------ */
+
+async function orgSlugFor(request: APIRequestContext, orgId: string): Promise<string> {
+  const { data: orgs } = await apiJson<OrgInfo[]>(request, "/api/orgs");
+  const org = orgs?.find((o) => o.id === orgId);
+  if (!org) {
+    throw new Error(
+      `no membership of org ${orgId} for this request context — cannot build its slug path`,
+    );
+  }
+  return org.slug;
+}
+
+/** `/o/{org}/c/{comp}` + tail, e.g. `competitionPath(request, id, "/settings")`. */
+export async function competitionPath(
+  request: APIRequestContext,
+  competitionId: string,
+  tail = "",
+): Promise<string> {
+  const { status, data } = await apiJson<{ org_id: string; slug: string }>(
+    request,
+    `/api/v1/competitions/${competitionId}`,
+  );
+  if (status !== 200 || !data) {
+    throw new Error(`competitionPath: GET /api/v1/competitions/${competitionId} → ${status}`);
+  }
+  return `/o/${await orgSlugFor(request, data.org_id)}/c/${data.slug}${tail}`;
+}
+
+/** `/o/{org}/c/{comp}/d/{div}` + tail, e.g. `divisionPath(request, id, "/schedule?tab=board")`. */
+export async function divisionPath(
+  request: APIRequestContext,
+  divisionId: string,
+  tail = "",
+): Promise<string> {
+  const { status, data } = await apiJson<{ competition_id: string; slug: string }>(
+    request,
+    `/api/v1/divisions/${divisionId}`,
+  );
+  if (status !== 200 || !data) {
+    throw new Error(`divisionPath: GET /api/v1/divisions/${divisionId} → ${status}`);
+  }
+  return `${await competitionPath(request, data.competition_id)}/d/${data.slug}${tail}`;
+}
+
+/** `/o/{org}/c/{comp}/d/{div}/f/{no}` — fixtures are addressed by per-division
+ *  ordinal, so this is the one chain that is not a slug the whole way down. */
+export async function fixturePath(
+  request: APIRequestContext,
+  fixtureId: string,
+  tail = "",
+): Promise<string> {
+  const { status, data } = await apiJson<{ division_id: string; fixture_no: number | null }>(
+    request,
+    `/api/v1/fixtures/${fixtureId}`,
+  );
+  if (status !== 200 || !data) {
+    throw new Error(`fixturePath: GET /api/v1/fixtures/${fixtureId} → ${status}`);
+  }
+  if (data.fixture_no === null) {
+    throw new Error(`fixture ${fixtureId} has no fixture_no — it has no console address`);
+  }
+  return `${await divisionPath(request, data.division_id)}/f/${data.fixture_no}${tail}`;
+}
+
 /** Bulk-add ad-hoc entrants through the API (same shape seedScoredDivision uses). */
 export async function addEntrantsViaApi(
   request: APIRequestContext,
@@ -828,7 +912,7 @@ export async function createDivisionViaUi(
   competitionId: string,
   name: string,
 ): Promise<string> {
-  await page.goto(`/competitions/${competitionId}/divisions/new`);
+  await page.goto(await competitionPath(page.request, competitionId, "/d/new"));
   // The name field is the first textbox on the Basics tab (see formats.spec.ts).
   await page.getByRole("textbox").first().fill(name);
   // Creation is guarded to the last tab.

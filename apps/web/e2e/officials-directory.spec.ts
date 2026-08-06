@@ -7,6 +7,7 @@ import {
   scoreFixture,
   loginUi,
   TAG,
+  divisionPath,
 } from "./helpers";
 
 // v11.1 follow-up: officials roster management (add / invite / bulk-invite)
@@ -129,7 +130,7 @@ test("schedule Officials tab: compact roster strip reflects the pool and links t
     role_keys: ["referee"],
   });
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=officials`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=officials"));
   // the compact roster strip is its own <ul> — scope past the assign
   // <select> options below, which repeat the same name once per fixture.
   const strip = page.locator("ul").filter({ hasText: stripName }).first();
@@ -232,8 +233,13 @@ test.describe.serial("officiating: accept, score, and access boundaries", () => 
     claimIdB = inviteB.data!.id;
   });
 
+  // `request` is the ORGANISER's context, and it is here for one reason: the
+  // 404 assertion at the end needs the division's real slug chain, and only a
+  // member can resolve one. Resolving it from the official's own page would be
+  // asking the question the assertion exists to answer.
   test("official: claim, accept, score via the fixture console, and stay out of everything else", async ({
     browser,
+    request,
   }) => {
     const ctx = await browser.newContext(); // clean session — a fresh official
     const page = await ctx.newPage();
@@ -266,9 +272,11 @@ test.describe.serial("officiating: accept, score, and access boundaries", () => 
       await expect(cardA.getByText("Accepted")).toBeVisible({ timeout: 20_000 });
 
       // (a) Accepted fixture surfaces on My Matches — the scorer console's own
-      // landing page — and its full board opens (via the canonical slug link
-      // an official actually clicks, never the legacy /fixtures/{id} route
-      // which 301s through legacyPath and requires org membership).
+      // landing page — and its full board opens, via the slug link an official
+      // actually clicks. That is now the only address a fixture has: the legacy
+      // /fixtures/{id} route was deleted 2026-08-06, and it would not have
+      // served this account anyway (it resolved through org membership, which
+      // an official does not hold).
       await page.goto("/my-matches");
       const matchLink = page.getByRole("link").filter({ hasText: /Slip|Cordon|Gully|Point/ }).first();
       await expect(matchLink).toBeVisible({ timeout: 20_000 });
@@ -301,7 +309,9 @@ test.describe.serial("officiating: accept, score, and access boundaries", () => 
       // (c) This account holds an accepted assignment on fixtureA, but is a
       // non-member of the org — every non-fixture, organiser-only page still
       // 404s outright (design v2 §A5: officials pass ONLY the fixture door).
-      const orgRes = await page.goto(`/divisions/${divisionId}`);
+      // The address is resolved by the ORGANISER, so the 404 below is the
+      // division page refusing this account — not a URL that does not exist.
+      const orgRes = await page.goto(await divisionPath(request, divisionId));
       expect(orgRes!.status()).toBe(404);
     } finally {
       await ctx.close();

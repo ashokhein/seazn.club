@@ -63,10 +63,20 @@ async function loadCandidates(tx: Tx): Promise<FreezeCandidate[]> {
 
 /**
  * The org's frozen competition ids (empty for in-quota orgs — the common case
- * costs one count query). Pass the ambient `tx` when already inside
- * withTenant; otherwise a tenant tx is opened.
+ * costs one count query).
+ *
+ * MUST NOT be called from inside a `withTenant` callback. It opens with
+ * `getLimit`, which queries the POOLED `sql` proxy on a cache miss; asking the
+ * pool for a second connection while `withTenant` still pins the first is the
+ * self-deadlock that hung production twice on 2026-08-05 (see
+ * `__tests__/pool-nesting-tripwire.test.ts`). It used to take an optional `tx`
+ * that looked like it made the nested case safe — it did not: `getLimit` runs
+ * BEFORE the `tx` branch is ever reached, so every caller that threaded the
+ * ambient transaction through was still nesting a pooled query. The parameter
+ * is gone rather than fixed so the trap cannot be re-set; callers inside a
+ * transaction resolve the set first and use `assertNotFrozen` below.
  */
-export async function frozenCompetitionIds(orgId: string, tx?: Tx): Promise<Set<string>> {
+export async function frozenCompetitionIds(orgId: string): Promise<Set<string>> {
   const limit = await getLimit(orgId, "competitions.max_active");
   if (limit === null) return new Set();
   const run = async (t: Tx): Promise<Set<string>> => {
@@ -80,23 +90,46 @@ export async function frozenCompetitionIds(orgId: string, tx?: Tx): Promise<Set<
     if (n <= limit) return new Set();
     return selectFrozen(await loadCandidates(t), limit);
   };
-  return tx ? run(tx) : withTenant(orgId, run);
+  return withTenant(orgId, run);
+}
+
+/**
+ * The guard, split from the lookup: PURE, so it can be evaluated on a
+ * competition id that only becomes known inside a transaction without dragging
+ * a pooled query in there with it.
+ *
+ * The two-phase shape every write path now uses:
+ *
+ *     const frozen = await frozenCompetitionIds(auth.orgId);   // before the tx
+ *     return withTenant(auth.orgId, async (tx) => {
+ *       const [division] = await tx`select competition_id ...`;
+ *       assertNotFrozen(frozen, division.competition_id);      // no I/O
+ *     });
+ *
+ * The set is keyed on the ORG, not on the entity, so hoisting the lookup never
+ * needs an id the transaction has not read yet, and the entity's own 404 still
+ * fires first (an unknown id is never a member of the set).
+ */
+export function assertNotFrozen(frozen: ReadonlySet<string>, competitionId: string): void {
+  if (frozen.has(competitionId)) {
+    throw new PaymentRequiredError("competitions.max_active");
+  }
 }
 
 /**
  * Write guard for anything living under a competition (divisions, stages,
  * entrants, scoring, edits). Frozen ⇒ 402 carrying the quota key, so the UI
  * shows the same contextual paywall as a blocked create.
+ *
+ * OUTSIDE a transaction only — see `frozenCompetitionIds`. Callers that already
+ * hold the competition id before opening theirs keep using this; callers that
+ * read the id inside use `frozenCompetitionIds` + `assertNotFrozen`.
  */
 export async function assertCompetitionNotFrozen(
   orgId: string,
   competitionId: string,
-  tx?: Tx,
 ): Promise<void> {
-  const frozen = await frozenCompetitionIds(orgId, tx);
-  if (frozen.has(competitionId)) {
-    throw new PaymentRequiredError("competitions.max_active");
-  }
+  assertNotFrozen(await frozenCompetitionIds(orgId), competitionId);
 }
 
 // ---------------------------------------------------------------------------

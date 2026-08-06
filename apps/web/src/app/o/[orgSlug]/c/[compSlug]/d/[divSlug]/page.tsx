@@ -248,6 +248,11 @@ export default async function DivisionPage({
               divSlug={divSlug}
               status={division.status}
               canEdit={editable}
+              // Starting publishes the schedule, so it can be refused on
+              // conflicts; these two let the refusal sheet name the matches it
+              // is about. Both are already loaded above for the tabs.
+              fixtures={fixtures}
+              entrantNames={entrantNames}
             />
           </div>
         </div>

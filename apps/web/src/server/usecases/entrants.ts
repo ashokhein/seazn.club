@@ -4,10 +4,10 @@ import "server-only";
 // person the tenant can't see doesn't exist.
 import type postgres from "postgres";
 import { createHash } from "node:crypto";
-import { withTenant } from "@/lib/db";
-import { HttpError, PaymentRequiredError } from "@/lib/errors";
+import { sql, withTenant } from "@/lib/db";
+import { HttpError } from "@/lib/errors";
 import { supabaseAdmin } from "@/lib/supabase-admin";
-import { withinLimit } from "@/lib/entitlements";
+import { assertWithinLimit, getLimit } from "@/lib/entitlements";
 import { resolveModule } from "@/server/engine-db/registry";
 import {
   effectiveEntrantModel,
@@ -24,7 +24,7 @@ import type {
   PatchEntrant,
   EntrantMemberInput,
 } from "@/server/api-v1/schemas";
-import { assertCompetitionNotFrozen } from "./entitlement-freeze";
+import { assertNotFrozen, frozenCompetitionIds } from "./entitlement-freeze";
 
 type Tx = postgres.TransactionSql;
 type MemberInput = z.infer<typeof EntrantMemberInput>;
@@ -213,13 +213,33 @@ export async function createEntrants(
   divisionId: string,
   inputs: CreateEntrant[],
 ): Promise<CreatedEntrant[]> {
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
+  // The competition id, ahead of the transaction, ONLY to scope the plan lookup
+  // below — an Event Pass lifts this cap for one competition, so dropping the
+  // scope would change the answer. Authorisation is unaffected: the division is
+  // read under RLS inside the transaction, which 404s for a foreign org.
+  const [ref] = await sql<{ competition_id: string }[]>`
+    select competition_id from divisions where id = ${divisionId}`;
+  // The plan LOOKUP is resolved out here; the COUNT stays inside the
+  // transaction with the insert (doc 10 §2 rule 1). `getLimit` queries the
+  // pooled `sql` proxy, and `withTenant` pins a pooled connection for its whole
+  // callback — see `assertWithinLimit` in lib/entitlements.ts.
+  const entrantCap = await getLimit(
+    auth.orgId,
+    "entrants.per_division.max",
+    ref?.competition_id,
+  );
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<
       { status: string; competition_id: string; sport_key: string; module_version: string }[]
     >`select status, competition_id, sport_key, module_version
       from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+    assertNotFrozen(frozen, division.competition_id);
 
     // A started tournament's field is closed — fixtures were generated from
     // it, and a latecomer would never receive matches (or would corrupt a
@@ -243,13 +263,7 @@ export async function createEntrants(
     // must fit; count in the same tx as the inserts (doc 10 §2 rule 1).
     const [{ n }] = await tx<{ n: number }[]>`
       select count(*)::int as n from entrants where division_id = ${divisionId}`;
-    const quota = await withinLimit(
-      auth.orgId,
-      "entrants.per_division.max",
-      n + inputs.length,
-      division.competition_id,
-    );
-    if (!quota.ok) throw new PaymentRequiredError("entrants.per_division.max");
+    assertWithinLimit(entrantCap, "entrants.per_division.max", n + inputs.length);
 
     // Entrant-shape gate (spec 2026-07-18): every input in the batch must match
     // the division's effective model BEFORE any insert — the whole batch fails

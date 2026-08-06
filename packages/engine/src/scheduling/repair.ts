@@ -50,7 +50,7 @@ import {
   type RepairFamily,
 } from "./repair-domain.ts";
 import { dayKeyInTz } from "./tz.ts";
-import { loadZ3, withZ3Lock } from "./z3-load.ts";
+import { loadZ3, withZ3LockAndReset } from "./z3-load.ts";
 
 /** #401's Task 4 interface names these on `repair.ts`; they are DEFINED in
  *  `repair-domain.ts` because the domain builder is what decides which family a
@@ -234,7 +234,23 @@ const famLiteralName = (f: RepairFamily): string => `fam_${f}`;
  * made: time spent queueing is not time the caller was given.
  */
 export function repairSchedule(input: RepairInput): Promise<RepairResult> {
-  return withZ3Lock(() => solveRepair(input));
+  // AND IT OWNS ITS TEARDOWN (R17). This was the one z3 entry point the ruling
+  // did not reach, and `repairAndVerify` inherited the gap.
+  //
+  // Two things it cost. The WASM heap only ever grows and nothing frees a
+  // finished `Solver`, so this was exactly the "the next entry point
+  // re-introduces the crash" hazard `withZ3LockAndReset` exists to close —
+  // `repairDecomposed` escaped it only by resetting between components on its
+  // own account. And a `buildSchedule` following a repair in the same process
+  // started WARM, which makes a solve's answer depend on what the process did
+  // before it; both orderings occur in one node process, because the AI runners
+  // try the repair solver and an auto-schedule can follow.
+  //
+  // `repairDecomposed`'s own `resetZ3()` between components is now redundant
+  // rather than wrong: it degrades to a no-op, the singleton having already been
+  // cleared. Left in place deliberately — one no-op call per component, and its
+  // comment carries the measurements that justify the whole policy.
+  return withZ3LockAndReset(() => solveRepair(input));
 }
 
 async function solveRepair(input: RepairInput): Promise<RepairResult> {
@@ -952,43 +968,62 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
       };
       const solved = new Map<string, Assignment>();
       const moved: string[] = [];
-      for (let i = 0; i < domains.length; i++) {
-        const d = domains[i]!;
-        const a = proposalById.get(d.fixtureId)!;
-        const startMin = intOf(start[i]!);
-        const ci = intOf(courtVar[i]!);
-        const still = startMin === origStartMin[i]! && ci === origCourtIdx[i]!;
-        // A fixture that did not move keeps its ORIGINAL instant to the
-        // millisecond. Round-tripping it through minutes would rewrite a board
-        // the organiser may already have published.
-        //
-        // This is the one place the board leaves the minute grid, and it is what
-        // every rounding decision above is written against. Three consequences,
-        // and missing any one of them ships a clash:
-        //
-        //   * the TAIL — `origStartMin` floors, so the interval z3 reasoned
-        //     about must be `[origStartMin, origStartMin + durMinStill]` to
-        //     contain what is emitted here. `durMinStill` is charged only on
-        //     this branch (`endOf`), because a fixture that DID move is exactly
-        //     on the grid and paying for a fraction it no longer has is
-        //     over-constraint it can never spend down.
-        //   * the HEAD — the real start sits up to a minute ABOVE `s`, so every
-        //     site that bounds a start from ABOVE owes `startSlackMin`: the four
-        //     families in `inRuns` and `startHi` in the feed-order expressions.
-        //     The day-cap literal is the one upper bound that does not, because
-        //     a day boundary is always on a minute.
-        //   * the SLACK ITSELF is not free — it refuses placements that are
-        //     really legal. Where the original placement is known to be legal in
-        //     milliseconds, it is added back as an explicit escape (`isStill`)
-        //     rather than left as a lost minute.
-        const startAt = still ? a.startAt : startMin * MS_PER_MIN;
-        solved.set(d.fixtureId, {
-          ...a,
-          startAt,
-          endAt: startAt + d.durationMs,
-          court: courts[ci] ?? a.court,
-        });
-        if (!still) moved.push(d.fixtureId);
+      // IN A `finally`, exactly as `build.ts`'s `withModel` does it.
+      //
+      // `ModelImpl` uses the same FinalizationRegistry `StatisticsImpl` does,
+      // and `rlimitCount` in `build.ts` documents at length why leaving that
+      // registry to collect one WASM handle per `check()` is not safe here: it
+      // corrupted the heap and aborted a probe inside
+      // `smt::relevancy_propagator_imp::pop` — i.e. at the next `pop()`, which
+      // is the line just below this block, rather than anywhere near the leak.
+      //
+      // This used to release after the loop, arguing that nothing in between
+      // could throw. That was not true: `proposalById.get(d.fixtureId)!` is a
+      // non-null assertion over a Map keyed by the CALLER's proposal, and a
+      // domain naming a fixture the proposal does not carry reaches `a.startAt`
+      // below and throws. Rare, and it is the encoder-drift class of bug — which
+      // is precisely when a corrupted heap on top of the real error is worst.
+      try {
+        for (let i = 0; i < domains.length; i++) {
+          const d = domains[i]!;
+          const a = proposalById.get(d.fixtureId)!;
+          const startMin = intOf(start[i]!);
+          const ci = intOf(courtVar[i]!);
+          const still = startMin === origStartMin[i]! && ci === origCourtIdx[i]!;
+          // A fixture that did not move keeps its ORIGINAL instant to the
+          // millisecond. Round-tripping it through minutes would rewrite a board
+          // the organiser may already have published.
+          //
+          // This is the one place the board leaves the minute grid, and it is what
+          // every rounding decision above is written against. Three consequences,
+          // and missing any one of them ships a clash:
+          //
+          //   * the TAIL — `origStartMin` floors, so the interval z3 reasoned
+          //     about must be `[origStartMin, origStartMin + durMinStill]` to
+          //     contain what is emitted here. `durMinStill` is charged only on
+          //     this branch (`endOf`), because a fixture that DID move is exactly
+          //     on the grid and paying for a fraction it no longer has is
+          //     over-constraint it can never spend down.
+          //   * the HEAD — the real start sits up to a minute ABOVE `s`, so every
+          //     site that bounds a start from ABOVE owes `startSlackMin`: the four
+          //     families in `inRuns` and `startHi` in the feed-order expressions.
+          //     The day-cap literal is the one upper bound that does not, because
+          //     a day boundary is always on a minute.
+          //   * the SLACK ITSELF is not free — it refuses placements that are
+          //     really legal. Where the original placement is known to be legal in
+          //     milliseconds, it is added back as an explicit escape (`isStill`)
+          //     rather than left as a lost minute.
+          const startAt = still ? a.startAt : startMin * MS_PER_MIN;
+          solved.set(d.fixtureId, {
+            ...a,
+            startAt,
+            endAt: startAt + d.durationMs,
+            court: courts[ci] ?? a.court,
+          });
+          if (!still) moved.push(d.fixtureId);
+        }
+      } finally {
+        model.release();
       }
       solver.pop();
       // Caller order out, fixtureId order for `moved` — both fixed, so the same

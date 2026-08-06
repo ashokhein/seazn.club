@@ -331,11 +331,16 @@ async function resolveCompetitionScope(
   if (requested.length < 2) {
     throw new HttpError(400, "use the division schedule page to plan a single division", SINGLE_DIVISION);
   }
+  // OUTSIDE the transaction: the freeze lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. An unknown competition is never a
+  // member of the frozen set, so the entity's own 404 still fires first.
+  await assertCompetitionNotFrozen(auth.orgId, competitionId);
+
   return withTenant(auth.orgId, async (tx) => {
     const [comp] = await tx<{ id: string }[]>`
       select id from competitions where id = ${competitionId}`;
     if (!comp) throw new HttpError(404, "competition not found");
-    await assertCompetitionNotFrozen(auth.orgId, competitionId, tx);
     const rows = await tx<
       { id: string; name: string; schedule_locked: boolean | null; movable: number; org_tz: string | null }[]
     >`

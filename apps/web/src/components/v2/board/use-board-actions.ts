@@ -8,8 +8,18 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
-import { dayKey } from "@/lib/schedule-board";
+import { dayKey, PUBLISH_BLOCKED, PUBLISH_UNACKNOWLEDGED } from "@/lib/schedule-board";
 import type { FeedLabelPair } from "@/lib/schedule-board";
+import type {
+  AutoScheduleRequest,
+  ScheduleMetrics,
+  ScheduleSolverInfo,
+} from "@/server/api-v1/schemas";
+
+/** Which solver a run is asking for. Off the request schema rather than
+ *  re-declared, so a fourth mode cannot appear on the wire without every caller
+ *  here being typechecked against it. */
+export type AutoScheduleMode = AutoScheduleRequest["mode"];
 import {
   CONFLICT_HELP,
   cardTitle,
@@ -19,6 +29,21 @@ import {
 } from "./types";
 
 type Override = { scheduled_at: string | null; court_label: string | null; schedule_locked: boolean };
+
+/**
+ * A publish/start refusal from the server-side validation gate, carried back to
+ * the caller intact.
+ *
+ * `kind` is derived from the CODE, never from the conflict rows: the two are not
+ * interchangeable. `conflict.start_window` is non-blocking and `warn.window` IS
+ * blocking, so a client that recomputed "is anything blocking" from the list
+ * would disagree with the server that produced it — and would offer a "publish
+ * anyway" button that can only ever 422 again.
+ */
+export interface GateRefusal {
+  kind: "blocking" | "warnings";
+  conflicts: BoardConflict[];
+}
 
 export interface BoardActions {
   board: BoardFixture[];
@@ -35,6 +60,25 @@ export interface BoardActions {
   checkFailed: boolean;
   /** A conflicts check is in flight; the manual retry is disabled while it is. */
   checking: boolean;
+  /**
+   * Board quality + solver telemetry from the LAST auto/re-flow run, for the
+   * result strip. Null whenever the wire did not carry them — the strip stays
+   * away rather than reporting zeros.
+   *
+   * CLEARED BY EVERY BOARD WRITE, not only by the next run. The strip describes
+   * a board; the instant that board is edited, every number on it is about a
+   * timetable that no longer exists — drag one card after an auto pass and
+   * "Scheduled 6/6 · Total length 1h 30m" is a statement about the board before
+   * the drag. It used to be set and cleared inside `autoRun` alone, so it
+   * outlived `moveCard`, `togglePin`, `shiftDay`, `swapCourts` and `act`.
+   *
+   * `togglePin` clears it too, even though a pin moves no card and invalidates
+   * no number the strip prints. "Which writes invalidate which cell" is a
+   * judgement the next person would have to re-make, correctly, for every cell
+   * added later; "every write clears it" cannot rot. Pinned by
+   * `__tests__/result-strip-wiring.test.tsx`.
+   */
+  lastRun: { metrics: ScheduleMetrics; solver: ScheduleSolverInfo } | null;
   /** Re-run the check NOW, not on the 400ms debounce. A button whose effect
    *  starts half a second later is indistinguishable from a dead one. */
   revalidate: () => Promise<void>;
@@ -42,8 +86,33 @@ export interface BoardActions {
   setNotice: (n: string | null) => void;
   moveCard: (fixtureId: string, atIso: string | null, court: string | null) => Promise<boolean>;
   togglePin: (f: BoardFixture) => Promise<void>;
-  autoRun: (stageId: string, onlyUnlocked: boolean) => Promise<void>;
-  act: (path: string, done: string) => Promise<void>;
+  /**
+   * Propose + apply for one stage.
+   *
+   * `mode` is OMITTED by the two original callers and that is the contract, not
+   * an oversight: `AutoScheduleRequest` derives it from `only_unlocked` server
+   * side (absent or true -> reflow, false -> build), and the derivation is pinned
+   * there. Sending it from here as well would move the decision to the client
+   * with nothing to notice when the two definitions drift.
+   *
+   * POLISH is the exception, because it is the one mode `only_unlocked` cannot
+   * express: it re-flows the unlocked cards exactly as REFLOW does, and asks the
+   * tier solver to improve the board rather than the repair solver to make it
+   * legal.
+   */
+  autoRun: (stageId: string, onlyUnlocked: boolean, mode?: AutoScheduleMode) => Promise<void>;
+  /**
+   * Publish / start. Resolves to `null` when the action landed, and to the
+   * gate's refusal when the server would not put this board in front of players
+   * (#230 item 2 follow-up) — the caller opens the confirm dialog on that and
+   * calls back with `acknowledgeWarnings: true`.
+   *
+   * A refusal is deliberately a RETURN VALUE rather than a thrown error routed
+   * through `fail`: `fail` renders one sentence and discards `extra.conflicts`,
+   * and the whole point here is to show the organiser which conflicts and offer
+   * the way through.
+   */
+  act: (path: string, done: string, acknowledgeWarnings?: boolean) => Promise<GateRefusal | null>;
   shiftDay: (day: string, minutes: number) => Promise<void>;
   swapCourts: (day: string, a: string, b: string) => Promise<void>;
   queueValidate: () => void;
@@ -66,6 +135,7 @@ export function useBoardActions(
   const [busy, setBusy] = useState(false);
   const [checkFailed, setCheckFailed] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [lastRun, setLastRun] = useState<BoardActions["lastRun"]>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Monotonic ticket per conflicts check — see `runValidate`. */
   const validateSeq = useRef(0);
@@ -171,6 +241,19 @@ export function useBoardActions(
         setNotice(msg("board.stale"));
         router.refresh();
         return true;
+      } else if (err instanceof ApiV1Error && err.code === "RATE_LIMITED") {
+        // The per-org solver cooldown (AUTO_SCHEDULE_COOLDOWN, usecases/
+        // schedule.ts). A NOTICE, not an error, and the register is deliberate:
+        // this is the same class of outcome as `solver_busy` — ordinary,
+        // transient, entirely outside the organiser's hands, and the same click
+        // a few minutes later works. Red styling would suggest their board is
+        // wrong, and nothing about it is.
+        //
+        // Keyed on the CODE, not on the message: /api/v1 maps every 429 to
+        // RATE_LIMITED (server/api-v1/http.ts), and the limiter's own message is
+        // hardcoded English. The board is the only surface that calls a limited
+        // endpoint, so the code is unambiguous here.
+        setNotice(msg("board.action.cooldown"));
       } else if (err instanceof ApiV1Error && err.code === "SCHEDULE_CONFLICT") {
         const list = (err.extra.conflicts as BoardConflict[] | undefined) ?? [];
         const titleOf = (id: string) => {
@@ -214,6 +297,8 @@ export function useBoardActions(
       setError(null);
       const prev = board.find((f) => f.id === fixtureId);
       if (!prev || prev.status !== "scheduled") return false;
+      // After the two guards, so a refused drag does not throw the report away.
+      setLastRun(null);
       setOverrides((o) => ({
         ...o,
         [fixtureId]: {
@@ -252,6 +337,7 @@ export function useBoardActions(
     async (f: BoardFixture) => {
       if (!canEdit) return;
       setError(null);
+      setLastRun(null);
       try {
         await apiV1(`/api/v1/fixtures/${f.id}`, {
           method: "PATCH",
@@ -267,18 +353,33 @@ export function useBoardActions(
   );
 
   const autoRun = useCallback(
-    async (stageId: string, onlyUnlocked: boolean) => {
+    async (stageId: string, onlyUnlocked: boolean, mode?: AutoScheduleMode) => {
       setError(null);
       setNotice(null);
+      setLastRun(null);
       setBusy(true);
       try {
         const out = await apiV1<{
           assignments: { fixture_id: string; scheduled_at: string; court_label: string }[];
           conflicts: BoardConflict[];
+          // OPTIONAL on purpose, even though Task 9 now populates both: a cached
+          // response, or a server one deploy behind, carries neither. Typing
+          // them as required here would render a strip full of zeros instead of
+          // no strip at all, which is the worse of the two failures.
+          metrics?: ScheduleMetrics;
+          solver?: ScheduleSolverInfo;
         }>(`/api/v1/stages/${stageId}/schedule/auto`, {
           method: "POST",
-          json: { only_unlocked: onlyUnlocked },
+          // Spread, not `mode: mode` — an explicit `undefined` serialises as a
+          // present key on some paths and the request schema's preprocess keys
+          // on `body.mode !== undefined`, so it would defeat the derivation the
+          // two original callers depend on.
+          json: { only_unlocked: onlyUnlocked, ...(mode !== undefined ? { mode } : {}) },
         });
+        // Before the empty-proposal return, not after: an `infeasible` run can
+        // place nothing at all, and that is exactly the run whose report the
+        // organiser most needs.
+        if (out.metrics && out.solver) setLastRun({ metrics: out.metrics, solver: out.solver });
         if (out.assignments.length === 0) {
           setNotice(msg("board.action.nothingStage"));
           return;
@@ -314,16 +415,40 @@ export function useBoardActions(
   );
 
   const act = useCallback(
-    async (path: string, done: string) => {
+    async (path: string, done: string, acknowledgeWarnings = false): Promise<GateRefusal | null> => {
       setError(null);
       setNotice(null);
+      setLastRun(null);
       setBusy(true);
       try {
-        await apiV1(path, { method: "POST" });
+        // No body unless the organiser is acknowledging: publish and start both
+        // parse an ABSENT body as `{}`, and every existing API-key client POSTs
+        // them with none. Sending `{}` unconditionally would work but would make
+        // "the console always sends a body" a fact the server then has to keep
+        // true; sending nothing keeps the two paths identical to today's.
+        await apiV1(path, {
+          method: "POST",
+          json: acknowledgeWarnings ? { acknowledge_warnings: true } : undefined,
+        });
         setNotice(done);
         router.refresh();
+        return null;
       } catch (err) {
+        // The gate's two refusals are NOT errors to render as a red toast —
+        // they are a question with an answer, or a report. `fail` would flatten
+        // both into a sentence and throw the conflict list away, which is
+        // exactly the dead end this follow-up exists to remove.
+        if (
+          err instanceof ApiV1Error &&
+          (err.code === PUBLISH_BLOCKED || err.code === PUBLISH_UNACKNOWLEDGED)
+        ) {
+          return {
+            kind: err.code === PUBLISH_BLOCKED ? "blocking" : "warnings",
+            conflicts: (err.extra.conflicts as BoardConflict[] | undefined) ?? [],
+          };
+        }
         fail(err);
+        return null;
       } finally {
         setBusy(false);
       }
@@ -337,6 +462,7 @@ export function useBoardActions(
     async (day: string, minutes: number) => {
       setBusy(true);
       setError(null);
+      setLastRun(null);
       try {
         for (const f of board) {
           if (f.scheduled_at === null || f.status !== "scheduled") continue;
@@ -367,6 +493,7 @@ export function useBoardActions(
     async (day: string, a: string, b: string) => {
       setBusy(true);
       setError(null);
+      setLastRun(null);
       try {
         for (const f of board) {
           if (f.scheduled_at === null || f.status !== "scheduled") continue;
@@ -429,6 +556,7 @@ export function useBoardActions(
     busy,
     checkFailed,
     checking,
+    lastRun,
     revalidate: runValidate,
     setError,
     setNotice,

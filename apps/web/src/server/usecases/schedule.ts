@@ -9,22 +9,29 @@ import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
 import { cacheDelPattern } from "@/lib/cache";
+import { rateLimit, type RateLimitConfig } from "@/lib/rate-limit";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { publishDivisionUpdate } from "@/lib/realtime";
-import { REASON_CODE } from "@/lib/schedule-board";
+import { PUBLISH_BLOCKED, PUBLISH_UNACKNOWLEDGED, REASON_CODE } from "@/lib/schedule-board";
 import { resolveVenueTz } from "@/lib/tz";
 import { EngineError } from "@seazn/engine/core";
 import {
+  boardMetrics,
+  buildSchedule,
   conflictKey,
   dayKeyInTz,
   deltaConflicts,
   isBlockingConflict,
+  repairSchedule,
+  RULE_BY_REASON,
   slotFixtures,
   validateAssignments,
   validateInstructionRules,
   ymdAddDays,
   zonedTimeToUtc,
   type Assignment,
+  type BuildResult,
+  type BuildStatus,
   type Conflict,
   type OrderDependency,
   type RuleFixture,
@@ -37,12 +44,17 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import {
   ScheduleConfig,
   type ApplyScheduleRequest,
+  type AutoScheduleRequest,
+  type PublishScheduleRequest,
   type PutScheduleSettings,
   type ScheduleConflict,
+  type ScheduleMetrics,
+  type ScheduleSolverInfo,
+  type StartDivisionRequest,
 } from "@/server/api-v1/schemas";
 import { sendOfficialAssignmentChangedEmail } from "@/lib/email";
 import { buildEngineConstraints } from "./engine-constraints";
-import { assertCompetitionNotFrozen } from "./entitlement-freeze";
+import { assertNotFrozen, frozenCompetitionIds } from "./entitlement-freeze";
 import { generateStageFixtures } from "./stages";
 import { schedulingAiModel, toRuleFixture } from "./schedule-ai";
 
@@ -148,11 +160,16 @@ export async function putScheduleSettings(
   if (usesConstraints(input.config)) {
     await requireFeature(auth.orgId, "scheduling.constraints");
   }
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+    assertNotFrozen(frozen, division.competition_id);
     // tz is tri-state (V305). An ABSENT key must not clobber the stored value:
     // the division settings form no longer offers a timezone at all, so every
     // console save omits it, and a save may never move a division's venue zone.
@@ -645,17 +662,105 @@ function assertNoNewBlocking(before: readonly Conflict[], after: readonly Confli
 // Auto pass (propose only — doc 12 §4: nothing persisted)
 // ---------------------------------------------------------------------------
 
+/**
+ * The lexicographic improvement targets `buildSchedule` walks (T0's placement
+ * count, then makespan, idle gap, court balance).
+ *
+ * MIRRORS `TIER_COUNT` in `packages/engine/src/scheduling/build.ts`, which is
+ * module-private there. It is not free-floating: `buildSchedule` returns
+ * `status: "already_optimal"` only when `tiersCompleted` reached the ladder's
+ * length, so a run that comes back `already_optimal` states the engine's number
+ * out loud. `__tests__/schedule-solver-telemetry.test.ts` drives exactly that
+ * run and compares, so a ladder that grows or shrinks in the engine reds here
+ * rather than shipping a wrong denominator to the board.
+ */
+export const TIERS_TOTAL = 4;
+
 export interface AutoScheduleOut {
   assignments: { fixture_id: string; scheduled_at: string; ends_at: string; court_label: string }[];
   conflicts: ScheduleConflict[];
+  /** Board quality of the proposal (Task 8's wire shape, filled here). */
+  metrics: ScheduleMetrics;
+  /** How the proposal was produced — telemetry, not policy. */
+  solver: ScheduleSolverInfo;
 }
 
+/**
+ * Everything the solve needs, read under one transaction and carried out of it.
+ *
+ * The split this type exists for is not tidiness. See `autoSchedule`.
+ */
+interface AutoSchedulePlan {
+  schedulable: SchedulableFixture[];
+  config: SlotConfig & VerifyConfig & { courts: string[] };
+  board: Assignment[];
+  /**
+   * The direct winner/loser feed edges of the whole division (#452).
+   *
+   * NOT OPTIONAL DECORATION, and the reason it is on the plan rather than
+   * rebuilt at each use is that all three consumers must read the SAME list.
+   * `slotFixtures` — the pass this wave replaced — walked fixtures in ascending
+   * round order, so a dependent could not physically land before its feeder and
+   * nothing had to be told about the edges. `buildSchedule` and `repairSchedule`
+   * place by search and have no such structural guarantee: both take
+   * `dependencies`, both encode it as a hard term, and `validateAssignments`
+   * reports `order` only for the edges it is handed.
+   *
+   * With the list absent all three went blind at once, and the two holes lined
+   * up into a wrong board rather than a missing warning: given a
+   * `feeder_to_dependent` rest rule the repair solver "satisfied" it by moving
+   * the final BEFORE its own semi-finals (measured: feeder end 09:30, final
+   * start 08:30), `validateInstructionRules` skips a dependent placed before its
+   * feeder on purpose, `order` had no edges to check — and the pass reported
+   * `conflicts: []` on a board `applySchedule`, which has always passed
+   * `feedDependencies(all)`, then answered with a blocking 409.
+   */
+  dependencies: OrderDependency[];
+  placedNow: Assignment[];
+  pinnedNow: Assignment[];
+  frozen: string[];
+  total: number;
+}
+
+/**
+ * The auto pass: propose only, nothing persisted (doc 12 §4).
+ *
+ * THREE PHASES, AND THE BOUNDARIES ARE LOAD-BEARING.
+ *
+ *   1. READ, under one transaction, into an `AutoSchedulePlan`.
+ *   2. SOLVE, with NO transaction open and no pooled connection held.
+ *   3. MAP, pure.
+ *
+ * Phase 2 must not run inside phase 1's transaction, and this is a hard rule
+ * rather than a preference. `withTenant` pins a pooled connection for the whole
+ * callback, and the solve is now up to `AUTO_SOLVER_WALL_MS` of z3, spent
+ * behind a strictly FIFO lock that a concurrent click may already be holding —
+ * so a solve inside the transaction is tens of seconds of idle-in-transaction
+ * per organiser click, and a handful of concurrent clicks exhausts the pool and
+ * stalls DB traffic for the entire application.
+ *
+ * That hazard did not exist before this wave: the in-transaction work used to be
+ * a synchronous `slotFixtures` pass. It arrived WITH the solver, which is
+ * exactly why it is called out here rather than assumed to be obvious.
+ *
+ * There is no second transaction, because this use case writes nothing. If a
+ * write tail is ever added it opens its own, after the solve.
+ *
+ * Pinned by `__tests__/schedule-auto-tx-boundary.test.ts`, structurally — it
+ * asserts the solver is entered at transaction depth 0, not that the call was
+ * fast, because a timing assertion is a flake on a loaded machine.
+ */
 export async function autoSchedule(
   auth: AuthCtx,
   stageId: string,
-  onlyUnlocked: boolean,
+  body: AutoScheduleRequest,
 ): Promise<AutoScheduleOut> {
-  return withTenant(auth.orgId, async (tx) => {
+  // ---- Phase 0: the cooldown. Before the read, before the solver, before
+  // anything that costs more than a Redis INCR.
+  await rateLimit(`auto-schedule:${auth.orgId}`, AUTO_SCHEDULE_COOLDOWN);
+
+  // ---- Phase 1: read. The connection goes back to the pool at the `}` below.
+  const plan = await withTenant(auth.orgId, async (tx): Promise<AutoSchedulePlan> => {
     const [stage] = await tx<{ division_id: string; competition_id: string }[]>`
       select s.division_id, d.competition_id
       from stages s join divisions d on d.id = s.division_id
@@ -684,6 +789,23 @@ export async function autoSchedule(
       settings.config.matchMinutes,
     );
 
+    // Re-flow unlocked (doc 12 §2): pinned cards are fixed obstacles;
+    // scope-locked fixtures (Jul3/03 §4 two-site safety) pin the same way.
+    // Hoisted out of the `schedulable` builder below because THREE things read
+    // it now — the `locked` anchor, REFLOW's incumbent board, and the set the
+    // repair solver may not move — and a second copy of this predicate is how
+    // the pin the solver honours and the pin the caller sees drift apart.
+    const pinnedIds = new Set(
+      movable
+        .filter(
+          (f) =>
+            body.only_unlocked &&
+            (f.schedule_locked || scopeLocked(f, scopes)) &&
+            f.scheduled_at !== null &&
+            f.court_label !== null,
+        )
+        .map((f) => f.id),
+    );
     const schedulable: SchedulableFixture[] = movable.map((f) => ({
       id: f.id,
       roundNo: f.round_no,
@@ -692,13 +814,8 @@ export async function autoSchedule(
       ...(f.home_entrant_id !== null ? { home: f.home_entrant_id } : {}),
       ...(f.away_entrant_id !== null ? { away: f.away_entrant_id } : {}),
       people: peopleOf(f, people),
-      // Re-flow remaining (doc 12 §2): pinned cards are fixed obstacles;
-      // scope-locked fixtures (Jul3/03 §4 two-site safety) pin the same way.
-      ...(onlyUnlocked &&
-      (f.schedule_locked || scopeLocked(f, scopes)) &&
-      f.scheduled_at !== null &&
-      f.court_label !== null
-        ? { locked: { court: f.court_label, startAt: ms(f.scheduled_at) } }
+      ...(pinnedIds.has(f.id)
+        ? { locked: { court: f.court_label as string, startAt: ms(f.scheduled_at as string | Date) } }
         : {}),
     }));
 
@@ -709,34 +826,591 @@ export async function autoSchedule(
     // placer's day tally and the referee below both count only the `existing`
     // rows `ruleFixtures` names, so without this the auto pass proposes a board
     // that breaches a competition-scoped cap and then reports it clean.
-    const config = toVerifyConfig(settings, all, roundToMinute(Date.now()), siblings.ruleFixtures);
     const board = [...obstacles, ...siblings.assignments];
-    const result = slotFixtures({ fixtures: schedulable, config, existing: board });
+
+    // Where the movable cards sit RIGHT NOW. REFLOW proposes from this rather
+    // than from nothing, so it is split by whether this run may move the card.
+    const placedNow = movable
+      .filter((f) => !pinnedIds.has(f.id) && f.scheduled_at !== null && f.court_label !== null)
+      .map((f) => toAssignment(f, settings.config.matchMinutes, people));
+    const pinnedNow = movable
+      .filter((f) => pinnedIds.has(f.id))
+      .map((f) => toAssignment(f, settings.config.matchMinutes, people));
+
+    const config = boundSolverWindow(
+      toVerifyConfig(settings, all, roundToMinute(Date.now()), siblings.ruleFixtures),
+      schedulable,
+      board,
+      // REFLOW alone proposes cards that are already placed, so REFLOW alone
+      // needs the window widened to contain them. Passing them on a BUILD would
+      // stretch the lattice around a board that pass is about to replace.
+      body.mode === "reflow" ? [...placedNow, ...pinnedNow] : [],
+    );
+
     return {
-      assignments: result.assignments.map((a) => ({
-        fixture_id: a.fixtureId,
-        scheduled_at: iso(a.startAt),
-        ends_at: iso(a.endAt),
-        court_label: a.court,
-      })),
-      // No baseline: the auto pass PROPOSES a board rather than editing one, so
-      // every conflict in it is this proposal's own doing (#399).
-      //
-      // `slotFixtures` PLACES; it does not referee typed rules — it reports only
-      // what it could not fit (`no_slot`, `start_window`, a pinned collision).
-      // So a durable rule the placer has no term for would come back clean from
-      // the one surface an organiser uses to build a board. The AI path answers
-      // this the same way: place, then run the referee over the proposal
-      // (`verifyConfig`). Only `validateInstructionRules` is run here, not the
-      // whole verifier, so this proposal reports exactly the typed rules it was
-      // missing and does not start emitting rest/overlap rows the auto pass has
-      // never emitted.
-      conflicts: mapConflicts([
-        ...result.conflicts,
-        ...validateInstructionRules(result.assignments, config, board),
-      ]),
+      schedulable,
+      config,
+      board,
+      // Over `all`, not over `movable`: `feedDependencies` keeps only edges whose
+      // BOTH ends are in the list it is given, and a semi already decided (so not
+      // movable) still constrains the final it feeds. The same argument every
+      // other surface passes — `applySchedule`, the move gate and the board
+      // report all call `feedDependencies(all)`.
+      dependencies: feedDependencies(all),
+      placedNow,
+      pinnedNow,
+      frozen: frozenIds(movable, scopes),
+      total: schedulable.length,
     };
   });
+
+  // ---- Phase 2: solve. Nothing below here holds a database connection.
+  //
+  // Three modes, ONE config (design D2). BUILD and POLISH go to the tier solver;
+  // REFLOW goes to the repair solver, because "the fewest cards moved" is a
+  // property an ascending-k walk proves and a re-place cannot — `slotFixtures`
+  // re-places every unlocked card even when nothing is wrong, which is the
+  // defect this mode replaces.
+  const { schedulable, config, board, dependencies, total } = plan;
+  /**
+   * The organiser's board as it stands — every movable card that currently has a
+   * time, whether or not this run may move it.
+   *
+   * POLISH ONLY, and that is the whole of ruling R20. `BuildInput.current` does
+   * two things the engine cannot do for itself: it is the baseline `moved` and
+   * `lost` are measured against, and it is where a `frozen` id with no `locked`
+   * anchor gets pinned. Without it POLISH measured its churn against a board
+   * greedy invented during the run — so a pass that relocated every card
+   * reported "nothing moved" — and froze published cards onto slots nobody had
+   * ever seen, which is the exact opposite of the mode's purpose.
+   *
+   * NOT sent on BUILD. A fresh full pass is not a rearrangement of anything, and
+   * anchoring its churn to a board it was asked to replace would report every
+   * card as moved by definition.
+   *
+   * EMPTY MEANS NO BOARD, and the array is withheld rather than sent empty. The
+   * engine draws the same line (`input.current.length > 0 ? … : undefined`), so
+   * this is belt-and-braces on today's engine rather than an independently
+   * observable guard — kept because the alternative reading of `[]` is "every
+   * card moved and every card was lost" on a stage nobody has ever scheduled,
+   * and that is too sharp an edge to leave to one package's internals.
+   */
+  const currentBoard = [...plan.placedNow, ...plan.pinnedNow];
+  /**
+   * The solvers are called DIRECTLY. Nothing wraps them here, and the absence is
+   * deliberate (R17).
+   *
+   * There used to be a `withZ3Teardown` helper around this call whose
+   * `finally { await resetZ3() }` handed the WASM heap back. It was redundant by
+   * the time it was reviewed — `buildSchedule` and `repairSchedule` each run
+   * under the engine's own `withZ3LockAndReset`, so the heap is already freed
+   * INSIDE the lock, which is where it has to happen for the bound to be per
+   * solve rather than per burst — and it was actively harmful:
+   *
+   *   * `withZ3Lock` is a strict FIFO promise chain and `resetZ3` takes it, so
+   *     the no-op reset queued BEHIND every solve already waiting. Three
+   *     concurrent clicks: the first solve finished at ~8s and its HTTP response
+   *     landed at ~24s.
+   *   * it defeated the queue cap outright. `buildSchedule` answers
+   *     `solver_busy` with a greedy board WITHOUT taking the lock, precisely so
+   *     the third caller need not wait — and this `finally` made that immediate
+   *     answer wait out two full budgets anyway.
+   *
+   * `z3-load.ts` names this exact spelling as the anti-pattern, in the comment
+   * over `withZ3LockAndReset`. Teardown belongs to the engine because the next
+   * entry point to call a solver re-introduces the OOM simply by not knowing
+   * about it. Pinned by `schedule-auto-solver-busy-latency.test.ts`.
+   */
+  const out: BuildResult | ReflowResult = await (body.mode === "reflow"
+    ? // Pinned cards are handed separately from the rest: the solver may not
+      // move them, but they are still part of the proposal it hands back.
+      reflowExisting({
+        schedulable,
+        config,
+        board,
+        dependencies,
+        placed: plan.placedNow,
+        pinned: plan.pinnedNow,
+      })
+    : buildSchedule({
+        fixtures: schedulable,
+        config,
+        existing: board,
+        dependencies,
+        wallMs: AUTO_SOLVER_WALL_MS,
+        ...(body.mode === "polish"
+          ? {
+              frozen: plan.frozen,
+              ...(currentBoard.length > 0 ? { current: currentBoard } : {}),
+            }
+          : {}),
+      }));
+
+  /**
+   * REFLOW's first-time-placement count, absent on the two modes that cannot
+   * distinguish one. Read out here rather than through an `in` narrowing at the
+   * spread below, where `ReflowResult` being assignable to `BuildResult` makes
+   * the narrowed property `unknown`.
+   *
+   * ANNOTATED, and the `typeof` guard is not decoration: hoisting the `in` out
+   * of the spread moved the problem rather than solving it. `in` on a type
+   * that does not declare the key narrows the property to `{} | null`, which is
+   * not assignable to `ScheduleSolverInfo["seeded"]` — and the object literal
+   * below reports only its FIRST incompatible property, so for as long as
+   * `status` was also wrong this error was invisible.
+   */
+  const seeded: number | undefined =
+    "seeded" in out && typeof out.seeded === "number" ? out.seeded : undefined;
+
+  // ---- Phase 3: map. Pure.
+  return {
+    assignments: out.assignments.map((a) => ({
+      fixture_id: a.fixtureId,
+      scheduled_at: iso(a.startAt),
+      ends_at: iso(a.endAt),
+      court_label: a.court,
+    })),
+    // No baseline: the auto pass PROPOSES a board rather than editing one, so
+    // every conflict in it is this proposal's own doing (#399).
+    //
+    // WIDER THAN IT USED TO BE, deliberately. This pass previously reported only
+    // what the placer could not fit (`no_slot`, `start_window`, a pinned
+    // collision) plus the typed-rule referee; it now also carries the FULL
+    // verifier's rows, because `buildSchedule` and `reflowExisting` both run
+    // `validateAssignments` over the board they produce. So rest and overlap
+    // rows the auto pass never emitted can now appear.
+    //
+    // That is the point of the programme — a board that breaches a rule should
+    // say so on the surface the organiser builds it from — but it has a sharp
+    // edge worth naming: REFLOW is the DEFAULT mode, and on `timeout` or
+    // `infeasible` it hands back the organiser's ORIGINAL board and verifies
+    // THAT. A board they have been living with can therefore come back carrying
+    // blocking rows they have never been shown before. Pinned exactly, board and
+    // row for row, by `schedule-reflow-verifier-widening.test.ts`.
+    //
+    // `validateInstructionRules` derives its own rule stream and shares no row
+    // with `validateAssignments` (which reads only the `min_rest_minutes`
+    // subset, and only to raise a pair's bound), so the two lists concatenate
+    // without double-reporting.
+    conflicts: mapConflicts([
+      ...out.conflicts,
+      ...validateInstructionRules(out.assignments, config, board),
+    ]),
+    metrics: {
+      makespan_minutes: out.metrics.makespanMinutes,
+      worst_idle_gap_minutes: out.metrics.worstIdleGapMinutes,
+      court_imbalance_minutes: out.metrics.courtImbalanceMinutes,
+      placed: out.metrics.placed,
+      total,
+    },
+    solver: {
+      engine: out.engine,
+      status: out.status,
+      // The mode the CALLER asked for, not a property of the result. `engine`
+      // names what produced the board and cannot stand in for it: an expired
+      // REFLOW and a BUILD that ran out before its first tier are both
+      // `greedy` / `budget_expired` / `tiersCompleted: 0` / `tiers_total: 4`,
+      // and only one of them was ever on a tier ladder.
+      mode: body.mode,
+      tiers_completed: out.tiersCompleted,
+      tiers_total: TIERS_TOTAL,
+      budget_expired: out.budgetExpired,
+      elapsed_ms: out.elapsedMs,
+      moved: out.moved,
+      // Relocations and losses are separate counts since R21. Forwarded on every
+      // mode: it is 0 wherever the run had no baseline to lose from, and that 0
+      // is a fact rather than a placeholder.
+      lost: out.lost,
+      // REFLOW only — the one path that can tell a first-time placement from a
+      // relocation. BUILD and POLISH re-place everything by definition, so the
+      // distinction does not arise and the field stays off the payload.
+      ...(seeded !== undefined ? { seeded } : {}),
+      // Forwarded, never synthesised: absence on an `infeasible` result is
+      // the engine SAYING the proof is about the board rather than the pins.
+      ...(out.contradictoryPins !== undefined
+        ? { contradictory_pins: [...out.contradictoryPins] }
+        : {}),
+    },
+  };
+}
+
+/** How much room past the work the solver is given to rearrange inside, when the
+ *  competition itself sets no end date. A day, not a year — and the size is
+ *  MEASURED, not a taste: see `boundSolverWindow`. */
+const SOLVER_SLACK_MS = 24 * 60 * MS_PER_MIN;
+
+/**
+ * The wall the auto pass gives a solver, overriding the engine's 30-second
+ * default.
+ *
+ * `autoSchedule` is a SYNCHRONOUS request an organiser is watching, so the
+ * engine's own cap is the wrong one here: measured on a 15-fixture, 2-court
+ * board it is spent in full, every time, and hands back a 30-second HTTP
+ * response for a board that stopped improving long before.
+ *
+ * 8 seconds is where the measurements level off. On that same board 2s and 5s
+ * differ (court imbalance 90 -> 30 minutes) and 5s and 10s do not; small boards
+ * finish and prove themselves optimal in well under a second regardless.
+ *
+ * Expiring is ORDINARY, not a failure: `budget_expired` rides the wire and the
+ * result strip says how many improvement targets the run got through. What is
+ * NOT ordinary is reading the flag as "not optimal" — optimality is
+ * `tiers_completed === tiers_total`; a term or metric drift exits a tier without
+ * ever setting it.
+ *
+ * Task 13's bench sets the DETERMINISTIC budget (`rlimit`); this is only the
+ * outer safety cap, and should be revisited once that lands.
+ */
+export const AUTO_SOLVER_WALL_MS = 8_000;
+
+/**
+ * The per-ORG cooldown on the auto pass. Ten runs per five minutes.
+ *
+ * WHY PER-ORG AND NOT GLOBAL. The resource being protected is a SERIALISED one:
+ * `withZ3Lock` is a correctness device, not a throughput knob (`resetZ3` kills
+ * pthreads process-wide), so every solve on an instance runs one at a time, for
+ * up to `AUTO_SOLVER_WALL_MS`. The failure mode is therefore one org
+ * monopolising a queue everybody shares, not aggregate load — and a global
+ * limiter would punish precisely the tenants being starved. The key is the org.
+ *
+ * WHERE THE NUMBERS COME FROM. Ten runs x 8s is 80s of solver inside a 300s
+ * window, so one org can never take more than ~27% of an instance's solver
+ * capacity however hard it is driven — while a human organiser iterating on a
+ * board is never blocked, because ten is enough to try all three buttons
+ * (Auto / Re-flow / Polish) three times over with a settings change between
+ * each. Anyone clicking faster than one run per 30 seconds sustained is not
+ * reading the results.
+ *
+ * BOTH NUMBERS ARE POLICY, not a derived constant — they are here to be moved.
+ *
+ * FAIL-OPEN, deliberately, and matching every other limiter on this surface
+ * (`ai-plan` 5/hr, `ai-plan-competition` 3/hr, `ai-officials` 5/hr). A Redis
+ * outage must not delete the feature for every tenant at once, and the queue cap
+ * (`MAX_SOLVER_QUEUE`) still bounds what a burst can occupy while it is down.
+ * Note this also makes the limiter INERT with no REDIS_URL — local dev, e2e and
+ * the test suite — so it is a production control, and any test of it has to mock
+ * `incrWindow` to make it real (`schedule-auto-cooldown.test.ts` does).
+ *
+ * IT MUST NOT SLOW THE FAST REFUSAL. `buildSchedule` answers `solver_busy` with
+ * a greedy board WITHOUT taking the z3 lock once two solves are in flight,
+ * precisely so the third caller need not wait out two full budgets — a
+ * `withZ3Teardown` wrapper destroyed that property earlier in this wave and was
+ * deleted for it. This limiter is one Redis INCR ahead of everything, on no
+ * lock and no queue, so the refusal path is unchanged; pinned by
+ * `schedule-auto-solver-busy-latency.test.ts`, which now runs with the limiter
+ * live for exactly that reason.
+ */
+export const AUTO_SCHEDULE_COOLDOWN: RateLimitConfig = { max: 10, windowSeconds: 300 };
+
+/**
+ * A FINITE search window, replacing an open-ended one.
+ *
+ * IT REPLACES A BOUND THE VERIFIER ALSO READS — this is not a solver-only knob,
+ * and pretending otherwise is how `mustContain` came to be needed. The returned
+ * config is the SAME object handed to `validateAssignments` and
+ * `validateInstructionRules`, so narrowing `window` narrows what counts as a
+ * `window` conflict too. The clamp is therefore built to be wider than anything
+ * the run can legally produce, never tighter, and every bound below is chosen on
+ * that basis.
+ *
+ * `applyWindow` answers an open-ended competition with `±Infinity`, and for the
+ * verifier that is exactly right — a bound nothing can breach enforces nothing.
+ * The SOLVERS cannot take it: `buildGrid` derives its day buckets from this
+ * window through `calendarDaysCovering`, and `dayKeyInTz(Infinity)` throws
+ * `RangeError: Invalid time value`. A division with a start date and no end date
+ * is the ordinary case, so unclamped the whole auto pass 500s on it.
+ *
+ * Two bounds that are NOT interchangeable:
+ *
+ *   * the open end is clamped to the WORK — the greedy board proves how much
+ *     time these fixtures actually need, and the solver gets that plus
+ *     `SOLVER_SLACK_MS` (one day) to rearrange inside. Wider is not free and not
+ *     neutral: the lattice is capped
+ *     at `MAX_SLOTS`, and `buildGrid` answers an overflow by returning NOTHING,
+ *     which drops `buildSchedule` straight back onto the greedy board it was
+ *     asked to improve. A 365-day horizon over two courts is ~35k slots — the
+ *     solver would be silently inert on exactly the configs it exists for.
+ *   * the open START is clamped to `config.startAt`, or to a pinned card if one
+ *     sits earlier. A pin is admitted to the lattice unconditionally, so a
+ *     window that excluded it would hand back a `window` conflict on a card
+ *     nobody asked to move.
+ *
+ * A window with two finite bounds is returned untouched: the competition's own
+ * dates are the answer whenever it has them.
+ */
+export function boundSolverWindow<T extends SlotConfig & VerifyConfig>(
+  config: T,
+  fixtures: readonly SchedulableFixture[],
+  existing: readonly Assignment[],
+  /**
+   * Cards that will be IN the proposal already placed — REFLOW's incumbent
+   * board. They must be inside the window even though nothing asked to move
+   * them: `validateAssignments` bounds `assignments` and not `existing`, so a
+   * card the organiser parked three days out would otherwise come back with a
+   * BLOCKING `window` conflict the moment the clamp closed in front of it.
+   * Empty for BUILD and POLISH, which propose from scratch.
+   */
+  mustContain: readonly Assignment[] = [],
+): T {
+  const w = config.window;
+  if (w !== undefined && Number.isFinite(w.from) && Number.isFinite(w.to)) return config;
+
+  const pins = fixtures.flatMap((f) => (f.locked !== undefined ? [f.locked.startAt] : []));
+  const from =
+    w !== undefined && Number.isFinite(w.from)
+      ? w.from
+      : Math.min(config.startAt, ...pins, ...mustContain.map((a) => a.startAt));
+  // MEASURED, not invented: the greedy pass is the same one `buildSchedule`
+  // runs first, so this is the span the fixtures demonstrably occupy.
+  const seed = slotFixtures({ fixtures, config, existing });
+  const to =
+    w !== undefined && Number.isFinite(w.to)
+      ? w.to
+      : Math.max(
+          from,
+          ...seed.assignments.map((a) => a.endAt),
+          ...pins.map((t) => t + config.matchMinutes * MS_PER_MIN),
+          ...mustContain.map((a) => a.endAt),
+        ) + SOLVER_SLACK_MS;
+  return { ...config, window: { from, to } };
+}
+
+/**
+ * POLISH's frozen set: every card this run may not move.
+ *
+ * LOCKS ONLY, per ruling R5 — there is no per-fixture published flag to freeze
+ * on, so "the cards an entrant has already been told about" is approximated by
+ * the cards the organiser pinned.
+ *
+ * Locked and scope-locked cards already carry a `locked` anchor on their
+ * `SchedulableFixture` when `only_unlocked` is set — which is how the polish
+ * button calls it — so naming them here is belt-and-braces on that branch and
+ * the only binding on the other one.
+ *
+ * KNOWN GAP, and it is the engine's, not this call's: `BuildInput` carries no
+ * published-board field, so `buildSchedule` anchors a `frozen` id WITHOUT a
+ * `locked` placement to greedy's own re-placement rather than to where the card
+ * actually sits. Under `only_unlocked: false` that means POLISH freezes a slot
+ * the organiser never saw. Flagged in `build.ts` for Task 6/7; until it lands,
+ * POLISH is only a true freeze on the `only_unlocked: true` call.
+ */
+function frozenIds(
+  movable: readonly FixtureLite[],
+  scopes: readonly LockedScope[],
+): string[] {
+  return movable
+    .filter(
+      (f) =>
+        (f.schedule_locked || scopeLocked(f, scopes)) &&
+        f.scheduled_at !== null &&
+        f.court_label !== null,
+    )
+    .map((f) => f.id);
+}
+
+/**
+ * REFLOW: the board as it stands IS the proposal, and `repairSchedule` finds the
+ * fewest moves that make it legal. A board with nothing wrong comes back k = 0
+ * and moves nothing, which is exactly what `slotFixtures` could not express.
+ *
+ * The result is mapped onto a `BuildResult` so the caller has one shape for all
+ * three modes. Two rules govern that mapping and both are load-bearing:
+ *
+ *   * a `timeout` or an `infeasible` returns the ORIGINAL board, never a
+ *     partially-repaired one. A half-repaired board is worse than the board the
+ *     organiser already has, because it has been moved without being fixed.
+ *   * `tiersCompleted` is 0 and stays 0: the repair solver has no tier ladder,
+ *     and reporting a number from a ladder it never walked would make an
+ *     optimality claim (`tiers_completed === tiers_total`) that nothing proved.
+ */
+/** A `BuildResult` plus the one fact only the REFLOW path is in a position to
+ *  know: how many of `moved` were cards it placed for the first time rather than
+ *  relocated. See `ScheduleSolverInfo.seeded` for why it is carried. */
+type ReflowResult = BuildResult & { seeded: number };
+
+async function reflowExisting(args: {
+  schedulable: readonly SchedulableFixture[];
+  /** Where the cards this run may move sit right now. */
+  placed: readonly Assignment[];
+  /** Cards this run may NOT move — obstacles to the solver, still part of the
+   *  proposal it hands back, exactly as `slotFixtures` returned them. */
+  pinned: readonly Assignment[];
+  config: SlotConfig & VerifyConfig & { courts: string[] };
+  board: readonly Assignment[];
+  /** The division's direct feed edges. Threaded to BOTH the repair solver and
+   *  the verifier in `settle` — see `AutoSchedulePlan.dependencies`. Wiring only
+   *  the solver would stop this mode PRODUCING an inverted board while leaving
+   *  it unable to REPORT one it was handed and cannot move. */
+  dependencies: readonly OrderDependency[];
+}): Promise<ReflowResult> {
+  const startedAt = Date.now();
+  const total = args.schedulable.length;
+  const immovable = [...args.board, ...args.pinned];
+  const onBoard = new Set(args.placed.map((a) => a.fixtureId));
+
+  // A repair solver MOVES cards; it cannot conjure one onto a board it is not
+  // on. "Re-flow unlocked" is fired from the UNSCHEDULED section of the stages
+  // panel, so the ordinary case is a stage where nothing is placed at all —
+  // under a bare `repairSchedule` that is a `clean` verdict over an empty
+  // proposal, and the organiser's click does nothing whatsoever. Greedy seeds
+  // exactly the cards with no placement yet; every card already on the board
+  // keeps the slot it has, which is the property this mode exists for.
+  const unseeded = args.schedulable.filter((f) => !onBoard.has(f.id) && f.locked === undefined);
+  const seed =
+    unseeded.length > 0
+      ? slotFixtures({
+          fixtures: unseeded,
+          config: args.config,
+          existing: [...immovable, ...args.placed],
+        })
+      : { assignments: [] as Assignment[], conflicts: [] as Conflict[] };
+  const proposal = [...args.placed, ...seed.assignments];
+  /**
+   * Cards this run PUT somewhere, as a set of ids.
+   *
+   * A greedy seed is a move. Counting only the repair solver's own moves made a
+   * run that scheduled an entire empty stage report `moved: 0`, and the result
+   * strip renders that as "nothing moved" — the plainest possible contradiction
+   * of what the organiser just watched happen.
+   *
+   * A SET, not a sum, because the repair solver may go on to move a card greedy
+   * has just seeded and that is one card touched, not two.
+   */
+  const seeded = new Set(seed.assignments.map((a) => a.fixtureId));
+  const touched = (alsoMoved: readonly string[] = []): number =>
+    new Set([...seeded, ...alsoMoved]).size;
+
+  const settle = (
+    assignments: readonly Assignment[],
+    status: BuildStatus,
+    engine: BuildResult["engine"],
+    moved: number,
+    budgetExpired: boolean,
+  ): ReflowResult => {
+    // The pinned cards rejoin the proposal here and NOT in `existing` above:
+    // they are this stage's cards, the caller applies the whole set, and
+    // `slotFixtures` has always returned them.
+    const full = [...assignments, ...args.pinned];
+    const placedIds = new Set(full.map((a) => a.fixtureId));
+    const conflicts: Conflict[] = validateAssignments(
+      full,
+      args.config,
+      args.board,
+      args.dependencies,
+    );
+    // `validateAssignments` answers for the rows it is handed and cannot report
+    // an ABSENCE, so a card nothing could place would come back clean.
+    //
+    // Two sources, in descending order of how well established they are:
+    // greedy's own diagnosis, which names the binding constraint, then a bare
+    // `no_slot`. The order is right; the FILTER on the first source is the part
+    // that has to be stated, and it is the engine's `conflictsFor` correction
+    // (a5b2c4d7) applied to this copy of the same rule.
+    //
+    // `seed.conflicts` is NOT "what greedy could not do". `slotFixtures` also
+    // files rows about cards it DID place — the `commit` person-overlap loop,
+    // and the clash it reports rather than fixes when a `locked` slot collides
+    // — and source 1 short-circuits the one below it. So a card greedy placed
+    // and something later removed (a repair path that stops being total over
+    // its proposal) was handed a row describing the placement greedy had just
+    // MADE, instead of the fact that the card is now on nobody's timetable.
+    // `person_overlap` is blocking, so that also shows the organiser a reason
+    // their board cannot be applied, about a card that is not on their board.
+    //
+    // `seeded` is the raw seed's placements — the same set `touched()` and the
+    // `seeded` count read. Deliberately not a second copy: two derivations of
+    // "what greedy placed" in one function is how this rule forked from the
+    // engine's in the first place.
+    for (const f of args.schedulable) {
+      if (placedIds.has(f.id)) continue;
+      const greedySaid = seeded.has(f.id)
+        ? []
+        : seed.conflicts.filter((c) => c.fixtureId === f.id);
+      if (greedySaid.length > 0) {
+        conflicts.push(...greedySaid);
+        continue;
+      }
+      conflicts.push({
+        fixtureId: f.id,
+        reason: "no_slot",
+        detail: "no legal slot in the lattice",
+        rule: RULE_BY_REASON.no_slot,
+      });
+    }
+    return {
+      assignments: full,
+      conflicts,
+      metrics: boardMetrics(full, args.config.courts, total),
+      engine,
+      status,
+      tiersCompleted: 0,
+      budgetExpired,
+      elapsedMs: Date.now() - startedAt,
+      moved,
+      seeded: seeded.size,
+      // REFLOW runs the repair solver, which is bounded by its own budget and
+      // never opens an LNS window, so neither of the build solver's two rlimit
+      // audit fields has a value to report here. Zero and empty are the honest
+      // readings, not placeholders: `rlimitSpent` is what THIS run drew from
+      // the build budget, and it drew nothing.
+      rlimitSpent: 0,
+      lnsWindowRlimits: [],
+      // `lost` is baseline rows this run could not place (R21). REFLOW's
+      // baseline is where the movable cards sit RIGHT NOW — `args.placed` —
+      // since `args.pinned` cannot move and rejoins `full` unconditionally.
+      //
+      // A TRIPWIRE, NOT A MEASUREMENT, and saying so is the point. No input
+      // this code can receive today makes it non-zero: `repairSchedule` is
+      // TOTAL over the proposal on every return path — `clean` hands back
+      // `[...proposal]` (repair.ts:287) and both `repaired` returns come off
+      // `proposal.map(…)` (repair.ts:1012), which is 1:1 by construction — and
+      // the `timeout` and `infeasible` arms below settle the proposal itself.
+      // `proposal` is `[...args.placed, …]`, so every baseline row is in it.
+      // Stubbing this to `lost: 0` therefore survives every functional reflow
+      // test in the suite; that is what makes it worth a comment.
+      //
+      // It is computed anyway because a repair that silently drops a card the
+      // organiser had scheduled is exactly the harm this number exists to
+      // surface, and totality is a property of TODAY's solver rather than a
+      // guarantee of the interface. `lost: 0` would hide the day that changes,
+      // and `moved` no longer carries it.
+      //
+      // But a guard nothing can trip is indistinguishable from dead code, so it
+      // is PROVEN live rather than argued for: `schedule-reflow-lost.test.ts`
+      // mocks a `repaired` result with one row removed and pins both ends — the
+      // count here, and the `no_slot` row the absence loop above raises for the
+      // dropped fixture. Do not delete this line without deleting that file.
+      lost: args.placed.filter((a) => !placedIds.has(a.fixtureId)).length,
+    };
+  };
+
+  const repaired = await repairSchedule({
+    proposal,
+    existing: immovable,
+    config: args.config,
+    dependencies: args.dependencies,
+    // The same wall the tier solver is held to. `repairSchedule`'s own default
+    // is 20s, and a clean board is answered without loading the WASM at all, so
+    // this only binds the run that is actually searching.
+    budgetMs: AUTO_SOLVER_WALL_MS,
+  });
+  switch (repaired.status) {
+    case "clean":
+      // `engine: "greedy"`, and NOT because nothing happened — `clean` is also
+      // the verdict after greedy has just seeded an entire empty stage, where
+      // the board is emphatically not untouched. It is because the REPAIR SOLVER
+      // changed nothing: whatever sits on this board came from greedy, and
+      // `engine` names where the board came from.
+      return settle(proposal, "ok", "greedy", touched(), false);
+    case "repaired":
+      return settle(repaired.assignments, "ok", "z3", touched(repaired.moved), false);
+    // A `timeout` and an `infeasible` both return the ORIGINAL board, so the
+    // only thing this run moved is whatever greedy seeded onto it.
+    case "timeout":
+      return settle(proposal, "ok", "greedy", touched(), true);
+    case "infeasible":
+      return settle(proposal, "infeasible", "greedy", touched(), false);
+  }
 }
 
 const roundToMinute = (t: number): number => Math.ceil(t / MS_PER_MIN) * MS_PER_MIN;
@@ -763,6 +1437,11 @@ export async function applySchedule(
   if (input.source === "manual" || input.assignments.some((a) => a.schedule_locked !== undefined)) {
     await requireFeature(auth.orgId, "scheduling.board");
   }
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   const out = await withTenant(auth.orgId, async (tx) => {
     const [stage] = await tx<{ division_id: string; competition_id: string }[]>`
       select s.division_id, d.competition_id
@@ -771,7 +1450,7 @@ export async function applySchedule(
     if (!stage) throw new HttpError(404, "stage not found");
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + stage.division_id}))`;
     await assertFreshSeq(tx, stage.division_id, input.expected_seq);
-    await assertCompetitionNotFrozen(auth.orgId, stage.competition_id, tx);
+    assertNotFrozen(frozen, stage.competition_id);
 
     const settings = await loadSettings(tx, stage.division_id);
     const all = await divisionFixtures(tx, stage.division_id);
@@ -996,6 +1675,11 @@ export async function moveFixture(
   if (patch.schedule_locked !== undefined) {
     await requireFeature(auth.orgId, "scheduling.board");
   }
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   const out = await withTenant(auth.orgId, async (tx) => {
     const [fixture] = await tx<
       (FixtureLite & { competition_id: string })[]
@@ -1009,7 +1693,7 @@ export async function moveFixture(
     if (!fixture) throw new HttpError(404, "fixture not found");
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + fixture.division_id}))`;
     await assertFreshSeq(tx, fixture.division_id, patch.expected_seq);
-    await assertCompetitionNotFrozen(auth.orgId, fixture.competition_id, tx);
+    assertNotFrozen(frozen, fixture.competition_id);
 
     // Single-fixture moves are board edits too — the whole-division freeze
     // must hold here exactly as it does for applySchedule (this is the route
@@ -1170,6 +1854,99 @@ export async function moveFixture(
 // Validate (full board report — doc 12 §4)
 // ---------------------------------------------------------------------------
 
+/**
+ * The full-board report, inside a transaction the CALLER owns (#230 item 2).
+ *
+ * Extracted from `validateSchedule` so the publish gate can run the identical
+ * pass inside its own transaction, after its advisory lock, rather than growing
+ * a second validation implementation. The placer/verifier fork is the recurring
+ * defect in this subsystem — it has been re-derived three times — and "publish
+ * sees exactly what the panel sees" is only a fact while there is ONE body here.
+ *
+ * `competitionId` is a parameter rather than a re-read: both callers have
+ * already selected the division row, and re-selecting it inside would make the
+ * gate's view of the world one statement newer than the lock's.
+ *
+ * THE OFFICIALS SQL BUCKETS ON `settings.orgTz`, NOT `settings.displayTz`.
+ * "Which calendar day is this fixture on" is day math, and day math runs on the
+ * governing clock (#397; and `ScheduleSettingsOut` says of `displayTz` in as
+ * many words: "DISPLAY ONLY. Never use it to decide which calendar day something
+ * is on"). The two diverge exactly when a division carries the V305 venue
+ * override — `displayTz` is division → org → UTC, `orgTz` is org → UTC — and a
+ * blackout is an ORG-level record, one row per official per date, shared by
+ * every division they work; bucketing it per-division made one date mean two
+ * different days inside one competition. Concretely: org Europe/London,
+ * division America/New_York, fixture 02:00Z on 10 Aug. The display lane files
+ * it under the 9th, so a blackout on the 10th raises nothing and one on the 9th
+ * raises a phantom. Pre-existing, but #230 item 2 promoted this warning from an
+ * advisory badge to a PUBLISH-GATE input, so both directions now cost the
+ * organiser something: a missed acknowledge step, or a spurious one.
+ * Pinned by `schedule-officials-day-zone.test.ts`, on a fixture where the two
+ * zones disagree — one where they agree passes under either spelling.
+ */
+async function validateScheduleIn(
+  tx: Tx,
+  divisionId: string,
+  competitionId: string,
+): Promise<{ conflicts: ScheduleConflict[] }> {
+  const settings = await loadSettings(tx, divisionId);
+  const all = await divisionFixtures(tx, divisionId);
+  const entrantIds = [
+    ...new Set(all.flatMap((f) => [f.home_entrant_id, f.away_entrant_id])),
+  ].filter((e): e is string => e !== null);
+  const people = await peopleByEntrant(tx, entrantIds);
+  const assignments = all
+    .filter((f) => f.scheduled_at !== null && f.court_label !== null)
+    .map((f) => toAssignment(f, settings.config.matchMinutes, people));
+  const siblings = await siblingAssignments(
+    tx,
+    divisionId,
+    competitionId,
+    settings.config.matchMinutes,
+  );
+  const officialConflicts = await tx<{ fixture_id: string; code: string }[]>`
+    -- declined: any assigned official said no
+    select fo.fixture_id, 'warn.official_declined' as code
+    from fixture_officials fo
+    join fixtures f on f.id = fo.fixture_id
+    where f.division_id = ${divisionId} and fo.response = 'declined'
+    union
+    -- unavailable: an accepted/pending official is blacked out on the
+    -- fixture's calendar day, i.e. a schedule clash
+    select fo.fixture_id, 'warn.official_unavailable' as code
+    from fixture_officials fo
+    join fixtures f on f.id = fo.fixture_id
+    join officials o on o.id = fo.official_id
+    join official_availability oa on oa.official_id = o.id
+    where f.division_id = ${divisionId}
+      and fo.response in ('accepted','pending')
+      and f.scheduled_at is not null
+      -- orgTz, NOT displayTz. See the long note above this function.
+      -- (Backticks are banned in here: this is a tagged template.)
+      and oa.date = (f.scheduled_at at time zone ${settings.orgTz})::date`;
+
+  // A REPORT of the board as it stands. `blocking` here says "impossible", not
+  // "refused" (#399) — the board paints those cards red, and it must keep
+  // doing so for a court double-booking that is already on the timetable.
+  // Nothing is written on this path, so no delta applies.
+  return {
+    conflicts: [
+      ...mapConflicts(
+        // #447: `toVerifyConfig`, so the board's own report shows the durable
+        // typed rules the organiser stored — this is the surface the
+        // constraints panel promises them on.
+        validateAssignments(
+          assignments,
+          toVerifyConfig(settings, all, 0, siblings.ruleFixtures),
+          siblings.assignments,
+          feedDependencies(all),
+        ),
+      ),
+      ...officialConflicts.map((c) => ({ fixture_id: c.fixture_id, code: c.code as ScheduleConflict["code"], blocking: false })),
+    ],
+  };
+}
+
 export async function validateSchedule(
   auth: AuthCtx,
   divisionId: string,
@@ -1178,63 +1955,7 @@ export async function validateSchedule(
     const [division] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    const settings = await loadSettings(tx, divisionId);
-    const all = await divisionFixtures(tx, divisionId);
-    const entrantIds = [
-      ...new Set(all.flatMap((f) => [f.home_entrant_id, f.away_entrant_id])),
-    ].filter((e): e is string => e !== null);
-    const people = await peopleByEntrant(tx, entrantIds);
-    const assignments = all
-      .filter((f) => f.scheduled_at !== null && f.court_label !== null)
-      .map((f) => toAssignment(f, settings.config.matchMinutes, people));
-    const siblings = await siblingAssignments(
-      tx,
-      divisionId,
-      division.competition_id,
-      settings.config.matchMinutes,
-    );
-    const officialConflicts = await tx<{ fixture_id: string; code: string }[]>`
-      -- declined: any assigned official said no
-      select fo.fixture_id, 'warn.official_declined' as code
-      from fixture_officials fo
-      join fixtures f on f.id = fo.fixture_id
-      where f.division_id = ${divisionId} and fo.response = 'declined'
-      union
-      -- unavailable: an accepted/pending official is blacked out on the
-      -- fixture's date (venue zone), i.e. a schedule clash
-      select fo.fixture_id, 'warn.official_unavailable' as code
-      from fixture_officials fo
-      join fixtures f on f.id = fo.fixture_id
-      join officials o on o.id = fo.official_id
-      join official_availability oa on oa.official_id = o.id
-      where f.division_id = ${divisionId}
-        and fo.response in ('accepted','pending')
-        and f.scheduled_at is not null
-        -- venue lane (V305): settings already carries the RESOLVED zone
-        -- (division override → org timezone → UTC), and this whole query is
-        -- scoped to one division, so bind it rather than re-joining.
-        and oa.date = (f.scheduled_at at time zone ${settings.displayTz})::date`;
-
-    // A REPORT of the board as it stands. `blocking` here says "impossible", not
-    // "refused" (#399) — the board paints those cards red, and it must keep
-    // doing so for a court double-booking that is already on the timetable.
-    // Nothing is written on this path, so no delta applies.
-    return {
-      conflicts: [
-        ...mapConflicts(
-          // #447: `toVerifyConfig`, so the board's own report shows the durable
-          // typed rules the organiser stored — this is the surface the
-          // constraints panel promises them on.
-          validateAssignments(
-            assignments,
-            toVerifyConfig(settings, all, 0, siblings.ruleFixtures),
-            siblings.assignments,
-            feedDependencies(all),
-          ),
-        ),
-        ...officialConflicts.map((c) => ({ fixture_id: c.fixture_id, code: c.code as ScheduleConflict["code"], blocking: false })),
-      ],
-    };
+    return validateScheduleIn(tx, divisionId, division.competition_id);
   });
 }
 
@@ -1248,26 +1969,137 @@ export interface PublishScheduleOut {
   published: boolean;
 }
 
-export async function publishSchedule(auth: AuthCtx, divisionId: string): Promise<PublishScheduleOut> {
+// The two refusal codes now live in `lib/schedule-board` (isomorphic) so the
+// board's confirm dialog can branch on them without importing this module.
+// Re-exported unchanged: every server-side importer still reads them here.
+export { PUBLISH_BLOCKED, PUBLISH_UNACKNOWLEDGED };
+
+/**
+ * THE GATE, in one place, for the two actions that put a timetable in front of
+ * players: publish, and start (which publishes on the way through).
+ *
+ * Deliberately not two copies of four lines. The publish gate and the start
+ * gate must refuse the same boards with the same codes and the same payload —
+ * that is what lets ONE confirm dialog in the console serve both buttons — and
+ * a second copy is exactly how the placer and the verifier in this subsystem
+ * drifted apart three times.
+ *
+ * It rejects CONFLICTS, never INCOMPLETENESS. `validateAssignments` reports
+ * only on rows it is given as `assignments`, and `validateScheduleIn` builds
+ * those from fixtures carrying BOTH a `scheduled_at` and a `court_label` — so
+ * an empty or half-slotted board yields no assignments and therefore nothing to
+ * report. Dozens of suites (and organisers) start divisions in exactly that
+ * state; a gate that refused them would be the wrong gate.
+ */
+function assertPublishable(
+  conflicts: readonly ScheduleConflict[],
+  acknowledged: boolean,
+): void {
+  // Blocking is tested FIRST and independently of the flag. Folding the two
+  // tests together — or testing the flag first — turns `acknowledge_warnings`
+  // into an override for a physically impossible board.
+  if (conflicts.some((c) => c.blocking)) {
+    throw new HttpError(
+      422,
+      "this schedule cannot be published: the board has conflicts that must be fixed first",
+      PUBLISH_BLOCKED,
+      { conflicts },
+    );
+  }
+  if (conflicts.length > 0 && !acknowledged) {
+    throw new HttpError(
+      422,
+      "this schedule has warnings — confirm to publish it anyway",
+      PUBLISH_UNACKNOWLEDGED,
+      { conflicts },
+    );
+  }
+}
+
+/**
+ * Record a publish on the division ledger. Returns the new seq.
+ *
+ * The report rides the event, so the ledger answers "what did this board look
+ * like when it was published" — the question a dispute asks, and the one a count
+ * of fixtures could never answer. Greenfield: older events carry
+ * `fixturesScheduled` alone and no backfill is owed.
+ *
+ * Shared by `publishSchedule` and `startDivision` so a publish that happened on
+ * the way into `active` is indistinguishable, in the ledger and in
+ * `history-panel.tsx`, from one the organiser pressed Publish for.
+ */
+async function appendPublishedEvent(
+  tx: Tx,
+  divisionId: string,
+  conflicts: readonly ScheduleConflict[],
+  acknowledged: boolean,
+  reason: string | undefined,
+): Promise<number> {
+  const [{ n }] = await tx<{ n: number }[]>`
+    select count(*)::int as n from fixtures
+    where division_id = ${divisionId} and scheduled_at is not null`;
+  return appendDivisionEvent(tx, divisionId, "schedule_published", {
+    fixturesScheduled: n,
+    conflicts,
+    acknowledged,
+    // Omitted rather than set to `undefined` — the payload is jsonb.
+    ...(reason !== undefined ? { reason } : {}),
+  });
+}
+
+/**
+ * Publish the timetable (doc 12 §1.B step 4) — now behind a final validation
+ * gate (#230 item 2).
+ *
+ * The board's conflicts panel is client-side and advisory, so before this gate
+ * existed the only thing standing between a broken board and the public schedule
+ * was whether the organiser happened to look at the panel recently. A settings
+ * change, a new blackout, an entrant withdrawal or a cross-division edit moving
+ * a shared court could all invalidate a board between the last look and the
+ * publish, and publish counted fixtures with a `scheduled_at` and wrote.
+ *
+ * Three properties make this a gate rather than a second opinion:
+ *
+ *  - it runs `validateScheduleIn`, the SAME body the panel's `validateSchedule`
+ *    runs. Not a publish-specific check: two validators is how the placer and
+ *    the verifier drifted apart, three times.
+ *  - it runs INSIDE this transaction and AFTER the advisory lock above, so no
+ *    concurrent edit can land between the check and the event.
+ *  - it is ABSOLUTE, not delta-based. `applySchedule`'s gate refuses only what a
+ *    change introduced, so a dirty board stays editable; publish is the moment
+ *    the board goes public, and "it was already broken" is not a reason to
+ *    publish it broken.
+ */
+export async function publishSchedule(
+  auth: AuthCtx,
+  divisionId: string,
+  input: PublishScheduleRequest = {},
+): Promise<PublishScheduleOut> {
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   const out = await withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ status: string; competition_id: string }[]>`
       select status, competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + divisionId}))`;
-    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+    assertNotFrozen(frozen, division.competition_id);
     if (division.status === "completed") {
       throw new HttpError(422, "a completed division cannot publish a schedule");
     }
+
+    // THE GATE. After the lock, before anything is written.
+    const { conflicts } = await validateScheduleIn(tx, divisionId, division.competition_id);
+    const acknowledged = input.acknowledge_warnings === true;
+    assertPublishable(conflicts, acknowledged);
+
     const status = division.status === "setup" ? "scheduled" : division.status;
     if (status !== division.status) {
       await tx`update divisions set status = ${status} where id = ${divisionId}`;
     }
-    const [{ n }] = await tx<{ n: number }[]>`
-      select count(*)::int as n from fixtures
-      where division_id = ${divisionId} and scheduled_at is not null`;
-    const seq = await appendDivisionEvent(tx, divisionId, "schedule_published", {
-      fixturesScheduled: n,
-    });
+    const seq = await appendPublishedEvent(tx, divisionId, conflicts, acknowledged, input.reason);
     await tx`update divisions set seq = ${seq} where id = ${divisionId}`;
     return { competitionId: division.competition_id, status };
   });
@@ -1287,13 +2119,41 @@ export interface StartDivisionOut {
  * from setup generates the first stage's fixtures when none exist and, when
  * `roundMinutes` is configured, slots rolling times (round r at startAt +
  * (r−1)·roundMinutes). Scoring opens only after this (division_started).
+ *
+ * **Starting the tournament publishes the schedule** (#230 item 2 follow-up).
+ * Not a second gate — the same one: `assertPublishable` over
+ * `validateScheduleIn`, the same two codes, the same `acknowledge_warnings`
+ * contract, so the console's confirm dialog serves Publish and Start with one
+ * code path. Without this, the publish gate was a door beside an open window:
+ * an organiser refused at Publish could press Start, `scoring.ts` opens scoring
+ * on `active`, and the same broken timetable went live with nothing in the
+ * ledger to say a publish had ever happened.
+ *
+ * Two orderings inside are load-bearing:
+ *
+ *  - the check runs AFTER the quick-start rolling-times write, in the same
+ *    transaction. Before it, the board being judged does not exist yet — and a
+ *    refusal rolls those times back with it, so a rejected start never leaves a
+ *    half-slotted board behind.
+ *  - `schedule_published` is appended BEFORE the status moves to `active`, and
+ *    only when the division was still `setup`. `scheduled → active` is a start,
+ *    not a second publish.
  */
-export async function startDivision(auth: AuthCtx, divisionId: string): Promise<StartDivisionOut> {
+export async function startDivision(
+  auth: AuthCtx,
+  divisionId: string,
+  input: StartDivisionRequest = {},
+): Promise<StartDivisionOut> {
+  // Resolved BEFORE the transaction: the lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. The set is keyed on the ORG, so it
+  // needs no id the transaction has not read yet, and `assertNotFrozen` is pure.
+  const frozen = await frozenCompetitionIds(auth.orgId);
   const pre = await withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ status: string; competition_id: string }[]>`
       select status, competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+    assertNotFrozen(frozen, division.competition_id);
     if (division.status === "completed") throw new HttpError(422, "division is completed");
     const [firstStage] = await tx<{ id: string; n: number }[]>`
       select s.id, (select count(*)::int from fixtures f where f.stage_id = s.id) as n
@@ -1316,8 +2176,8 @@ export async function startDivision(auth: AuthCtx, divisionId: string): Promise<
 
   const out = await withTenant(auth.orgId, async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + divisionId}))`;
-    const [division] = await tx<{ status: string }[]>`
-      select status from divisions where id = ${divisionId}`;
+    const [division] = await tx<{ status: string; competition_id: string }[]>`
+      select status, competition_id from divisions where id = ${divisionId}`;
     if (!division || division.status === "active") return { started: false };
 
     // Rolling quick-start times (doc 12 §1.A) — only for a straight
@@ -1338,6 +2198,20 @@ export async function startDivision(auth: AuthCtx, divisionId: string): Promise<
           where stage_id = ${pre.firstStage.id} and round_no = ${r.round_no}
             and scheduled_at is null`;
       }
+    }
+
+    // THE GATE — the publish gate, reached by the other door. After the lock and
+    // after the rolling-times write above, so it judges the board this call is
+    // actually about to open scoring on.
+    const { conflicts } = await validateScheduleIn(tx, divisionId, division.competition_id);
+    const acknowledged = input.acknowledge_warnings === true;
+    assertPublishable(conflicts, acknowledged);
+
+    // Published on the way through, from `setup` only: this is the moment the
+    // timetable goes in front of players, and the event is the only record
+    // anywhere that it did (`history-panel.tsx` renders it).
+    if (division.status === "setup") {
+      await appendPublishedEvent(tx, divisionId, conflicts, acknowledged, input.reason);
     }
 
     await tx`update divisions set status = 'active' where id = ${divisionId}`;

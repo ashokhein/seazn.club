@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { apiJson, seedScoredDivision, setOrgPlanBySql, TAG } from "./helpers";
+import { apiJson, seedScoredDivision, setOrgPlanBySql, TAG, divisionPath } from "./helpers";
 
 // PROMPT-22/23/24/26 schedule console (now tabbed): each panel mounts on its
 // tab AND its core interaction works end-to-end (real POSTs, not just render).
@@ -7,22 +7,22 @@ import { apiJson, seedScoredDivision, setOrgPlanBySql, TAG } from "./helpers";
 test("tabs mount: board + each panel, exports in the Documents menu", async ({ page, request }) => {
   const { divisionId } = await seedScoredDivision(request);
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
   await expect(page.getByRole("group", { name: /board density/i })).toBeVisible({ timeout: 20_000 });
 
   // #189 moved the five loose export buttons off this header into the
   // Documents menu on the fixtures view — one home for every document — so
   // that is where the timetable and the participants sheet now live.
-  await page.goto(`/divisions/${divisionId}`);
+  await page.goto(await divisionPath(page.request, divisionId));
   await page.getByTestId("documents-menu-trigger").click();
   const documents = page.getByRole("menu", { name: /documents/i });
   await expect(documents.getByText("Order of play")).toBeVisible({ timeout: 20_000 });
   await expect(documents.getByText("Participants")).toBeVisible();
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=officials`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=officials"));
   await expect(page.getByRole("heading", { name: "Officials", exact: true })).toBeVisible();
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=history`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=history"));
   await expect(page.getByRole("heading", { name: "History", exact: true })).toBeVisible();
 });
 
@@ -45,7 +45,7 @@ test("officials (PROMPT-22): propose → apply an auto-assignment", async ({ pag
     role_keys: ["referee"],
   });
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=officials`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=officials"));
   await page.getByRole("button", { name: /^Propose$/ }).click();
 
   const apply = page.getByRole("button", { name: /Apply \d+ assignments/ });
@@ -147,7 +147,7 @@ test("officials (#448): maxPerDay caps on the org day across a UTC midnight", as
     max_per_day: 2,
   });
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=officials`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=officials"));
   await page.getByRole("button", { name: /^Propose$/ }).click();
 
   // 2 on the local Saturday + 1 on each September day = 4, not 6.
@@ -160,7 +160,7 @@ test("officials (#448): maxPerDay caps on the org day across a UTC midnight", as
 
 test("history (PROMPT-23): undo then redo round-trips without error", async ({ page, request }) => {
   const { divisionId } = await seedScoredDivision(request);
-  await page.goto(`/divisions/${divisionId}/schedule?tab=history`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=history"));
 
   // Exact labels: the panel's Tip ⓘ ("About: Undo and save points") would
   // otherwise collide with a loose /Undo/ match.
@@ -181,7 +181,7 @@ test("history (PROMPT-23): undo then redo round-trips without error", async ({ p
 
 test("constraints (PROMPT-24): edits save and persist across reload", async ({ page, request }) => {
   const { divisionId } = await seedScoredDivision(request);
-  await page.goto(`/divisions/${divisionId}/schedule?tab=constraints`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=constraints"));
 
   const clash = page.getByLabel(/never in two matches at once/i);
   const rest = page.getByRole("spinbutton", { name: /minimum rest/i });

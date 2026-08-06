@@ -22462,15 +22462,25 @@
                   "only_unlocked": {
                     "default": true,
                     "type": "boolean"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "build",
+                      "reflow",
+                      "polish"
+                    ]
                   }
                 },
                 "required": [
-                  "only_unlocked"
+                  "only_unlocked",
+                  "mode"
                 ],
                 "additionalProperties": false
               },
               "example": {
-                "only_unlocked": true
+                "only_unlocked": true,
+                "mode": "build"
               }
             }
           }
@@ -22580,11 +22590,125 @@
                             ],
                             "additionalProperties": false
                           }
+                        },
+                        "metrics": {
+                          "type": "object",
+                          "properties": {
+                            "makespan_minutes": {
+                              "type": "number"
+                            },
+                            "worst_idle_gap_minutes": {
+                              "type": "number"
+                            },
+                            "court_imbalance_minutes": {
+                              "type": "number"
+                            },
+                            "placed": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "total": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "makespan_minutes",
+                            "worst_idle_gap_minutes",
+                            "court_imbalance_minutes",
+                            "placed",
+                            "total"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "solver": {
+                          "type": "object",
+                          "properties": {
+                            "engine": {
+                              "type": "string",
+                              "enum": [
+                                "greedy",
+                                "z3",
+                                "z3+lns"
+                              ]
+                            },
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "build",
+                                "reflow",
+                                "polish"
+                              ]
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "ok",
+                                "already_optimal",
+                                "infeasible",
+                                "verifier_rejected",
+                                "z3_unavailable",
+                                "solver_busy",
+                                "not_searched"
+                              ]
+                            },
+                            "tiers_completed": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "tiers_total": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "budget_expired": {
+                              "type": "boolean"
+                            },
+                            "elapsed_ms": {
+                              "type": "number"
+                            },
+                            "moved": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "seeded": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "lost": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "contradictory_pins": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "engine",
+                            "status",
+                            "tiers_completed",
+                            "tiers_total",
+                            "budget_expired",
+                            "elapsed_ms",
+                            "moved"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
                         "assignments",
-                        "conflicts"
+                        "conflicts",
+                        "metrics",
+                        "solver"
                       ],
                       "additionalProperties": false
                     },
@@ -22612,7 +22736,24 @@
                         "blocking": true,
                         "detail": "example"
                       }
-                    ]
+                    ],
+                    "metrics": {
+                      "makespan_minutes": 1,
+                      "worst_idle_gap_minutes": 1,
+                      "court_imbalance_minutes": 1,
+                      "placed": -9007199254740991,
+                      "total": -9007199254740991
+                    },
+                    "solver": {
+                      "engine": "greedy",
+                      "mode": "build",
+                      "status": "ok",
+                      "tiers_completed": -9007199254740991,
+                      "tiers_total": -9007199254740991,
+                      "budget_expired": true,
+                      "elapsed_ms": 1,
+                      "moved": -9007199254740991
+                    }
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
@@ -23559,7 +23700,7 @@
     },
     "/api/v1/divisions/{id}/publish-schedule": {
       "post": {
-        "summary": "Publish the timetable (division → scheduled)",
+        "summary": "Publish the timetable (division → scheduled), validated server-side: blocking conflicts 422 SCHEDULE_BLOCKING_CONFLICTS; warnings 422 SCHEDULE_UNACKNOWLEDGED_WARNINGS until acknowledge_warnings",
         "tags": [
           "scheduling"
         ],
@@ -23575,6 +23716,30 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "acknowledge_warnings": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                },
+                "additionalProperties": false
+              },
+              "example": {
+                "acknowledge_warnings": true,
+                "reason": "example"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Success",
@@ -23826,7 +23991,7 @@
     },
     "/api/v1/divisions/{id}/start": {
       "post": {
-        "summary": "Start the tournament (quick-start generates fixtures)",
+        "summary": "Start the tournament (quick-start generates fixtures). Publishes the schedule on the way through, validated server-side: blocking conflicts 422 SCHEDULE_BLOCKING_CONFLICTS; warnings 422 SCHEDULE_UNACKNOWLEDGED_WARNINGS until acknowledge_warnings",
         "tags": [
           "scheduling"
         ],
@@ -23842,6 +24007,30 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "acknowledge_warnings": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                },
+                "additionalProperties": false
+              },
+              "example": {
+                "acknowledge_warnings": true,
+                "reason": "example"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Success",

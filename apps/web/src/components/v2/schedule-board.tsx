@@ -31,6 +31,8 @@ import type { AiScope } from "./board/ai-console-state";
 import { computeAiDiff, ghostToneFor, type AiConsoleFixture } from "./board/ai-diff";
 import { ConflictsBadge, ConflictsPanel } from "./board/conflicts-panel";
 import { MovePanel } from "./board/move-panel";
+import { ScheduleGateDialog, type GateAction } from "./board/schedule-gate-dialog";
+import { ScheduleResultStrip } from "./board/result-strip";
 import { SettingsPanel } from "./board/settings-panel";
 import {
   cardTitle,
@@ -42,7 +44,7 @@ import {
   type Density,
   type GhostBlock,
 } from "./board/types";
-import { useBoardActions } from "./board/use-board-actions";
+import { useBoardActions, type GateRefusal } from "./board/use-board-actions";
 
 export type { BoardConfig, BoardConflict, BoardDivision, BoardFixture, BoardStage } from "./board/types";
 
@@ -680,8 +682,46 @@ export function ScheduleBoard({
     if (set.size === 0) set.add(dayKey(new Date()));
     return [...set].sort();
   }, [scheduled, ghosts, cfg.startAt]);
+  /**
+   * The selected day tab, and the day LIST it was selected against.
+   *
+   * `useState(days[0])` alone pinned the tab at whatever the board showed on
+   * FIRST render, and `if (!day)` could never unpin it because the pinned value
+   * is a non-empty string. On an empty board `days` is `[startAt]` (or today),
+   * so an Auto-schedule that places the matches on any other day left `day`
+   * pointing at a date the board no longer has: `dayFixtures` filters to
+   * nothing and the organiser reads an EMPTY grid over a board that is in fact
+   * fully scheduled. It never self-corrected, because nothing downstream of the
+   * RSC refresh looks at the tab again.
+   *
+   * So the tab is a DEFAULT rather than a pin: it is re-derived when the day
+   * list itself changes and the current tab has fallen out of it. The list is
+   * compared BY VALUE — `days` is a fresh array on every render (`scheduled` is
+   * a `filter` over `board`), so an identity check would re-derive constantly
+   * and fight the ± day arrows below, which deliberately step onto empty days
+   * that are NOT in `days`. Those stay untouched: paging to an empty day does
+   * not change the list, so nothing snaps back. Render-time state adjustment,
+   * the same "derive from props" pattern `useBoardActions` uses for overrides —
+   * no effect cascade, and the corrected tab renders in this same pass.
+   */
+  const daysKey = days.join(",");
+  const [seenDaysKey, setSeenDaysKey] = useState(daysKey);
   const [day, setDay] = useState<string>(days[0] as string);
-  if (!day) setDay(days[0] as string);
+  if (seenDaysKey !== daysKey) {
+    setSeenDaysKey(daysKey);
+    // Re-derive only a tab that FELL OUT of the list — it was showing a day the
+    // board no longer has. A tab that was not in the PREVIOUS list either is
+    // where the organiser deliberately navigated with the ± arrows, and an
+    // unrelated change to the list (an AI proposal's ghosts arriving or
+    // clearing, another organiser's card landing on a new date) is no reason to
+    // yank them off it. Testing `!days.includes(day)` alone could not tell the
+    // two apart: it is true of a scrubbed empty day before the list moved as
+    // well as after.
+    const wasListed = seenDaysKey.split(",").includes(day);
+    if (wasListed && !days.includes(day)) setDay(days[0] as string);
+  } else if (!day) {
+    setDay(days[0] as string);
+  }
 
   // Week view spans the division's own schedule dates first, then the
   // competition dates, then the scheduled fixtures' range — min four days.
@@ -778,6 +818,26 @@ export function ScheduleBoard({
     [actions.conflicts, board],
   );
   const [panelOpen, setPanelOpen] = useState(false);
+
+  // ------------------------------------------------- publish / start gate
+  // Both buttons POST an action the server may refuse (#230 item 2 follow-up):
+  // warnings are a question, blocking conflicts are a report. The refusal is
+  // held here — path and copy included — so "Publish anyway" re-sends the SAME
+  // action rather than assuming it was publish.
+  const [gate, setGate] = useState<
+    (GateRefusal & { action: GateAction; path: string; done: string }) | null
+  >(null);
+  const runGated = useCallback(
+    async (action: GateAction, path: string, done: string, acknowledge = false) => {
+      const refused = await actions.act(path, done, acknowledge);
+      // Re-opened rather than closed on a second refusal: an organiser who
+      // acknowledges warnings while another organiser drags a card into a court
+      // clash must be told THAT, not silently dropped back onto the board.
+      setGate(refused ? { ...refused, action, path, done } : null);
+    },
+    [actions],
+  );
+
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const jumpTo = useCallback(
@@ -830,6 +890,12 @@ export function ScheduleBoard({
       {actions.error && (
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{actions.error}</p>
       )}
+      {/* Directly under the green "Placed N matches" line, because it is the
+          qualification OF that line: the solver is anytime, so what it returned
+          may be neither optimal nor complete, and this is where that is said. */}
+      {actions.lastRun && (
+        <ScheduleResultStrip metrics={actions.lastRun.metrics} solver={actions.lastRun.solver} />
+      )}
 
       {/* Action bar */}
       <div className="flex flex-wrap items-center gap-2">
@@ -837,23 +903,50 @@ export function ScheduleBoard({
           stages
             .filter((s) => s.status !== "complete" && visibleIds.has(s.division_id))
             .map((s) => (
+              // `min-h-11 sm:min-h-0` on all three: `py-1.5 text-xs` renders a
+              // 28px control, well under the 44px touch target, and these are the
+              // primary actions of the surface. Mobile-only, so the desktop bar
+              // is pixel-identical to what shipped.
               <span key={s.id} className="inline-flex items-center gap-1">
+                {/* #465: the two original actions carry a stable id like their
+                    Polish sibling. Not tidiness — `board.autoSchedule` is
+                    "Auto-schedule {name}" and INTERPOLATES the division name, so
+                    the only text selector that can reach it is a regex that
+                    stops meaning the same thing the day a division is renamed. */}
                 <button
                   type="button"
+                  data-testid="schedule-auto"
                   disabled={actions.busy}
                   onClick={() => void actions.autoRun(s.id, false)}
-                  className="btn btn-primary px-3 py-1.5 text-xs"
+                  className="btn btn-primary min-h-11 px-3 py-1.5 text-xs sm:min-h-0"
                 >
                   {msg("board.autoSchedule", { name: stages.length > 1 ? s.name : "" })}
                 </button>
                 <button
                   type="button"
+                  data-testid="schedule-reflow"
                   disabled={actions.busy}
                   onClick={() => void actions.autoRun(s.id, true)}
-                  className="btn btn-ghost px-3 py-1.5 text-xs"
+                  className="btn btn-ghost min-h-11 px-3 py-1.5 text-xs sm:min-h-0"
                   title={msg("board.reflowTitle")}
                 >
                   {msg("board.reflow")}
+                </button>
+                {/* POLISH — the tier solver over a board that is already legal.
+                    Beside its siblings rather than behind a menu: it is the same
+                    kind of action, and the three only differ by what they ask
+                    the solver for. The mode is passed EXPLICITLY because
+                    `only_unlocked` cannot express it — polish and re-flow both
+                    send `true` and run different solvers. */}
+                <button
+                  type="button"
+                  data-testid="schedule-polish"
+                  disabled={actions.busy}
+                  onClick={() => void actions.autoRun(s.id, true, "polish")}
+                  className="btn btn-ghost min-h-11 px-3 py-1.5 text-xs sm:min-h-0"
+                  title={msg("board.polishTitle")}
+                >
+                  {msg("board.polish")}
                 </button>
               </span>
             ))}
@@ -913,9 +1006,11 @@ export function ScheduleBoard({
           <>
             <button
               type="button"
+              data-testid="board-publish-schedule"
               disabled={actions.busy}
               onClick={() =>
-                void actions.act(
+                void runGated(
+                  "publish",
                   `/api/v1/divisions/${single.id}/publish-schedule`,
                   msg("board.publishNotice"),
                 )
@@ -926,9 +1021,11 @@ export function ScheduleBoard({
             </button>
             <button
               type="button"
+              data-testid="board-start-division"
               disabled={actions.busy}
               onClick={() =>
-                void actions.act(
+                void runGated(
+                  "start",
                   `/api/v1/divisions/${single.id}/start`,
                   msg("board.startNotice"),
                 )
@@ -1172,6 +1269,21 @@ export function ScheduleBoard({
           onRetryCheck={() => void actions.revalidate()}
         />
       )}
+
+      {/* The way through the publish gate — and, for a blocking board, the
+          honest statement that there is none. */}
+      <ScheduleGateDialog
+        gate={gate}
+        board={board}
+        entrantNames={entrantNames}
+        feedLabels={feedLabels}
+        busy={actions.busy}
+        onConfirm={() => {
+          if (!gate) return;
+          void runGated(gate.action, gate.path, gate.done, true);
+        }}
+        onDismiss={() => setGate(null)}
+      />
 
       {/* The JOINT console (#350): every selected division planned in one run,
           applied in one transaction. Mounted only where `aiEntryPoint` says so,

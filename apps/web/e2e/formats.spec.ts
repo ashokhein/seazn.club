@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { apiJson, TAG } from "./helpers";
+import { apiJson, TAG, competitionPath, divisionPath } from "./helpers";
 
 // PROMPT-28 formats: the new stage presets are reachable from the division
 // builder, and a ladder division renders its challenge panel.
@@ -8,7 +8,7 @@ test("division builder exposes the Jul3/08 format presets", async ({ page, reque
     name: `Formats ${TAG}`,
     visibility: "private",
   });
-  await page.goto(`/competitions/${comp.data!.id}/divisions/new`);
+  await page.goto(await competitionPath(page.request, comp.data!.id, "/d/new"));
 
   // The builder is tabbed; moving forward validates the current tab, so fill
   // the required division name before opening the Format tab.
@@ -45,7 +45,7 @@ test("ladder division renders the challenge panel", async ({ page, request }) =>
     seq: 1, kind: "ladder", name: "Ladder", config: { challengeRange: 2 },
   });
 
-  await page.goto(`/divisions/${divisionId}?tab=fixtures`);
+  await page.goto(await divisionPath(page.request, divisionId, "?tab=fixtures"));
   // the ladder panel: challenge form + ranked entrants
   await expect(page.getByRole("button", { name: /issue challenge/i })).toBeVisible();
   await expect(page.getByRole("cell", { name: "Alpha" })).toBeVisible();
@@ -97,7 +97,7 @@ test("americano renders the rotation grid", async ({ page, request }) => {
   await apiJson(request, `/api/v1/stages/${stage.data!.id}/generate`, "POST");
   await apiJson(request, `/api/v1/divisions/${divisionId}/start`, "POST");
 
-  await page.goto(`/divisions/${divisionId}?tab=fixtures`);
+  await page.goto(await divisionPath(page.request, divisionId, "?tab=fixtures"));
   // the rotation grid: mode chip + round cards + courts (scoped to the panel)
   const grid = page.getByLabel("Americano rotation");
   await expect(grid.getByText("americano", { exact: true })).toBeVisible({ timeout: 20_000 });

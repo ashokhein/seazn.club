@@ -126,6 +126,74 @@ export function resetZ3(): Promise<void> {
   return withZ3Lock(tearDownZ3);
 }
 
+/**
+ * Run one whole solve under the lock, and hand the WASM heap back before
+ * releasing it (R17).
+ *
+ * NOT HYGIENE — the process dies without it. One context is shared by every
+ * solve in the process and its heap only ever GROWS: nothing frees a finished
+ * `Solver`, so a server that has run a few auto-schedules aborts with
+ * `Cannot enlarge memory arrays to size 2210201600 bytes (OOM)` and takes node
+ * with it. Measured at six consecutive solves in one process.
+ *
+ * This exists so that ownership sits with the ENGINE rather than with whichever
+ * caller happened to learn the lesson. The same fix written at a call seam is
+ * one `finally` away from being dropped by the next entry point, and the symptom
+ * is a dead production server rather than a failing test.
+ *
+ * THE TEARDOWN RUNS INSIDE THE LOCK, and the reason is heap ACCOUNTING, not
+ * safety. `try { await withZ3Lock(work) } finally { await resetZ3() }` is the
+ * obvious spelling and it is NOT unsafe: `resetZ3` takes the lock itself, so its
+ * teardown can never land inside another solve's `check()`. What it loses is the
+ * PAIRING. That reset queues behind every solve already waiting, so under
+ * concurrency N solves share one un-freed context before the first teardown
+ * fires — and N solves on one monotonically-growing heap is exactly the OOM
+ * above. Holding the lock across both makes the bound per SOLVE rather than per
+ * burst.
+ *
+ * Recorded because it cost a test: the difference is NOT observable from
+ * `z3LoadCount()` across two queued solves. Both spellings run every solve to
+ * completion and both end at zero. A case claiming to pin the ordering was
+ * written, measured to survive the mutant, and deleted rather than kept as a
+ * green assertion about nothing.
+ *
+ * `work` MUST NOT take the lock itself. `withZ3Lock` is deliberately not
+ * reentrant, so anything reaching `repairSchedule`, `repairDecomposed` or
+ * `resetZ3` from in here deadlocks rather than failing. `buildSchedule` is the
+ * intended caller: its LNS pass re-enters `solveBuild`, never `buildSchedule`,
+ * for precisely this reason.
+ *
+ * In a `finally`, because a solve that THREW allocated just as much as one that
+ * returned. The cost is a 200-300 ms reboot on the next `loadZ3`, and it is a
+ * no-op when the WASM never booted at all.
+ *
+ * AND THE TEARDOWN'S OWN FAILURE IS SWALLOWED, which is the one place here that
+ * looks like sloppiness and is not. A throw from inside a `finally` REPLACES the
+ * exception the block was already unwinding, so a genuine encoder-drift throw —
+ * the loudest signal this subsystem has — would reach the caller dressed as a
+ * WASM shutdown error and send the next person reading the stack trace somewhere
+ * else entirely. The solve's own error is the one worth keeping.
+ *
+ * Safe to swallow because `tearDownZ3` clears the singleton in a `finally` of
+ * its own: the context is dropped and the next `loadZ3` starts clean whether or
+ * not `shutdown()` succeeded. Logged rather than silent, because a shutdown that
+ * fails repeatedly is a leak somebody should hear about.
+ */
+export function withZ3LockAndReset<T>(work: () => Promise<T>): Promise<T> {
+  return withZ3Lock(async () => {
+    try {
+      return await work();
+    } finally {
+      try {
+        await tearDownZ3();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(`z3 teardown failed after a solve, continuing: ${String(err)}`);
+      }
+    }
+  });
+}
+
 async function tearDownZ3(): Promise<void> {
   if (loaded === null) return;
   try {

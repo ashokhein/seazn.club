@@ -429,21 +429,29 @@ export async function getDisciplineRules(
   auth: AuthCtx,
   divisionId: string,
 ): Promise<{ enabled: boolean; rules: DisciplineRules; sportColors: { key: string; label: string }[] } | null> {
-  return withTenant(auth.orgId, async (tx) => {
+  // TWO PHASES. `requireFeature` queries the pooled `sql` proxy, and it used to
+  // run between the two reads below — from inside `withTenant`, which pins a
+  // pooled connection for its whole callback. That is the pool self-deadlock
+  // (lib/db.ts). The rules row is now read under the transaction and the gate
+  // applied after it closes; the org still learns nothing it did not before,
+  // because the 402 is thrown before anything is returned.
+  const loaded = await withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ sport_key: string; module_version: string }[]>`
       select sport_key, module_version from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
     const model = resolveModule(division.sport_key, division.module_version).discipline;
     if (!model) return null; // no model → hide the tab (ungated, so free orgs learn nothing extra)
-    await requireFeature(auth.orgId, FEATURE);
     const [row] = await tx<{ enabled: boolean; rules: DisciplineRules }[]>`
       select enabled, rules from discipline_rules where division_id = ${divisionId}`;
-    return {
-      enabled: row?.enabled ?? false,
-      rules: row?.rules ?? defaultRules(division.sport_key),
-      sportColors: model.colors,
-    };
+    return { sportKey: division.sport_key, colors: model.colors, row };
   });
+  if (loaded === null) return null;
+  await requireFeature(auth.orgId, FEATURE);
+  return {
+    enabled: loaded.row?.enabled ?? false,
+    rules: loaded.row?.rules ?? defaultRules(loaded.sportKey),
+    sportColors: loaded.colors,
+  };
 }
 
 export async function putDisciplineRules(

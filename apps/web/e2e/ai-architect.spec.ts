@@ -10,6 +10,7 @@ import {
   aiCreditBalance,
   getAiScheduleApply,
   getFixtureScheduleSources,
+  divisionPath,
 } from "./helpers";
 import {
   startAiFixtureServer,
@@ -199,7 +200,7 @@ test("pro: brief → run → CLEAN → officials → apply → undo", async ({ p
   await activateFreshProPlusOrg(page, request); // officials.auto step needs Pro Plus
   const { divisionId } = await seedAiDivision(request, { officials: true });
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
   await openConsole(page);
 
   // Pre-flight rows reflect the seeded division. SCOPED to the pre-flight card:
@@ -290,7 +291,7 @@ test("pro: declining the compiled instruction spends no credit", async ({ page, 
   const orgId = await activateFreshProPlusOrg(page, request);
   const { divisionId } = await seedAiDivision(request);
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
   await openConsole(page);
   const dock = consoleDock(page);
   const before = await aiCreditBalance(orgId);
@@ -422,7 +423,7 @@ test("the credits picker is a real radio group — arrows move the selection AND
   await activateFreshProPlusOrg(page, request);
   const { divisionId } = await seedRungTwoDivision(request);
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
   await openConsole(page);
   // Brief first, credits second — the organiser's real order, and the CTA is
   // `disabled` (so not a tab stop) until the instruction is long enough. The
@@ -517,7 +518,7 @@ test("the officials step prices itself: free draft with no picker, priced once a
   await activateFreshProPlusOrg(page, request);
   const { divisionId } = await seedAiDivision(request, { officials: true });
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
   await openConsole(page);
   await page.locator("#ai-instruction").fill("Spread the matches across the day.");
   await compileAndConfirm(page);
@@ -573,7 +574,7 @@ test("pro: the officials draft spends nothing until the organiser presses", asyn
   const orgId = await activateFreshProPlusOrg(page, request);
   const { divisionId } = await seedAiDivision(request, { officials: true });
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
   await openConsole(page);
   await page.locator("#ai-instruction").fill("Spread the matches across the day.");
   await compileAndConfirm(page);
@@ -662,7 +663,7 @@ test("a move re-prices the open console before the server has even answered", as
     },
   });
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
   await page.getByRole("button", { name: /Fix with AI/i }).click();
   const dock = page.getByRole("region", { name: "AI Schedule" });
   await expect(dock.getByText("Scoped run")).toBeVisible();
@@ -1011,7 +1012,7 @@ test("a model refusal surfaces the AI_PLAN_FAILED copy (and proves the model was
   await activateFreshProPlusOrg(page, request);
   const { divisionId } = await seedAiDivision(request);
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
   await openConsole(page);
 
   // The magic instruction makes the fixture server answer stop_reason:"refusal"
@@ -1056,7 +1057,7 @@ test("a double-booked plan is repaired by the solver before the organiser sees i
   await activateFreshProPlusOrg(page, request);
   const { divisionId } = await seedAiDivision(request);
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
   await openConsole(page);
 
   // FIXTURE_CLASH makes the canned plan put two cards on one court at one time.
@@ -1139,7 +1140,7 @@ test("a clash off the minute boundary is repaired without losing its seconds (#4
   await activateFreshProPlusOrg(page, request);
   const { divisionId } = await seedAiDivision(request);
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
   await openConsole(page);
 
   await page.locator("#ai-instruction").fill(`${FIXTURE_CLASH_SECONDS} — squeeze the order.`);
@@ -1237,7 +1238,7 @@ test("blackout injected over a scheduled fixture surfaces the repair nudge", asy
     },
   });
 
-  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
   // The amber repair nudge appears from the client-derived disruption signal.
   await expect(page.getByText(/need(?:s)? repair/i)).toBeVisible({ timeout: 20_000 });
   await shot(page, "05-repair-banner");
@@ -1266,7 +1267,7 @@ test.describe("community credit gate", () => {
       // V302 per-division run cap).
       await drainAiCredits(org.id);
 
-      await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+      await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
       await openConsole(page);
       // The community org CAN open the wizard (scheduling.ai is granted) …
       await page.locator("#ai-instruction").fill("Spread the matches across the day.");
@@ -1336,7 +1337,7 @@ test.describe("mobile viewport", () => {
     await activateFreshProPlusOrg(page, request); // officials.auto step needs Pro Plus
     const { divisionId } = await seedAiDivision(request, { officials: true });
 
-    await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+    await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
     await openConsole(page);
     await addFinishByWish(page);
 

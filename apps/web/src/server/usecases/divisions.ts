@@ -4,8 +4,8 @@ import "server-only";
 // division always replays under the rules it started with.
 import type postgres from "postgres";
 import { sql, withTenant } from "@/lib/db";
-import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { withinLimit, requireFeature, passLockReason } from "@/lib/entitlements";
+import { HttpError } from "@/lib/errors";
+import { assertWithinLimit, getLimit, requireFeature, passLockReason } from "@/lib/entitlements";
 import { EngineError } from "@seazn/engine/core";
 import { effectiveEntrantModel, type EntrantKind } from "@seazn/engine/sport";
 import { resolveModule } from "@/server/engine-db";
@@ -131,10 +131,24 @@ export async function createDivision(
   competitionId: string,
   input: CreateDivision,
 ): Promise<DivisionRow> {
+  // OUTSIDE the transaction: the freeze lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. An unknown competition is never a
+  // member of the frozen set, so the entity's own 404 still fires first.
+  await assertCompetitionNotFrozen(auth.orgId, competitionId);
+  // The plan LOOKUP is resolved out here; the COUNT stays inside the
+  // transaction with the insert (doc 10 §2 rule 1). `getLimit` queries the
+  // pooled `sql` proxy, and `withTenant` pins a pooled connection for its whole
+  // callback — see `assertWithinLimit` in lib/entitlements.ts.
+  const divisionCap = await getLimit(
+    auth.orgId,
+    "divisions.per_competition.max",
+    competitionId,
+  );
+
   const row = await withTenant(auth.orgId, async (tx) => {
     const [comp] = await tx`select 1 from competitions where id = ${competitionId}`;
     if (!comp) throw new HttpError(404, "competition not found");
-    await assertCompetitionNotFrozen(auth.orgId, competitionId, tx);
     await assertCompetitionNotEnded(tx, competitionId);
 
     // Doc 10 §1: `divisions.per_competition.max` (Community's real bite: 4 —
@@ -152,8 +166,7 @@ export async function createDivision(
       where d.competition_id = ${competitionId}
         and (d.archived_at is null
              or (division_has_results(d.id) and d.slot_waived_at is null))`;
-    const quota = await withinLimit(auth.orgId, "divisions.per_competition.max", n + 1, competitionId);
-    if (!quota.ok) throw new PaymentRequiredError("divisions.per_competition.max");
+    assertWithinLimit(divisionCap, "divisions.per_competition.max", n + 1);
 
     // Sport catalog carries the latest shipped module version; the division
     // pins it now and forever (doc 02 §4).
@@ -406,6 +419,21 @@ export async function archiveDivision(auth: AuthCtx, id: string): Promise<Divisi
 /** Restore an archived division. Re-checks the divisions quota — restoring
  *  must not smuggle a competition back over its plan limit. */
 export async function restoreDivision(auth: AuthCtx, id: string): Promise<DivisionRow> {
+  // The competition id, ahead of the transaction, ONLY to scope the plan lookup
+  // below — an Event Pass lifts this cap for one competition, so dropping the
+  // scope would change the answer. Authorisation is unaffected: the row itself
+  // is read under RLS inside the transaction, which 404s for a foreign org.
+  const [ref] = await sql<{ competition_id: string }[]>`
+    select competition_id from divisions where id = ${id}`;
+  // The plan LOOKUP is resolved out here; the COUNT stays inside the
+  // transaction with the insert (doc 10 §2 rule 1). `getLimit` queries the
+  // pooled `sql` proxy, and `withTenant` pins a pooled connection for its whole
+  // callback — see `assertWithinLimit` in lib/entitlements.ts.
+  const divisionCap = await getLimit(
+    auth.orgId,
+    "divisions.per_competition.max",
+    ref?.competition_id,
+  );
   return withTenant(auth.orgId, async (tx) => {
     const [existing] = await tx<DivisionRow[]>`
       select ${tx(COLS)} from divisions where id = ${id}`;
@@ -427,13 +455,7 @@ export async function restoreDivision(auth: AuthCtx, id: string): Promise<Divisi
         and d.id <> ${id}
         and (d.archived_at is null
              or (division_has_results(d.id) and d.slot_waived_at is null))`;
-    const quota = await withinLimit(
-      auth.orgId,
-      "divisions.per_competition.max",
-      n + 1,
-      existing.competition_id,
-    );
-    if (!quota.ok) throw new PaymentRequiredError("divisions.per_competition.max");
+    assertWithinLimit(divisionCap, "divisions.per_competition.max", n + 1);
 
     const [row] = await tx<DivisionRow[]>`
       update divisions set archived_at = null where id = ${id} returning ${tx(COLS)}`;

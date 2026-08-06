@@ -347,6 +347,12 @@ export async function applyCompetitionSchedule(
       ? { ...input.ai, instruction: input.ai.instruction.trim(), model: schedulingAiModel() }
       : undefined;
 
+  // OUTSIDE the transaction: the freeze lookup queries the POOLED `sql` proxy
+  // (`getLimit`), and `withTenant` pins a pooled connection for its whole
+  // callback — see entitlement-freeze.ts. An unknown competition is never a
+  // member of the frozen set, so the entity's own 404 still fires first.
+  await assertCompetitionNotFrozen(auth.orgId, competitionId);
+
   const out = await withTenant(auth.orgId, async (tx) => {
     // The divisions, in sorted order, so two joint applies over overlapping
     // sets serialise instead of deadlocking. Locks FIRST, before anything that
@@ -366,7 +372,6 @@ export async function applyCompetitionSchedule(
     const [competition] = await tx<{ id: string }[]>`
       select id from competitions where id = ${competitionId}`;
     if (!competition) throw new HttpError(404, "competition not found");
-    await assertCompetitionNotFrozen(auth.orgId, competitionId, tx);
 
     const rows = await tx<{ id: string; name: string; slug: string; sport_key: string }[]>`
       select id, name, slug, sport_key from divisions

@@ -879,17 +879,176 @@ export const ScheduleAssignment = z.object({
 });
 export type ScheduleAssignment = z.infer<typeof ScheduleAssignment>;
 
-/** POST /stages/{id}/schedule/auto — propose only, nothing persisted (doc 12 §4). */
-export const AutoScheduleRequest = z.object({
-  /** true (default) = re-flow unlocked fixtures only, locked ones are fixed
-   *  obstacles ("re-flow remaining", doc 12 §2); false = fresh full pass. */
-  only_unlocked: z.boolean().default(true),
-});
+/** POST /stages/{id}/schedule/auto — propose only, nothing persisted (doc 12 §4).
+ *
+ *  `mode` has a default DERIVED from another field, which `.default()` cannot
+ *  express. The obvious `.object({...}).transform(...)` is a trap here:
+ *  openapi.ts converts every registered schema with `z.toJSONSchema(…, { io:
+ *  "output" })`, and a trailing transform is the OUTPUT node, so the whole
+ *  generator dies with "Transforms cannot be represented in JSON Schema" —
+ *  the same hazard AiApplyMeta's comment above warns about.
+ *
+ *  `z.preprocess` pipes the other way: the transform is the INPUT node and the
+ *  plain object is the output, so `io: "output"` converts cleanly and `mode`
+ *  is a required, non-optional string on the inferred type (which the usecase
+ *  branches on without a null check).
+ *
+ *  Consequence to know: `mode` is listed in the spec's `required` even though
+ *  callers need not send it — exactly how the pre-existing defaulted
+ *  `only_unlocked` has always rendered. Every existing caller keeps its
+ *  behaviour: re-flowing is a REFLOW, a fresh pass is a BUILD. */
+export const AutoScheduleRequest = z.preprocess(
+  (value) => {
+    // Let the object schema own the error for non-objects.
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+    const body = value as Record<string, unknown>;
+    if (body.mode !== undefined) return body;
+    // `=== false` and not `!body.only_unlocked`: an absent flag defaults to
+    // true, so it must derive "reflow", not "build".
+    return { ...body, mode: body.only_unlocked === false ? "build" : "reflow" };
+  },
+  z.object({
+    /** true (default) = re-flow unlocked fixtures only, locked ones are fixed
+     *  obstacles ("re-flow remaining", doc 12 §2); false = fresh full pass. */
+    only_unlocked: z.boolean().default(true),
+    /** Which solver this run is asking for. Absent is derived from
+     *  `only_unlocked` by the preprocess above. */
+    mode: z.enum(["build", "reflow", "polish"]),
+  }),
+);
 export type AutoScheduleRequest = z.infer<typeof AutoScheduleRequest>;
+
+/** Board quality of a proposal. snake_case on the wire; the engine's camelCase
+ *  equivalents are mapped across at the usecase seam, once. */
+export const ScheduleMetrics = z.object({
+  makespan_minutes: z.number(),
+  worst_idle_gap_minutes: z.number(),
+  court_imbalance_minutes: z.number(),
+  placed: z.number().int(),
+  total: z.number().int(),
+});
+export type ScheduleMetrics = z.infer<typeof ScheduleMetrics>;
+
+/** How the proposal was produced — telemetry, not policy. `status` tracks the
+ *  engine's BuildStatus union one-for-one. */
+export const ScheduleSolverInfo = z.object({
+  engine: z.enum(["greedy", "z3", "z3+lns"]),
+  /** Which solver the request asked for, echoed back.
+   *
+   *  NOT redundant with `engine`, which names what actually produced the board:
+   *  a REFLOW that timed out and a BUILD that expired before finishing its first
+   *  tier both come back `engine: "greedy"`, `budget_expired: true`,
+   *  `tiers_completed: 0`, `tiers_total: 4` — byte for byte the same payload,
+   *  describing two different events.
+   *
+   *  It matters because only the BUILD path has a tier ladder. `reflowExisting`
+   *  keeps `tiersCompleted` at 0 deliberately (reporting a number from a ladder
+   *  it never walked would make an optimality claim nothing proved) while
+   *  `tiers_total` stays the build ladder's size, so a reader with only those two
+   *  numbers renders "0 of 4 targets improved" about a run that was never on that
+   *  scale. This is the field that lets it say something true instead.
+   *
+   *  Optional and additive: absent, a reader keeps the tier sentence, which is
+   *  what it rendered before the field existed. */
+  mode: z.enum(["build", "reflow", "polish"]).optional(),
+  status: z.enum([
+    "ok",
+    "already_optimal",
+    "infeasible",
+    "verifier_rejected",
+    "z3_unavailable",
+    "solver_busy",
+    /**
+     * The solver could not represent this board on its lattice, so it never
+     * searched it.
+     *
+     * NOT a failure, and not a quality claim — the deliberate ABSENCE of one.
+     * The greedy board it arrives with is valid. What it refuses to say is
+     * whether a better one exists, and that refusal is the whole reason the
+     * member exists: the behaviour it replaces reported `already_optimal` —
+     * which is a PROOF — about a board no tier had ever been in a position to
+     * ask a question about.
+     *
+     * Listed here rather than left off because `schedule.ts` assigns the
+     * engine's `BuildStatus` into this object one-for-one, so a member missing
+     * from this enum is a board the API has no shape for.
+     */
+    "not_searched",
+  ]),
+  tiers_completed: z.number().int(),
+  /** How many improvement targets the ladder HAS — the denominator
+   *  `tiers_completed` is a numerator of.
+   *
+   *  Sent rather than left to the client because a bare `tiers_completed` has
+   *  no meaning without it: the result strip had to carry its own
+   *  `IMPROVEMENT_TARGETS = 4`, which is a constant in a different package from
+   *  the ladder it describes and drifts the day a tier is added or removed with
+   *  nothing to notice. A denominator on the wire moves that fact to the one
+   *  place that knows it.
+   *
+   *  Optimality is `tiers_completed === tiers_total`, NOT `!budget_expired`: a
+   *  term or metric drift exits a tier without ever setting the flag. */
+  tiers_total: z.number().int(),
+  budget_expired: z.boolean(),
+  elapsed_ms: z.number(),
+  moved: z.number().int(),
+  /** How many of `moved` were cards this run placed for the FIRST time.
+   *
+   *  `moved` counts every card the run put somewhere, and for a REFLOW over an
+   *  unscheduled stage that is the entire board — cards that were never anywhere
+   *  to be moved FROM. Without this the best copy available is "N matches
+   *  moved", which is wrong about every one of them.
+   *
+   *  CARRIED, not inferred. A reader cannot recover it from `moved` and
+   *  `placed`: `moved === placed` happens on plenty of ordinary boards that
+   *  seeded nothing at all, so a component deriving it that way would relabel a
+   *  genuine re-flow as a first-time scheduling run.
+   *
+   *  Present only on the REFLOW path, which is the only one that distinguishes a
+   *  seed from a move. BUILD and POLISH re-place everything by definition, so
+   *  the distinction does not arise and the field is absent. */
+  seeded: z.number().int().optional(),
+  /** How many cards that HELD a slot on the organiser's board no longer have
+   *  one after this run (R21).
+   *
+   *  Its own field rather than folded into `moved`, because the two are
+   *  different events and only one of them is a rearrangement. Folded, a single
+   *  substitution — one card in, one card out — read as 2 moves on a board that
+   *  had only moved one thing, and `moved` could exceed the size of the board it
+   *  described. A strip printing "moved N" cannot honestly print an N larger
+   *  than the board.
+   *
+   *  Not derivable from `total - placed`, which counts every card with no slot
+   *  including ones that never had one. On a stage of 22 with 18 placed, four
+   *  cards are unplaced and only the ones the organiser had already scheduled
+   *  are a time somebody may have to be un-told about.
+   *
+   *  0 rather than absent whenever there is no baseline to lose from: the engine
+   *  measures it against `BuildInput.current`, and a BUILD that supplies none
+   *  reports 0 by definition. Optional on the wire only so a server one deploy
+   *  behind parses. */
+  lost: z.number().int().optional(),
+  /** The PINNED fixtures an `infeasible` verdict is about, sorted.
+   *
+   *  `infeasible` has two sources and they say opposite things to an organiser.
+   *  The board source means not one card can be placed legally. The PIN source
+   *  means the rest of the board is fine and two locked placements cannot both
+   *  be kept. Present only for the second, and its ABSENCE on an `infeasible`
+   *  result is itself the signal that the proof is about the board.
+   *
+   *  Optional and additive: a reader that has not been taught about it degrades
+   *  to `total - placed`, which is the same number in the measured case and
+   *  wrong whenever an unplaced card is not a pinned one. Never synthesised
+   *  here — it is forwarded only when the engine supplied it. */
+  contradictory_pins: z.array(z.string()).optional(),
+});
+export type ScheduleSolverInfo = z.infer<typeof ScheduleSolverInfo>;
 
 export const AutoScheduleResult = z.object({
   assignments: z.array(ScheduleAssignment),
   conflicts: z.array(ScheduleConflict),
+  metrics: ScheduleMetrics,
+  solver: ScheduleSolverInfo,
 });
 
 /** POST /stages/{id}/schedule/apply — persist an assignment set. */
@@ -948,6 +1107,23 @@ export const ValidateScheduleResult = z.object({
   conflicts: z.array(ScheduleConflict),
 });
 
+/** POST /divisions/{id}/publish-schedule (#230 item 2).
+ *
+ *  Publish runs the board through the same validator the conflicts panel runs.
+ *  Blocking conflicts refuse outright — there is deliberately NO field here that
+ *  overrides those. `acknowledge_warnings` covers only the warning level: the
+ *  organiser has seen the rest shortfall or the day-cap breach and is publishing
+ *  anyway, and `reason` records why, on the `schedule_published` event.
+ *
+ *  Every field is optional and the route parses an ABSENT body as `{}` — the
+ *  console and existing API clients POST this endpoint with no body at all, and
+ *  adding a gate is not a licence to 400 them. */
+export const PublishScheduleRequest = z.object({
+  acknowledge_warnings: z.boolean().optional(),
+  reason: z.string().max(500).optional(),
+});
+export type PublishScheduleRequest = z.infer<typeof PublishScheduleRequest>;
+
 export const PublishScheduleResult = z.object({
   division_id: Uuid,
   status: DivisionStatus,
@@ -980,6 +1156,24 @@ export const AssignedFixture = z.object({
   court_label: z.string().nullable(),
   status: z.string(),
 });
+
+/** POST /divisions/{id}/start (#230 item 2 follow-up).
+ *
+ *  Starting the tournament PUBLISHES the schedule, so it carries the publish
+ *  contract verbatim: blocking conflicts refuse outright with no override,
+ *  `acknowledge_warnings` covers only the warning level, and `reason` records
+ *  why on the `schedule_published` event. A separate schema rather than a reuse
+ *  of `PublishScheduleRequest` because the two endpoints are separate promises
+ *  to API clients — but any divergence between them is a defect, not a feature.
+ *
+ *  Every field is optional and the route parses an ABSENT body as `{}`: the
+ *  console and existing key clients POST this endpoint with no body at all, and
+ *  adding a gate is not a licence to 400 them. */
+export const StartDivisionRequest = z.object({
+  acknowledge_warnings: z.boolean().optional(),
+  reason: z.string().max(500).optional(),
+});
+export type StartDivisionRequest = z.infer<typeof StartDivisionRequest>;
 
 export const StartDivisionResult = z.object({
   division_id: Uuid,
