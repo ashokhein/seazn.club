@@ -18,9 +18,13 @@ Every competition starts **Private** (only your team sees it). Switch to **Link 
 
 ## Common questions
 
-**Free plan limits?** Community orgs can run 10 active competitions at a time. Finished ones can be marked completed or archived to free a slot — and a competition covered by an [Event Pass](/help/billing/event-pass) doesn't use a slot at all.
+**Free plan limits?** Community orgs can run 10 active competitions at a time. Finished ones can be marked completed or archived to free a slot — and a competition covered by an [Event Pass](/help/billing/event-pass) doesn't use a slot at all. Retiring a competition is what closes it: a completed or archived one takes no new divisions, and is closed to a new Event Pass.
 
 **Does a finished competition retire itself?** No — nothing changes a competition's status on your behalf. Once its end date is more than a week behind, its overview asks an organiser which happened: the event finished, or the date moved. Both answers take one click — **Mark it completed**, or change the end date in the competition's settings. We ask rather than decide, because a status you never chose is one you would have to undo, while correcting an optimistic end date simply puts things back.
+
+**Can I add a division to a finished competition?** No. Once a competition is **completed** or **archived** it accepts no new divisions: the wizard takes the details and then refuses with *"This competition is finished, so no new divisions can be added to it."* Restoring an archived division back into it is refused for the same reason. Nothing else about the competition changes — it stays fully readable, and everything already inside it is untouched.
+
+Two ways on. If the event is in fact still running, set its **Status** back to **Live** (or **Published**) in the competition's settings and add the division — it counts against your active-competition limit again while it's active. If the event really is over, next season is a new competition ([and it needs its own Event Pass](/help/billing/event-pass)).
 
 **Can I still buy an Event Pass for it?** Only while it is running, or during the week of grace after the date it was due to end. A competition that is completed or archived, or more than a week past that date, is **closed to a new [Event Pass](/help/billing/event-pass)** — the buy link disappears instead of leading to a checkout that would refuse the sale. Correcting the date puts the offer back on the next page load.
 
