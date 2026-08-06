@@ -175,16 +175,19 @@ describe("the board's three schedule actions post three different bodies", () =>
    * pinned on its own side. A client that started stamping a mode would move the
    * decision to the caller silently — the bodies would still be accepted, and
    * the first divergence would show up as the wrong solver running.
+   *
+   * BY TESTID, like its sibling below. This case used to find the two buttons by
+   * their rendered COPY while the very next test in this file selects the same
+   * two by `data-testid` — so a copy-only edit (a reworded label, a division
+   * name interpolated differently) reded one and not the other, for a reason
+   * that has nothing to do with either claim. The ids are the contract (#465);
+   * the labels are translations.
    */
   it("Auto-schedule and Re-flow keep letting the server derive the mode", async () => {
     const island = renderIsland(ScheduleBoard, baseProps());
     const tree = island.tree();
-    const buttons = tree.filter(
-      (n) => typeof n.type === "string" && n.type === "button" && propsOf(n).onClick !== undefined,
-    );
-    const auto = buttons.find((b) => String(propsOf(b).children ?? "").includes("Auto-schedule"));
-    const reflow = buttons.find((b) => propsOf(b).children === "Re-flow unlocked");
-    if (!auto || !reflow) throw new Error("the pre-existing schedule actions did not render");
+    const auto = withProp(tree, "data-testid", "schedule-auto");
+    const reflow = withProp(tree, "data-testid", "schedule-reflow");
 
     await (propsOf(auto).onClick as () => Promise<void> | void)();
     await flush();

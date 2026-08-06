@@ -7396,10 +7396,18 @@ async function schedulingConstraintsSuite(): Promise<void> {
  * `serverExternalPackages` entry, and without them the solver shipped as a
  * silent no-op that fell back to the greedy pass while every gate stayed green.
  * That failure is invisible to any assertion about the BOARD, because the greedy
- * board is also a valid board. It is visible in exactly one field:
- * `solver.engine`. Asserting it is `z3`/`z3+lns` and not `greedy` is the reason
- * this suite exists, and the reason the build assertions below refuse
- * `z3_unavailable` instead of tolerating it as a graceful degradation.
+ * board is also a valid board. Refusing the fallback rather than tolerating it
+ * as a graceful degradation is the reason this suite exists.
+ *
+ * THE FIELD THAT CARRIES IT IS `solver.status`, NOT `solver.engine`. This
+ * docblock used to say the opposite — "asserting engine is z3/z3+lns and not
+ * greedy" — and the check below deliberately does NOT do that, for the reason
+ * spelled out over it: `engine` is board PROVENANCE, so a run where z3 loaded,
+ * solved, and found nothing better than the greedy seed reports `greedy`
+ * correctly, which is the honest answer every time on this six-fixture board.
+ * A reader trusting the old sentence would "restore" the engine assertion the
+ * inline comment records as already broken once. A WASM that does not load
+ * returns `z3_unavailable`; that is the assertion.
  *
  * All three modes run, because they are three different solvers behind one
  * endpoint (`AutoScheduleRequest`'s preprocess derives `mode` from
@@ -7533,9 +7541,16 @@ async function z3AutoScheduleSuite(): Promise<void> {
     // answer every time and the old assertion failed against a healthy solver.
     //
     // `status` is the field that carries the real failure: a WASM that does
-    // not load returns `z3_unavailable`. `tiers_completed > 0` corroborates —
-    // the ladder cannot advance a tier without a solver behind it.
-    "z3 build: the WASM loaded and the tier ladder ran in prod (not the z3_unavailable fallback)",
+    // not load returns `z3_unavailable`. That is the whole of the claim.
+    //
+    // `tiers_completed > 0` is kept as a shape check and NOT as corroboration,
+    // which is what its old name ("the tier ladder ran") asserted and could not
+    // support. T0 sets `tiersCompleted = 1` when `checks > 0` OR when greedy
+    // already placed every card — "the maximum is achieved and proving it costs
+    // zero checks" (build.ts). This six-fixture, two-court board is exactly that
+    // case, so a `1` here is routinely reached with ZERO z3 checks and says
+    // nothing about whether a solver was behind it.
+    "z3 build: the WASM loaded in prod (not the z3_unavailable fallback)",
     build?.solver?.status !== "z3_unavailable" &&
       (build?.solver?.tiers_completed ?? 0) > 0,
   );
