@@ -236,12 +236,49 @@ const sgn = (n: number): number => (n > 0 ? 1 : n < 0 ? -1 : 0);
 const DIFF_KEYS = ["gd", "diff", "run_diff"] as const;
 const FOR_KEYS = ["gf", "for", "runs_for"] as const;
 
-function metricOf(row: StandingsRow, keys: readonly string[]): number {
+const FAIR_PLAY_KEYS = ["fair_play"] as const;
+
+// The first of `keys` this row records, or `undefined` when it records none.
+//
+// Partial on purpose (#429 scope item 5). `metrics` is a fold: `zeroRow` starts
+// at `{}` and `addDelta` only ever writes a key some delta carried, so a row
+// with no fixtures in the table being ranked — an entrant yet to play, an
+// entrant absent from an h2h mini-table — records NO key at all, and neither
+// does a row folded before a metric existed. Collapsing that to 0 made "never
+// recorded" indistinguishable from "recorded, and it was zero", which is wrong
+// for every signed metric (a −5 GD is worse than no GD, not better) and blocks
+// any future rate metric outright, where no attempts is not the same as 0%.
+// Callers now state their own answer rather than inheriting a silent one.
+function metricOf(row: StandingsRow, keys: readonly string[]): number | undefined {
   for (const key of keys) {
     const value = row.metrics[key];
     if (value !== undefined) return value;
   }
-  return 0;
+  return undefined;
+}
+
+// Integer-ledger readers (the ratio metrics and NRR). An unrecorded count IS 0
+// here — these compare two ledger counters by cross-multiplication, and 0 is
+// the identity the fold would have summed to, with `compareRatio` already
+// giving 0/0 its own "no data" branch. Named so the default is a decision at
+// the call site rather than a fallback hidden inside the lookup.
+function ledgerOf(row: StandingsRow, keys: readonly string[]): number {
+  return metricOf(row, keys) ?? 0;
+}
+
+// Order two rows on a metric where absence means NO DATA: absent sorts below
+// every recorded value, and two absent rows are level. Same "unknown sorts
+// last" rule `seed` applies to an entrant with no seed, and it keeps the
+// comparator a total preorder — which `groupBySort` requires, so "the key
+// simply does not apply to this pair" is not an available answer. Two rows that
+// BOTH record the metric compare exactly as they did before.
+function compareMetric(a: StandingsRow, b: StandingsRow, keys: readonly string[]): number {
+  const va = metricOf(a, keys);
+  const vb = metricOf(b, keys);
+  if (va === undefined || vb === undefined) {
+    return va === vb ? 0 : va === undefined ? -1 : 1;
+  }
+  return sgn(va - vb);
 }
 
 // Compare fractions an/ad vs bn/bd by cross-multiplication — no floats (spec 05
@@ -263,10 +300,10 @@ function compareRatio(an: number, ad: number, bn: number, bd: number): number {
 // Net run rate as an exact fraction: rf/bf − ra/bb = (rf·bb − ra·bf)/(bf·bb)
 // (spec 04 §5 / cricket.md). Compared, never divided.
 function nrrFraction(row: StandingsRow): { n: number; d: number } {
-  const rf = metricOf(row, ["runs_for"]);
-  const bf = metricOf(row, ["balls_faced_eff"]);
-  const ra = metricOf(row, ["runs_against"]);
-  const bb = metricOf(row, ["balls_bowled_eff"]);
+  const rf = ledgerOf(row, ["runs_for"]);
+  const bf = ledgerOf(row, ["balls_faced_eff"]);
+  const ra = ledgerOf(row, ["runs_against"]);
+  const bb = ledgerOf(row, ["balls_bowled_eff"]);
   return { n: rf * bb - ra * bf, d: bf * bb };
 }
 
@@ -276,9 +313,9 @@ function nrrFraction(row: StandingsRow): { n: number; d: number } {
 const COMPARATORS: Partial<Record<TiebreakerKey, Comparator>> = {
   points: (a, b) => sgn(a.points - b.points),
   wins: (a, b) => sgn(a.won - b.won),
-  diff: (a, b) => sgn(metricOf(a, DIFF_KEYS) - metricOf(b, DIFF_KEYS)),
-  for: (a, b) => sgn(metricOf(a, FOR_KEYS) - metricOf(b, FOR_KEYS)),
-  fair_play: (a, b) => sgn(metricOf(a, ["fair_play"]) - metricOf(b, ["fair_play"])),
+  diff: (a, b) => compareMetric(a, b, DIFF_KEYS),
+  for: (a, b) => compareMetric(a, b, FOR_KEYS),
+  fair_play: (a, b) => compareMetric(a, b, FAIR_PLAY_KEYS),
   nrr: (a, b) => {
     const na = nrrFraction(a);
     const nb = nrrFraction(b);
@@ -286,34 +323,34 @@ const COMPARATORS: Partial<Record<TiebreakerKey, Comparator>> = {
   },
   set_ratio: (a, b) =>
     compareRatio(
-      metricOf(a, ["sets_won"]),
-      metricOf(a, ["sets_lost"]),
-      metricOf(b, ["sets_won"]),
-      metricOf(b, ["sets_lost"]),
+      ledgerOf(a, ["sets_won"]),
+      ledgerOf(a, ["sets_lost"]),
+      ledgerOf(b, ["sets_won"]),
+      ledgerOf(b, ["sets_lost"]),
     ),
   // Tennis games won/lost (v6/00 §2) — same cross-multiplied form as
   // set_ratio, one level down the nested ledger.
   game_ratio: (a, b) =>
     compareRatio(
-      metricOf(a, ["games_won"]),
-      metricOf(a, ["games_lost"]),
-      metricOf(b, ["games_won"]),
-      metricOf(b, ["games_lost"]),
+      ledgerOf(a, ["games_won"]),
+      ledgerOf(a, ["games_lost"]),
+      ledgerOf(b, ["games_won"]),
+      ledgerOf(b, ["games_lost"]),
     ),
   // Carrom boards won/lost (carrom.md §4) — same cross-multiplied form.
   board_ratio: (a, b) =>
     compareRatio(
-      metricOf(a, ["boards_won"]),
-      metricOf(a, ["boards_lost"]),
-      metricOf(b, ["boards_won"]),
-      metricOf(b, ["boards_lost"]),
+      ledgerOf(a, ["boards_won"]),
+      ledgerOf(a, ["boards_lost"]),
+      ledgerOf(b, ["boards_won"]),
+      ledgerOf(b, ["boards_lost"]),
     ),
   point_ratio: (a, b) =>
     compareRatio(
-      metricOf(a, ["points_won"]),
-      metricOf(a, ["points_lost"]),
-      metricOf(b, ["points_won"]),
-      metricOf(b, ["points_lost"]),
+      ledgerOf(a, ["points_won"]),
+      ledgerOf(a, ["points_lost"]),
+      ledgerOf(b, ["points_won"]),
+      ledgerOf(b, ["points_lost"]),
     ),
   // Swiss cascade-time metrics — read the assembled ledger (spec 05 §4.1).
   buchholz: (a, b, ctx) =>
