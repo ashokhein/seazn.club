@@ -76,6 +76,8 @@ async function isolated<T>(
   body: (mods: {
     build: typeof import("./build.ts");
     z3: typeof import("./z3-load.ts");
+    repair: typeof import("./repair.ts");
+    payload: typeof import("./payload-fixtures.ts");
   }) => Promise<T>,
   mock?: (z3: typeof import("./z3-load.ts")) => void,
 ): Promise<T> {
@@ -83,13 +85,23 @@ async function isolated<T>(
   const z3 = await import("./z3-load.ts");
   mock?.(z3);
   try {
-    return await body({ build: await import("./build.ts"), z3 });
+    return await body({
+      build: await import("./build.ts"),
+      z3,
+      repair: await import("./repair.ts"),
+      payload: await import("./payload-fixtures.ts"),
+    });
   } finally {
     vi.doUnmock("./build-encode.ts");
     await z3.resetZ3();
     vi.resetModules();
   }
 }
+
+/** A board as `(fixture, court, offset-in-minutes)` triples, sorted — so two
+ *  boards compare by CONTENT and not by the row order a solver happened to emit. */
+const shape = (rows: readonly { fixtureId: string; court: string; startAt: number }[]): string[] =>
+  rows.map((a) => `${a.fixtureId}@${a.court}+${(a.startAt - T0) / MIN}`).sort();
 
 describe("buildSchedule — z3 teardown (R17)", () => {
   it("hands the WASM heap back after a solve that succeeded", async () => {
@@ -137,6 +149,69 @@ describe("buildSchedule — z3 teardown (R17)", () => {
         });
       },
     );
+  }, 180_000);
+
+  it("gives the same board after a repair as it does cold", async () => {
+    // THE ASSERTION THAT ACTUALLY CLOSES THE DETERMINISM HOLE, and the reason
+    // `repairSchedule` had to be wrapped too.
+    //
+    // R17 covered `buildSchedule`, but `repairSchedule` took `withZ3Lock` with
+    // no reset — and `repairAndVerify` inherits that. So a BUILD following a
+    // repair in the same process started WARM, which is exactly the state that
+    // makes a solve's answer depend on what the process did before it. Both
+    // orderings happen in one web request: the runners try the repair solver,
+    // then an auto-schedule can follow on the same node process.
+    //
+    // WHICH HALF OF THIS TEST DOES THE WORK, measured rather than assumed: the
+    // `z3LoadCount()` assertion below is the discriminating one — it reds with
+    // `expected 1 to be +0` the moment the wrap comes off. The board comparison
+    // at the end was mutation-tested with that witness neutered and it stayed
+    // GREEN: a warm context from a repair does not happen to shift the tie-break
+    // on THIS board. It is kept as a cheap canary, not claimed as the proof.
+    // The proof that cross-solve coupling is real at all is
+    // `build-lns-wiring.test.ts`, which was green alone and RED in a full run
+    // before `buildSchedule` started tearing down.
+    //
+    // Compared as a SET of (fixture, court, offset) rather than by row order:
+    // the claim is that the BOARD is the same, and row order is a separate
+    // property `build-lns.test.ts` owns.
+    const cold = await isolated(async ({ build }) =>
+      shape((await build.buildSchedule({ fixtures, config })).assignments),
+    );
+    const afterRepair = await isolated(async ({ build, repair, payload, z3 }) => {
+      // A board with a real court clash, NOT a clean one. `repair.ts` answers a
+      // clean proposal from a verifier precheck before it ever loads the WASM,
+      // so a clean board leaves the context stone cold and the comparison below
+      // would be vacuous — measured: it passed even unwrapped.
+      const golden = payload.goldenBadminton();
+      const first = golden[0]!;
+      const clashed = golden.map((a) =>
+        a.fixtureId === "gf"
+          ? { ...a, court: first.court, startAt: first.startAt, endAt: first.endAt }
+          : a,
+      );
+      const r = await repair.repairAndVerify({
+        proposal: clashed,
+        dependencies: payload.badmintonFeedDeps(),
+        config: {
+          ...payload.BASE_CONFIG,
+          tz: "UTC",
+          window: {
+            from: payload.at("2026-08-10T08:00:00Z"),
+            to: payload.at("2026-08-17T08:00:00Z"),
+          },
+          courts: ["C1", "C2"],
+        },
+        budgetMs: 60_000,
+      });
+      // The repair really solved, so the WASM really booted.
+      expect(r.status).toBe("repaired");
+      // THE DIRECT ASSERTION. Unwrapped, `repairSchedule` leaves its context
+      // loaded and the next solve starts warm; this is that state, named.
+      expect(z3.z3LoadCount()).toBe(0);
+      return shape((await build.buildSchedule({ fixtures, config })).assignments);
+    });
+    expect(afterRepair).toEqual(cold);
   }, 180_000);
 
   it("surfaces the SOLVE's error when the teardown throws as well", async () => {

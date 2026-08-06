@@ -50,7 +50,7 @@ import {
   type RepairFamily,
 } from "./repair-domain.ts";
 import { dayKeyInTz } from "./tz.ts";
-import { loadZ3, withZ3Lock } from "./z3-load.ts";
+import { loadZ3, withZ3LockAndReset } from "./z3-load.ts";
 
 /** #401's Task 4 interface names these on `repair.ts`; they are DEFINED in
  *  `repair-domain.ts` because the domain builder is what decides which family a
@@ -234,7 +234,23 @@ const famLiteralName = (f: RepairFamily): string => `fam_${f}`;
  * made: time spent queueing is not time the caller was given.
  */
 export function repairSchedule(input: RepairInput): Promise<RepairResult> {
-  return withZ3Lock(() => solveRepair(input));
+  // AND IT OWNS ITS TEARDOWN (R17). This was the one z3 entry point the ruling
+  // did not reach, and `repairAndVerify` inherited the gap.
+  //
+  // Two things it cost. The WASM heap only ever grows and nothing frees a
+  // finished `Solver`, so this was exactly the "the next entry point
+  // re-introduces the crash" hazard `withZ3LockAndReset` exists to close —
+  // `repairDecomposed` escaped it only by resetting between components on its
+  // own account. And a `buildSchedule` following a repair in the same process
+  // started WARM, which makes a solve's answer depend on what the process did
+  // before it; both orderings occur in one node process, because the AI runners
+  // try the repair solver and an auto-schedule can follow.
+  //
+  // `repairDecomposed`'s own `resetZ3()` between components is now redundant
+  // rather than wrong: it degrades to a no-op, the singleton having already been
+  // cleared. Left in place deliberately — one no-op call per component, and its
+  // comment carries the measurements that justify the whole policy.
+  return withZ3LockAndReset(() => solveRepair(input));
 }
 
 async function solveRepair(input: RepairInput): Promise<RepairResult> {
