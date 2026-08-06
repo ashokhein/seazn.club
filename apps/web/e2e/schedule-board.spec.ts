@@ -519,7 +519,11 @@ test("the publish gate offers a way through for warnings, and none for a blocker
   const dialog = page.getByTestId("board-gate");
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('p[data-kind="warnings"][data-action="publish"]')).toBeVisible();
-  await expect(dialog.locator('[data-testid="board-gate-conflict"][data-code="warn.rest"]')).toBeVisible();
+  // `.first()`: a rest shortfall is reported once per CARD, so the pair yields
+  // two rows and a strict locator resolves neither.
+  await expect(
+    dialog.locator('[data-testid="board-gate-conflict"][data-code="warn.rest"]').first(),
+  ).toBeVisible();
 
   await page.getByTestId("board-gate-confirm").click();
   await expect(dialog).toBeHidden();

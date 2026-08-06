@@ -98,11 +98,14 @@ export function ConfirmDialog({
             />
           </label>
         )}
+        {/* `min-h-11` = 44px, the phone touch-target floor this repo asserts on
+            every other action bar. `.btn` alone renders 38px, and this dialog is
+            a bottom SHEET under `sm` — the one place a control is thumbed. */}
         <div className="flex justify-end gap-2">
           <button
             type="button"
             data-testid={testId ? `${testId}-cancel` : undefined}
-            className="btn btn-ghost"
+            className="btn btn-ghost min-h-11"
             onClick={onCancel}
             disabled={busy}
           >
@@ -112,7 +115,7 @@ export function ConfirmDialog({
             <button
               type="button"
               data-testid={testId ? `${testId}-confirm` : undefined}
-              className="btn btn-danger"
+              className="btn btn-danger min-h-11"
               onClick={onConfirm}
               disabled={busy || !armed}
             >
