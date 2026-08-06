@@ -4,7 +4,7 @@ import "server-only";
 // division always replays under the rules it started with.
 import type postgres from "postgres";
 import { sql, withTenant } from "@/lib/db";
-import { HttpError, PaymentRequiredError } from "@/lib/errors";
+import { HttpError } from "@/lib/errors";
 import { assertWithinLimit, getLimit, requireFeature, passLockReason } from "@/lib/entitlements";
 import { EngineError } from "@seazn/engine/core";
 import { effectiveEntrantModel, type EntrantKind } from "@seazn/engine/sport";

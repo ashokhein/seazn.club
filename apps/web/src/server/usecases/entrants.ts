@@ -5,7 +5,7 @@ import "server-only";
 import type postgres from "postgres";
 import { createHash } from "node:crypto";
 import { sql, withTenant } from "@/lib/db";
-import { HttpError, PaymentRequiredError } from "@/lib/errors";
+import { HttpError } from "@/lib/errors";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { assertWithinLimit, getLimit } from "@/lib/entitlements";
 import { resolveModule } from "@/server/engine-db/registry";
