@@ -166,13 +166,30 @@ export function resetZ3(): Promise<void> {
  * In a `finally`, because a solve that THREW allocated just as much as one that
  * returned. The cost is a 200-300 ms reboot on the next `loadZ3`, and it is a
  * no-op when the WASM never booted at all.
+ *
+ * AND THE TEARDOWN'S OWN FAILURE IS SWALLOWED, which is the one place here that
+ * looks like sloppiness and is not. A throw from inside a `finally` REPLACES the
+ * exception the block was already unwinding, so a genuine encoder-drift throw —
+ * the loudest signal this subsystem has — would reach the caller dressed as a
+ * WASM shutdown error and send the next person reading the stack trace somewhere
+ * else entirely. The solve's own error is the one worth keeping.
+ *
+ * Safe to swallow because `tearDownZ3` clears the singleton in a `finally` of
+ * its own: the context is dropped and the next `loadZ3` starts clean whether or
+ * not `shutdown()` succeeded. Logged rather than silent, because a shutdown that
+ * fails repeatedly is a leak somebody should hear about.
  */
 export function withZ3LockAndReset<T>(work: () => Promise<T>): Promise<T> {
   return withZ3Lock(async () => {
     try {
       return await work();
     } finally {
-      await tearDownZ3();
+      try {
+        await tearDownZ3();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(`z3 teardown failed after a solve, continuing: ${String(err)}`);
+      }
     }
   });
 }

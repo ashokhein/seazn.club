@@ -139,6 +139,57 @@ describe("buildSchedule — z3 teardown (R17)", () => {
     );
   }, 180_000);
 
+  it("surfaces the SOLVE's error when the teardown throws as well", async () => {
+    // A throw from inside a `finally` REPLACES the exception the block was
+    // already unwinding. Without the catch, a genuine encoder-drift throw — the
+    // loudest signal this subsystem has — reaches the caller dressed as a WASM
+    // shutdown failure, and the next person reading the stack trace goes looking
+    // in `z3-load.ts` for a bug that is in the encoder.
+    //
+    // `z3-solver` itself is stubbed rather than `z3-load.ts`, because the thing
+    // under test IS `z3-load.ts`. The stub boots cleanly and fails only on
+    // `shutdown()`, which is exactly the shape being guarded.
+    vi.resetModules();
+    vi.doMock("z3-solver", () => ({
+      init: () =>
+        Promise.resolve({
+          Context: () => ({}),
+          em: {
+            PThread: {
+              terminateAllThreads: () => {
+                throw new Error("shutdown boom");
+              },
+            },
+          },
+          setParam: () => undefined,
+        }),
+    }));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const z3 = await import("./z3-load.ts");
+      await z3.loadZ3();
+      // The positive witness again: a context really is loaded, so the teardown
+      // below really does run and really does throw.
+      expect(z3.z3LoadCount()).toBe(1);
+
+      await expect(
+        z3.withZ3LockAndReset(() => Promise.reject(new Error("solve boom"))),
+      ).rejects.toThrow("solve boom");
+
+      // The catch ran, rather than the failure being invisible.
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(String(logged.mock.calls[0]?.[0])).toContain("shutdown boom");
+      // ...and swallowing it was SAFE: `tearDownZ3` clears the singleton in a
+      // `finally` of its own, so the next `loadZ3` still starts clean. Without
+      // that, this would be trading a wrong error message for a stuck context.
+      expect(z3.z3LoadCount()).toBe(0);
+    } finally {
+      logged.mockRestore();
+      vi.doUnmock("z3-solver");
+      vi.resetModules();
+    }
+  }, 60_000);
+
   it("still serialises, and still tears down, when two runs queue together", async () => {
     // The teardown moved INSIDE the lock, so the guard worth keeping is that
     // holding it across both halves did not wedge the queue: two runs launched
