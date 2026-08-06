@@ -849,8 +849,14 @@ export function ScheduleBoard({
               // primary actions of the surface. Mobile-only, so the desktop bar
               // is pixel-identical to what shipped.
               <span key={s.id} className="inline-flex items-center gap-1">
+                {/* #465: the two original actions carry a stable id like their
+                    Polish sibling. Not tidiness — `board.autoSchedule` is
+                    "Auto-schedule {name}" and INTERPOLATES the division name, so
+                    the only text selector that can reach it is a regex that
+                    stops meaning the same thing the day a division is renamed. */}
                 <button
                   type="button"
+                  data-testid="schedule-auto"
                   disabled={actions.busy}
                   onClick={() => void actions.autoRun(s.id, false)}
                   className="btn btn-primary min-h-11 px-3 py-1.5 text-xs sm:min-h-0"
@@ -859,6 +865,7 @@ export function ScheduleBoard({
                 </button>
                 <button
                   type="button"
+                  data-testid="schedule-reflow"
                   disabled={actions.busy}
                   onClick={() => void actions.autoRun(s.id, true)}
                   className="btn btn-ghost min-h-11 px-3 py-1.5 text-xs sm:min-h-0"

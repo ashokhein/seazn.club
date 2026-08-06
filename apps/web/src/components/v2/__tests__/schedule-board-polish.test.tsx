@@ -195,6 +195,43 @@ describe("the board's three schedule actions post three different bodies", () =>
     expect(lastAutoBody()).toStrictEqual({ only_unlocked: true });
   });
 
+  /**
+   * #465 — all three actions carry a stable `data-testid`, and each id is wired
+   * to the solver it names.
+   *
+   * WHY AN ID AND NOT THE LABEL. `board.autoSchedule` is `"Auto-schedule {name}"`
+   * — it INTERPOLATES the division name, so the only text selector that can find
+   * it is a regex that changes meaning the day a division is renamed; and
+   * `board.polish` renders "Improve times", not "Polish", so the obvious literal
+   * was never right at all. The e2e spec that drives these buttons at desktop and
+   * at 375px selects on these ids, and an id that silently disappeared would turn
+   * every one of those assertions into a locator timeout at the far end of a
+   * prod-build run rather than a failure here.
+   *
+   * The three are asserted TOGETHER with their POST bodies, not merely for
+   * presence: an id present on the wrong button is exactly as broken as a missing
+   * one and renders identically. `only_unlocked` is the discriminator the server
+   * derives `mode` from, so these three bodies are three different solvers.
+   */
+  it("exposes schedule-auto / schedule-reflow / schedule-polish, each on its own solver", async () => {
+    const island = renderIsland(ScheduleBoard, baseProps());
+    const tree = island.tree();
+
+    const fire = async (testid: string) => {
+      await (propsOf(withProp(tree, "data-testid", testid)).onClick as () => Promise<void> | void)();
+      await flush();
+      return lastAutoBody();
+    };
+
+    // Auto-schedule = a fresh full pass. `only_unlocked: false` is what the
+    // server's preprocess reads to derive `mode: "build"`.
+    expect(await fire("schedule-auto")).toStrictEqual({ only_unlocked: false });
+    // Re-flow = the repair solver over the unlocked cards; no explicit mode.
+    expect(await fire("schedule-reflow")).toStrictEqual({ only_unlocked: true });
+    // Polish = the tier solver, the one mode `only_unlocked` cannot express.
+    expect(await fire("schedule-polish")).toStrictEqual({ only_unlocked: true, mode: "polish" });
+  });
+
   /** The strip is the board's whole report on the run. A Polish that fired and
    *  said nothing is the same to an organiser as one that did not fire. */
   it("hands the Polish run's telemetry to the result strip", async () => {
