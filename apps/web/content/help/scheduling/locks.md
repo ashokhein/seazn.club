@@ -6,7 +6,7 @@ order: 2
 
 ## Pinning one match
 
-Pin a match (📌 → 🔒 on its card) and every automatic pass — Auto-schedule, Re-flow remaining, Clear slots — leaves it exactly where it is. Use it for the final that must be at 3pm, or the match your streamers are set up for.
+Pin a match (📌 → 🔒 on its card) and every automatic pass — Auto-schedule, Re-flow unlocked, Clear slots — leaves it exactly where it is. Use it for the final that must be at 3pm, or the match your streamers are set up for.
 
 You can still drag a pinned match yourself; it stays pinned at its new slot.
 

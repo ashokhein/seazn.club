@@ -131,7 +131,7 @@ export const TIPS = {
   },
   "schedule.locking": {
     title: "Pinned slots",
-    body: "Pin a match (📌 → 🔒) and the auto passes — Auto-schedule, Re-flow remaining, Clear slots — leave it exactly where it is. You can still drag or move a pinned match yourself, and it stays pinned at its new slot. To stop ALL edits, freeze the whole schedule from the History panel instead.",
+    body: "Pin a match (📌 → 🔒) and the auto passes — Auto-schedule, Re-flow unlocked, Clear slots — leave it exactly where it is. You can still drag or move a pinned match yourself, and it stays pinned at its new slot. To stop ALL edits, freeze the whole schedule from the History panel instead.",
     helpSlug: "scheduling/locks",
   },
   "schedule.undo-watermark": {

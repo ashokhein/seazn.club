@@ -183,7 +183,7 @@ describe("the board's three schedule actions post three different bodies", () =>
       (n) => typeof n.type === "string" && n.type === "button" && propsOf(n).onClick !== undefined,
     );
     const auto = buttons.find((b) => String(propsOf(b).children ?? "").includes("Auto-schedule"));
-    const reflow = buttons.find((b) => propsOf(b).children === "Re-flow remaining");
+    const reflow = buttons.find((b) => propsOf(b).children === "Re-flow unlocked");
     if (!auto || !reflow) throw new Error("the pre-existing schedule actions did not render");
 
     await (propsOf(auto).onClick as () => Promise<void> | void)();

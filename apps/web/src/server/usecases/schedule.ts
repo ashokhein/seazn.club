@@ -756,7 +756,7 @@ export async function autoSchedule(
       settings.config.matchMinutes,
     );
 
-    // Re-flow remaining (doc 12 §2): pinned cards are fixed obstacles;
+    // Re-flow unlocked (doc 12 §2): pinned cards are fixed obstacles;
     // scope-locked fixtures (Jul3/03 §4 two-site safety) pin the same way.
     // Hoisted out of the `schedulable` builder below because THREE things read
     // it now — the `locked` anchor, REFLOW's incumbent board, and the set the
@@ -1159,7 +1159,7 @@ async function reflowExisting(args: {
   const onBoard = new Set(args.placed.map((a) => a.fixtureId));
 
   // A repair solver MOVES cards; it cannot conjure one onto a board it is not
-  // on. "Re-flow remaining" is fired from the UNSCHEDULED section of the stages
+  // on. "Re-flow unlocked" is fired from the UNSCHEDULED section of the stages
   // panel, so the ordinary case is a stage where nothing is placed at all —
   // under a bare `repairSchedule` that is a `clean` verdict over an empty
   // proposal, and the organiser's click does nothing whatsoever. Greedy seeds
