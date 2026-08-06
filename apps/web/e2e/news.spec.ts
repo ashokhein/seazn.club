@@ -18,7 +18,7 @@ test.describe.serial("org news", () => {
       page.request,
       "/api/v1/competitions",
       "POST",
-      { name: `News E2E ${TAG}`, visibility: "public" },
+      { ends_on: "2030-12-31", name: `News E2E ${TAG}`, visibility: "public" },
     );
     const div = await apiJson<{ id: string; slug: string }>(
       page.request,

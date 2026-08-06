@@ -39,7 +39,7 @@ test("register affirmation: signed out, signed in, team roster pick", async ({
     request,
     "/api/v1/competitions",
     "POST",
-    { name: `Self Shots ${TAG}`, visibility: "public" },
+    { ends_on: "2030-12-31", name: `Self Shots ${TAG}`, visibility: "public" },
   );
   const compId = comp.data!.id;
   const compSlug = comp.data!.slug;

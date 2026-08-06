@@ -60,6 +60,7 @@ async function person(orgId: string, opts: PersonOpts = {}): Promise<string> {
 
 async function seedDivision(auth: AuthCtx, entrantCount = 2) {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Reverse Cup " + rnd(),
     visibility: "public",
     branding: {},
@@ -433,6 +434,7 @@ describe.skipIf(!HAS_DB)("#404 reverseMerge", () => {
     // locally and 422s on a fresh CI database.
     await seedFootballCatalog();
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Stats Cup " + rnd(),
       visibility: "public",
       branding: {},

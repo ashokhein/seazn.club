@@ -83,7 +83,7 @@ test.describe.serial("billing lifecycle states", () => {
     const grantOrgId = org.data!.id; // POST /api/orgs already activated it
 
     const newCompetition = (n: string) =>
-      apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
+      apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
         name: `${n} ${TAG}`,
         visibility: "private",
       });
@@ -161,7 +161,7 @@ test.describe.serial("billing lifecycle states", () => {
     const previewOrgId = org.data!.id;
 
     const newCompetition = (n: string) =>
-      apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
+      apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
         name: `${n} ${TAG}`,
         visibility: "private",
       });

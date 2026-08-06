@@ -169,6 +169,7 @@ async function seedDivision(
  *  (court identity across divisions is a string match and nothing else). */
 async function seedBoard(auth: AuthCtx): Promise<Board> {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Joint Apply Cup ${Date.now()}`,
     visibility: "public",
     branding: {},

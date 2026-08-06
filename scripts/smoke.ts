@@ -129,7 +129,7 @@ async function main() {
   const org = { id: ver.org_id };
 
   // --- Competition lifecycle guards (v2 service layer) ---
-  const comp = await v1(admin, "/api/v1/competitions", "POST", {
+  const comp = await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Perm Probe ${tag}`,
   });
   check("owner creates competition", comp.status === 201);
@@ -141,7 +141,7 @@ async function main() {
   check("deleted competition gone", gone.status === 404);
 
   // A competition to probe viewer permissions against.
-  const probe = await v1(admin, "/api/v1/competitions", "POST", {
+  const probe = await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Viewer Probe ${tag}`,
   });
   const probeId = v1data<{ id: string }>(probe).id;
@@ -187,7 +187,7 @@ async function main() {
   // Viewer can read but cannot write (doc 08 §2: write needs an editor role).
   const viewerRead = await v1(viewer, `/api/v1/competitions/${probeId}`);
   check("viewer can read competitions", viewerRead.status === 200);
-  const viewerWrite = await v1(viewer, "/api/v1/competitions", "POST", {
+  const viewerWrite = await v1(viewer, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: "Nope",
   });
   check(
@@ -290,7 +290,7 @@ async function main() {
   const member = newSession();
   await signIn(member, `member_${tag}@example.com`);
   await call(member, `/api/invites/${adminInvite.token}/accept`, "POST");
-  const memberComp = await v1(member, "/api/v1/competitions", "POST", {
+  const memberComp = await v1(member, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Member Made ${tag}`,
   });
   check("invited admin can create competition", memberComp.status === 201);
@@ -946,7 +946,7 @@ async function personMergeSuite(): Promise<void> {
   await setPlan(orgId, "pro", owner);
 
   const comp = v1data<{ id: string }>(
-    await v1(owner, "/api/v1/competitions", "POST", {
+    await v1(owner, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Dupe Cup ${tag}`,
       visibility: "public",
     }),
@@ -1112,7 +1112,7 @@ async function p72Suite(): Promise<void> {
 
   const makeComp = async (name: string) =>
     v1data<{ id: string; slug: string }>(
-      await v1(owner, "/api/v1/competitions", "POST", {
+      await v1(owner, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
         name: `${name} ${tag}`,
         visibility: "public",
       }),
@@ -1204,7 +1204,7 @@ async function p72Suite(): Promise<void> {
   // quota; the active-competition cap is 5 (V311) so both probe comps coexist.
   await setConnect(commOrgId, false);
   const brokeComp = v1data<{ id: string; slug: string }>(
-    await v1(comm, "/api/v1/competitions", "POST", {
+    await v1(comm, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `P72 Card Cup ${tag}`,
       visibility: "unlisted",
     }),
@@ -1242,7 +1242,7 @@ async function p72Suite(): Promise<void> {
   // is free-tier now (V310), monetised through the community fee, not gated.
   await setConnect(commOrgId, true);
   const okComp = v1data<{ id: string; slug: string }>(
-    await v1(comm, "/api/v1/competitions", "POST", { name: `P72 Open Card Cup ${tag}`, visibility: "unlisted" }),
+    await v1(comm, "/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: `P72 Open Card Cup ${tag}`, visibility: "unlisted" }),
   );
   const okDiv = v1data<{ id: string }>(
     await v1(comm, `/api/v1/competitions/${okComp.id}/divisions`, "POST", {
@@ -1561,7 +1561,7 @@ async function smokePlanMatrix(): Promise<void> {
 
   // A scored-through division so a real export renders.
   const cComp = v1data<{ id: string; slug: string }>(
-    await v1(comm, "/api/v1/competitions", "POST", {
+    await v1(comm, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Matrix Community ${tag}`,
       visibility: "unlisted",
     }),
@@ -1647,7 +1647,7 @@ async function smokePlanMatrix(): Promise<void> {
   // and the same `ai.credits` 402 fires — the gate is plan-independent, it
   // only reads the balance.
   const proComp = v1data<{ id: string }>(
-    await v1(pro, "/api/v1/competitions", "POST", {
+    await v1(pro, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Matrix Pro ${tag}`,
     }),
   );
@@ -1693,7 +1693,7 @@ async function smokePlanMatrix(): Promise<void> {
   // org now 402s on (see jul3Suite) succeeds on Pro Plus — coverage of the
   // feature moves to the right tier instead of vanishing.
   const plusComp = v1data<{ id: string }>(
-    await v1(plus, "/api/v1/competitions", "POST", {
+    await v1(plus, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Matrix Plus ${tag}`,
     }),
   );
@@ -1814,7 +1814,7 @@ async function smokePlanMatrix(): Promise<void> {
   // Passed comp: create, then grant its pass. Unlisted sidesteps the public
   // dashboard cap; the pass frees the active-comp slot for the sibling below.
   const passedComp = v1data<{ id: string; slug: string }>(
-    await v1(passer, "/api/v1/competitions", "POST", {
+    await v1(passer, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Matrix Passed ${tag}`,
       visibility: "unlisted",
     }),
@@ -1843,7 +1843,7 @@ async function smokePlanMatrix(): Promise<void> {
   // A second, unpassed comp in the SAME org denies the same feature (the pass is
   // strictly comp-scoped).
   const siblingComp = v1data<{ id: string }>(
-    await v1(passer, "/api/v1/competitions", "POST", {
+    await v1(passer, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Matrix Sibling ${tag}`,
       visibility: "unlisted",
     }),
@@ -1951,7 +1951,7 @@ async function passGrantsSuite(): Promise<void> {
   // public register panel both stay reachable.
   const mkComp = async (name: string) =>
     v1data<{ id: string; slug: string }>(
-      await v1(s, "/api/v1/competitions", "POST", { name: `${name} ${tag}`, visibility: "unlisted" }),
+      await v1(s, "/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: `${name} ${tag}`, visibility: "unlisted" }),
     );
   const mkDiv = async (compId: string, name: string) =>
     v1data<{ id: string; slug: string }>(
@@ -2348,7 +2348,7 @@ async function passRungLSuite(): Promise<void> {
   const orgId = (await signIn(s, `passl_${tag}@example.com`)).org_id;
   const mkComp = async (name: string) =>
     v1data<{ id: string; slug: string }>(
-      await v1(s, "/api/v1/competitions", "POST", {
+      await v1(s, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
         name: `${name} ${tag}`,
         visibility: "unlisted",
       }),
@@ -2531,7 +2531,7 @@ async function passRungLSuite(): Promise<void> {
   const proOrgId = (await signIn(pro, `passlpro_${tag}@example.com`)).org_id;
   await setPlan(proOrgId, "pro", pro);
   const proComp = v1data<{ id: string }>(
-    await v1(pro, "/api/v1/competitions", "POST", {
+    await v1(pro, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Rung L Pro ${tag}`,
       visibility: "unlisted",
     }),
@@ -2586,7 +2586,7 @@ async function passRungLSuite(): Promise<void> {
   // that beats its plan, and only that rung. On a competition with no pass yet,
   // because a competition that holds one refuses any second purchase first.
   const proGateComp = v1data<{ id: string }>(
-    await v1(pro, "/api/v1/competitions", "POST", {
+    await v1(pro, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Rung L Pro Gate ${tag}`,
       visibility: "unlisted",
     }),
@@ -2707,7 +2707,7 @@ async function clubsSuite(): Promise<void> {
 
   // Enroll the team → the entrant roster is a ONE-TIME snapshot of the squad;
   // later squad edits stay off the entry until the explicit roster/sync.
-  const syncComp = await v1(pro, "/api/v1/competitions", "POST", {
+  const syncComp = await v1(pro, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Sync Cup ${tag}`,
     visibility: "private",
   });
@@ -2857,7 +2857,7 @@ async function referralSuite(): Promise<void> {
   // The referred org publishes a competition WITH a division — the real-usage
   // signal both growth-loop grants are gated on since #296.
   referred.cookies["seazn_org"] = referredAuth.org_id;
-  const comp = await v1(referred, "/api/v1/competitions", "POST", { name: `Referred Cup ${tag}` });
+  const comp = await v1(referred, "/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: `Referred Cup ${tag}` });
   check("referral/#296: the referred org creates a competition (201)", comp.status === 201);
   const compId = v1data<{ id: string }>(comp).id;
   const div = await v1(referred, `/api/v1/competitions/${compId}/divisions`, "POST", {
@@ -3320,7 +3320,7 @@ async function passLockEnforcementSuite(): Promise<void> {
   const orgId = (await signIn(s, `passlock_${tag}@example.com`)).org_id;
   const mkComp = async (name: string) =>
     v1data<{ id: string }>(
-      await v1(s, "/api/v1/competitions", "POST", { name: `${name} ${tag}`, visibility: "unlisted" }),
+      await v1(s, "/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: `${name} ${tag}`, visibility: "unlisted" }),
     );
 
   const db = smokeDb();
@@ -3341,7 +3341,7 @@ async function passLockEnforcementSuite(): Promise<void> {
     // retires a `live` competition past its end date, which is what made this
     // state permanent rather than transient.
     await db`update competitions set ends_on = ${utcDay(-(7 + 1))} where id = ${passed}`;
-    const overCap = await v1(s, "/api/v1/competitions", "POST", {
+    const overCap = await v1(s, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Lock Quota Over ${tag}`,
       visibility: "unlisted",
     });
@@ -3354,7 +3354,7 @@ async function passLockEnforcementSuite(): Promise<void> {
     // less), so the passed competition is still exempt and there is room. This
     // is the half that fails if anyone "fixes" the boundary to `<=`.
     await db`update competitions set ends_on = ${utcDay(-7)} where id = ${passed}`;
-    const atBoundary = await v1(s, "/api/v1/competitions", "POST", {
+    const atBoundary = await v1(s, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Lock Quota Boundary ${tag}`,
       visibility: "unlisted",
     });
@@ -3370,7 +3370,7 @@ async function passLockEnforcementSuite(): Promise<void> {
     const buyer = newSession();
     await signIn(buyer, `passsell_${tag}@example.com`);
     const buyComp = v1data<{ id: string }>(
-      await v1(buyer, "/api/v1/competitions", "POST", {
+      await v1(buyer, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
         name: `Lock Sell ${tag}`,
         visibility: "unlisted",
       }),
@@ -3420,7 +3420,7 @@ async function playerAccountsSuite(admin: Session, orgId: string): Promise<void>
   }[];
   const orgSlug = orgs.find((o) => o.id === orgId)!.slug;
 
-  const comp = await v1(admin, "/api/v1/competitions", "POST", {
+  const comp = await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Claim Cup ${tag}`,
     visibility: "public",
   });
@@ -3572,7 +3572,7 @@ async function officialOnboardingSuite(
   const refVer = await signIn(ref, refEmail);
 
   admin.cookies["seazn_org"] = orgId;
-  const comp = await v1(admin, "/api/v1/competitions", "POST", {
+  const comp = await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Whistle Cup ${tag}`,
     visibility: "public",
   });
@@ -3844,7 +3844,7 @@ async function officialOnboardingSuite(
   const busyClaimId = v1data<{ id: string }>(busyInvite).id ?? "";
   await v1(ref, `/api/v1/me/officiating-claims/${busyClaimId}/accept`, "POST");
 
-  const busyComp = await v1(admin, "/api/v1/competitions", "POST", {
+  const busyComp = await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Busy Cup ${tag}`,
     visibility: "public",
   });
@@ -3954,7 +3954,7 @@ async function marksReportsSuite(
   ): Promise<{ fx: string; offId: string; ref: Session }> {
     owner.cookies["seazn_org"] = ownerOrgId;
     const comp = v1data<{ id: string; slug: string }>(
-      await v1(owner, "/api/v1/competitions", "POST", {
+      await v1(owner, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
         name: `Marks ${label} ${tag}`,
         visibility: "public",
       }),
@@ -4097,7 +4097,7 @@ async function marksReportsSuite(
 async function newsSuite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
   admin.cookies["seazn_org"] = proOrgId;
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", {
+    await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `News ${tag}`,
       visibility: "public",
     }),
@@ -4218,7 +4218,7 @@ async function newsSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
   check("news free: manual post public page 200", freePost.status === 200);
 
   const freeComp = v1data<{ id: string }>(
-    await v1(commOwner, "/api/v1/competitions", "POST", {
+    await v1(commOwner, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Free news comp ${tag}`,
       visibility: "public",
     }),
@@ -4248,7 +4248,7 @@ async function plgGrowthSuite(admin: Session, proOrgId: string, proOrgSlug: stri
 
   // --- Pro path: share bar present, "Powered by" attribution footer gone.
   const proComp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", {
+    await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `PLG Pro Cup ${tag}`,
       visibility: "public",
     }),
@@ -4278,7 +4278,7 @@ async function plgGrowthSuite(admin: Session, proOrgId: string, proOrgSlug: stri
   }[];
   const freeOrg = freeOrgs.find((o) => o.id === freeVer.org_id)!;
   const freeComp = v1data<{ id: string; slug: string }>(
-    await v1(free, "/api/v1/competitions", "POST", {
+    await v1(free, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `PLG Free Cup ${tag}`,
       visibility: "public",
     }),
@@ -4369,7 +4369,7 @@ async function v6SportsSuite(admin: Session): Promise<void> {
     await db.end();
   }
 
-  const comp = await v1(admin, "/api/v1/competitions", "POST", {
+  const comp = await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `V6 Sports ${tag}`,
     visibility: "public",
   });
@@ -4703,7 +4703,7 @@ async function w4aTimeModelSuite(admin: Session): Promise<void> {
   }
 
   const comp = v1data<{ id: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", {
+    await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `W4a Time ${tag}`,
       visibility: "public",
     }),
@@ -5073,7 +5073,7 @@ async function w4aTimeModelSuite(admin: Session): Promise<void> {
   const free = newSession();
   await signIn(free, `w4a_free_${tag}@example.com`);
   const freeComp = v1data<{ id: string }>(
-    await v1(free, "/api/v1/competitions", "POST", {
+    await v1(free, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `W4a Free Time ${tag}`,
       visibility: "public",
     }),
@@ -5219,7 +5219,7 @@ async function cricketDlsSuite(): Promise<void> {
   await setPlan(who.org_id, "pro", owner);
 
   const comp = v1data<{ id: string }>(
-    await v1(owner, "/api/v1/competitions", "POST", {
+    await v1(owner, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `DLS Scales ${tag}`,
       visibility: "private",
     }),
@@ -5366,7 +5366,7 @@ async function configSnapshotSuite(admin: Session, adminEmail: string): Promise<
   const db = smokeDb();
   try {
     const comp = v1data<{ id: string }>(
-      await v1(admin, "/api/v1/competitions", "POST", {
+      await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
         name: `Cfg Snapshot ${tag}`,
         visibility: "private",
       }),
@@ -5527,7 +5527,7 @@ async function regQueueSuite(admin: Session): Promise<void> {
   const orgSlug = orgs.find((o) => o.id === me.org?.id)!.slug;
 
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", {
+    await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Queue Probe ${tag}`,
       visibility: "public",
     }),
@@ -6075,7 +6075,7 @@ async function paymentMethodSuite(): Promise<void> {
  *  PATCH rejects with FORMAT_LOCKED; the logo upload URL mints for editors. */
 async function divisionSettingsSuite(admin: Session): Promise<void> {
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", {
+    await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `V8 Probe ${tag}`,
     }),
   );
@@ -6685,7 +6685,7 @@ async function seedPlannableAiDivision(
   startAt: string | null = "2026-10-01T09:00:00.000Z",
 ): Promise<{ compId: string; divId: string; stageId: string }> {
   const comp = v1data<{ id: string }>(
-    await v1(s, "/api/v1/competitions", "POST", { name: `${label} ${tag}` }),
+    await v1(s, "/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: `${label} ${tag}` }),
   );
   const div = v1data<{ id: string }>(
     await v1(s, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
@@ -6755,7 +6755,7 @@ async function seedBracketAiDivision(
   fixtures: { id: string; home_entrant_id: string | null; away_entrant_id: string | null }[];
 }> {
   const comp = v1data<{ id: string }>(
-    await v1(s, "/api/v1/competitions", "POST", { name: `${label} ${tag}` }),
+    await v1(s, "/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: `${label} ${tag}` }),
   );
   const div = v1data<{ id: string }>(
     await v1(s, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
@@ -6936,7 +6936,7 @@ async function schedulingConstraintsSuite(): Promise<void> {
   // 1. A durable feeder→dependent rest rule on a real bracket (#443, #447)
   // ======================================================================
   const cupComp = v1data<{ id: string }>(
-    await v1(s, "/api/v1/competitions", "POST", { name: `Sched Constraints ${tag}` }),
+    await v1(s, "/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: `Sched Constraints ${tag}` }),
   );
   const cupDiv = v1data<{ id: string }>(
     await v1(s, `/api/v1/competitions/${cupComp.id}/divisions`, "POST", {
@@ -7118,7 +7118,7 @@ async function schedulingConstraintsSuite(): Promise<void> {
   // 2. A pool-bearing division and a two-keyed restByGroup (#446, #459)
   // ======================================================================
   const poolComp = v1data<{ id: string }>(
-    await v1(s, "/api/v1/competitions", "POST", { name: `Sched Pools ${tag}` }),
+    await v1(s, "/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: `Sched Pools ${tag}` }),
   );
   const poolDiv = v1data<{ id: string }>(
     await v1(s, `/api/v1/competitions/${poolComp.id}/divisions`, "POST", {
@@ -7903,7 +7903,7 @@ async function seedJointAiCompetition(
   label: string,
 ): Promise<{ compId: string; divIds: string[] }> {
   const comp = v1data<{ id: string }>(
-    await v1(s, "/api/v1/competitions", "POST", { name: `${label} ${tag}` }),
+    await v1(s, "/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: `${label} ${tag}` }),
   );
   const divIds: string[] = [];
   for (const name of ["Joint A", "Joint B"]) {
@@ -8227,7 +8227,7 @@ async function proPlusSuite(): Promise<void> {
   const orgId = who.org_id;
 
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(owner, "/api/v1/competitions", "POST", {
+    await v1(owner, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Plus Probe ${tag}`,
     }),
   );
@@ -8387,11 +8387,11 @@ async function pricingV3Suite(): Promise<void> {
   // active competitions, with 4 divisions inside each (was 2). The pass lifts
   // the per-competition DIVISION cap — that is the boundary this test drives.
   const compA = v1data<{ id: string; slug: string }>(
-    await v1(buyer, "/api/v1/competitions", "POST", {
+    await v1(buyer, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Pass Cup ${tag}`,
     }),
   );
-  const secondComp = await v1(buyer, "/api/v1/competitions", "POST", {
+  const secondComp = await v1(buyer, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Second Cup ${tag}`,
   });
   check("p36: 2nd active competition allowed on free (community runs several)", secondComp.status === 201);
@@ -8417,7 +8417,7 @@ async function pricingV3Suite(): Promise<void> {
   });
   check("p36: pass lifts division cap on the passed comp", div5.status === 201);
   const compB = v1data<{ id: string }>(
-    await v1(buyer, "/api/v1/competitions", "POST", {
+    await v1(buyer, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Sibling Cup ${tag}`,
     }),
   );
@@ -8683,7 +8683,7 @@ async function html(s: Session, path: string): Promise<{ status: number; body: s
 async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
   // --- Pro path: tiers, per-competition scoping, placement, click tracking.
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", {
+    await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Sponsor Cup ${tag}`,
       visibility: "public",
     }),
@@ -8796,7 +8796,7 @@ async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: strin
   }[];
   const freeOrg = freeOrgs.find((o) => o.id === freeVer.org_id)!;
   const freeComp = v1data<{ id: string; slug: string }>(
-    await v1(free, "/api/v1/competitions", "POST", {
+    await v1(free, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Sponsor Free ${tag}`,
       visibility: "public",
     }),
@@ -8832,7 +8832,7 @@ async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: strin
 async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> {
   // Pro path (admin's active org is the pro org2).
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", {
+    await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `UI Cards ${tag}`,
       visibility: "private",
     }),
@@ -8869,7 +8869,7 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
   }[];
   const freeOrg = freeOrgs.find((o) => o.id === freeVer.org_id)!;
   const freeComp = v1data<{ id: string; slug: string }>(
-    await v1(free, "/api/v1/competitions", "POST", {
+    await v1(free, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `UI Cards Free ${tag}`,
       visibility: "private",
     }),
@@ -8989,7 +8989,7 @@ async function schedRegV3Suite(
 ): Promise<void> {
   // --- Pro path: competition + division + timetable + board page ---
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", {
+    await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Sched v3 ${tag}`,
       visibility: "public",
     }),
@@ -9381,7 +9381,7 @@ async function schedRegV3Suite(
   }[];
   const freeOrg = freeOrgs.find((o) => o.id === freeVer.org_id)!;
   const fComp = v1data<{ id: string; slug: string }>(
-    await v1(free, "/api/v1/competitions", "POST", {
+    await v1(free, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Sched Free ${tag}`,
       visibility: "public",
     }),
@@ -9532,7 +9532,7 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   }
 
   // CRUD happy path: competition → division → entrants (bulk) → stage → generate.
-  const comp = await v1(admin, "/api/v1/competitions", "POST", {
+  const comp = await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `V1 Cup ${tag}`,
     visibility: "public",
   });
@@ -9824,7 +9824,7 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
       newSession(),
       "/api/v1/competitions",
       "POST",
-      { name: "Nope" },
+      { ends_on: "2030-12-31", name: "Nope" },
       {
         Authorization: `Bearer ${secret}`,
       },
@@ -9875,7 +9875,7 @@ async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promis
   // Fresh competition + football division (football has the richest surface:
   // scorers, cards, MOTM, scoresheets).
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", {
+    await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Jul3 Cup ${tag}`,
       visibility: "public",
     }),
@@ -10078,7 +10078,7 @@ async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promis
 
   // -- PROMPT-28: format extensions (triple RR + ladder challenge) ------
   const tripleComp = v1data<{ id: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", {
+    await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Triple ${tag}`,
       visibility: "private",
     }),
@@ -10142,7 +10142,7 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
   // divisions.per_competition quota is 4 (V319 "free runs big"), and DELETE
   // frees a slot. Creating the org switches the active-org cookie onto it.
   await call(admin, "/api/orgs", "POST", { name: `Del Org ${tag}` });
-  const comp = await v1(admin, "/api/v1/competitions", "POST", {
+  const comp = await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Del Cup ${tag}`,
   });
   const compId = v1data<{ id: string }>(comp).id;
@@ -10196,7 +10196,7 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
   // --- Pro path: a resulted division 409s with the archive hint, archives,
   // hides from the console list, then restores with results intact.
   await raw(admin, "/api/orgs/active", "POST", { org_id: proOrgId });
-  const proComp = await v1(admin, "/api/v1/competitions", "POST", {
+  const proComp = await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Arch Cup ${tag}`,
   });
   const proCompId = v1data<{ id: string }>(proComp).id;
@@ -10272,7 +10272,7 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
 
 async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promise<void> {
   // A dedicated started division in the Pro org for device links + scorers.
-  const comp = await v1(admin, "/api/v1/competitions", "POST", {
+  const comp = await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Gap Cup ${tag}`,
   });
   const compId = v1data<{ id: string }>(comp).id;
@@ -10465,7 +10465,7 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
         (i) => i.name === `Gap Cup ${tag}`,
       ),
   );
-  const privComp = await v1(admin, "/api/v1/competitions", "POST", {
+  const privComp = await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Gap Hidden ${tag}`,
     visibility: "private",
   });
@@ -10644,7 +10644,7 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
   // entry fees allowed without Stripe ---
   const free = newSession();
   await signIn(free, `free_${tag}@example.com`);
-  const fComp = await v1(free, "/api/v1/competitions", "POST", {
+  const fComp = await v1(free, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Free Gap ${tag}`,
   });
   const fDiv = await v1(
@@ -10808,7 +10808,7 @@ async function v3ContentApiSuite(
   };
 
   // ---- PRO PATH -------------------------------------------------------
-  const comp = await v1(admin, "/api/v1/competitions", "POST", {
+  const comp = await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Content Wave ${tag}`,
     visibility: "public",
     description:
@@ -10884,12 +10884,12 @@ async function v3ContentApiSuite(
     newSession(),
     "/api/v1/competitions",
     "POST",
-    { name: "Nope" },
+    { ends_on: "2030-12-31", name: "Nope" },
     keyAuth,
   );
   check("v3: read key 403 on manage route", keyWrite.status === 403);
 
-  const otherComp = await v1(admin, "/api/v1/competitions", "POST", {
+  const otherComp = await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Pin Other ${tag}`,
   });
   const otherId = v1data<{ id: string }>(otherComp).id;
@@ -10967,7 +10967,7 @@ async function v3ContentApiSuite(
   }[];
   const freeSlug = freeOrgs.find((o) => o.id === freeOrgId)?.slug ?? "";
 
-  const freeComp = await v1(free, "/api/v1/competitions", "POST", {
+  const freeComp = await v1(free, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Free Content ${tag}`,
     visibility: "public",
     description: "## Free words\n\nStill **rendered**.",
@@ -11028,7 +11028,7 @@ async function disciplineSuite(
   admin.cookies["seazn_org"] = proOrgId;
 
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", {
+    await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Discipline Cup ${tag}`,
       visibility: "public",
     }),
@@ -11156,7 +11156,7 @@ async function disciplineSuite(
   }[];
   const freeOrg = freeOrgs[0]!;
   const freeComp = v1data<{ id: string; slug: string }>(
-    await v1(free, "/api/v1/competitions", "POST", {
+    await v1(free, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Free Disc ${tag}`,
       visibility: "public",
     }),
@@ -11501,7 +11501,7 @@ main()
 // for the audit 402 (cheapest honest gate check) and flips back.
 async function v13Suite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", {
+    await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `V13 Cup ${tag}`,
       visibility: "public",
     }),
@@ -11748,7 +11748,7 @@ async function v13Suite(admin: Session, proOrgId: string, proOrgSlug: string): P
 // second-life resolution — Q1's loser must land in Q2.
 async function pagePlayoffSuite(admin: Session): Promise<void> {
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", { name: `PP Cup ${tag}` }),
+    await v1(admin, "/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: `PP Cup ${tag}` }),
   );
   const div = v1data<{ id: string; slug: string }>(
     await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {

@@ -136,6 +136,7 @@ async function seedScene(): Promise<Scene> {
   const slugs: { id: string; slug: string }[] = [];
   for (const name of ["Passed Cup " + suffix, "Unpassed Cup " + suffix]) {
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name,
       visibility: "unlisted",
       branding: {},

@@ -1,11 +1,13 @@
 import { sql } from "@/lib/db";
-import { requireSuperadmin } from "@/lib/admin";
+import { requireSuperadmin, SUSPENSION_ACTIONS } from "@/lib/admin";
 import { handler, HttpError } from "@/lib/http";
 import { setOrgSuspension } from "@/server/usecases/admin-orgs";
 import { z } from "zod";
 
 const schema = z.object({
-  action: z.enum(["suspend", "reactivate"]),
+  // Derived, not retyped: the accepted verb IS the audited action string, and
+  // the adjustments-log allowlist reads the same constant.
+  action: z.enum(SUSPENSION_ACTIONS),
   reason: z.string().min(1).max(500),
 }).strict();
 

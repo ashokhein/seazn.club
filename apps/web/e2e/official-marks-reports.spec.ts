@@ -41,7 +41,7 @@ test.describe.serial("official marks & match reports", () => {
     await setOrgPlanBySql({ orgId: org.id }, "pro"); // marks + discipline.enforced
     await invalidateOrgEntitlements(page.request, org.id);
 
-    const comp = await apiJson<{ id: string; slug: string }>(page.request, "/api/v1/competitions", "POST", {
+    const comp = await apiJson<{ id: string; slug: string }>(page.request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Marks E2E ${TAG}`,
       visibility: "public",
     });

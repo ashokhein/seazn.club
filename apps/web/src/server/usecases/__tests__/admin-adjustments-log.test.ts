@@ -5,7 +5,15 @@
 import { describe, expect, it, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
-import { adjustmentsForOrg, ADJUSTMENT_ACTIONS } from "../admin-adjustments-log";
+import { DISCOVERY_AUDIT_ACTIONS, SUSPENSION_ACTIONS } from "@/lib/admin";
+import { ADJUSTMENT_LABELS } from "@/app/admin/orgs/[id]/adjustment-labels";
+import { setOrgSuspension } from "@/server/usecases/admin-orgs";
+import {
+  adjustmentsForOrg,
+  ADJUSTMENT_ACTIONS,
+  ADJUSTMENT_CATEGORY,
+  ADJUSTMENT_REVERSIBLE,
+} from "../admin-adjustments-log";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -55,6 +63,14 @@ async function log(
   const id = await seedLog(actorId, action, targetType, targetId, detail, createdAt);
   created.push(id);
   return id;
+}
+
+/** Register for cleanup every audit row a REAL writer left on this org — the
+ *  writers below are driven end to end, so their row ids are not known up front. */
+async function trackLogsFor(targetId: string): Promise<void> {
+  const rows = await sql<{ id: string }[]>`
+    select id from staff_audit_log where target_id = ${targetId}`;
+  for (const r of rows) created.push(r.id);
 }
 
 afterAll(async () => {
@@ -154,9 +170,134 @@ describe.skipIf(!HAS_DB)("adjustmentsForOrg (SPEC-3 §3)", () => {
     expect(e!.actorName).toBe("Casey Staff");
   });
 
+  // Auditing a moderation action is only worth doing if a human can FIND it.
+  // Driven through the REAL writer rather than seeded rows: the second arm is
+  // spelled `reactivate`, and an allowlist written from memory says `unsuspend`
+  // — a dead entry that leaves the real action just as invisible as before.
+  // Only the writer can settle which string lands in the table.
+  it("surfaces suspend and reactivate, driven through setOrgSuspension", async () => {
+    const staff = await makeUser("Moderator");
+    const orgId = await makeOrg();
+
+    await setOrgSuspension(staff.id, orgId, "suspend", "abuse report 12");
+    await setOrgSuspension(staff.id, orgId, "reactivate", "appeal upheld");
+    await trackLogsFor(orgId);
+
+    const entries = await adjustmentsForOrg(orgId);
+    const byAction = Object.fromEntries(entries.map((e) => [e.action, e]));
+    expect(Object.keys(byAction).sort()).toEqual(["reactivate", "suspend"]);
+    expect(byAction.suspend).toMatchObject({
+      actorId: staff.id,
+      category: "moderation",
+      reversible: true,
+      reason: "abuse report 12",
+    });
+    // Reactivation IS the compensating half — there is nothing to undo about it.
+    expect(byAction.reactivate).toMatchObject({
+      category: "moderation",
+      reversible: false,
+      reason: "appeal upheld",
+    });
+  });
+
+  // Discovery curation writes `discovery_${action}` against the COMPETITION's
+  // org (target_type 'org', target_id comp.org_id), so the rows are org-scoped
+  // and should read back here. The strings are pinned against the constant the
+  // route's own zod enum is derived from, so the two cannot drift apart.
+  //
+  // SCOPE IS NOT PINNED HERE. These rows are SEEDED with a hardcoded "org" /
+  // orgId, unlike the suspension test above which drives its real writer — so
+  // this proves only that an org-scoped `discovery_*` row reads back. Swap
+  // `comp.org_id` for `id` in the route and every real row leaves every org's
+  // panel with this test still green. The route's own target is pinned in
+  // app/api/admin/competitions/[id]/discovery/__tests__/route.test.ts, which
+  // drives the real POST; that separation exists because this file must keep
+  // the REAL @/lib/auth and @/lib/entitlements the suspension test needs, and
+  // vi.mock is module-wide.
+  it("surfaces every discovery-curation action", async () => {
+    const staff = await makeUser("Curator");
+    const orgId = await makeOrg();
+
+    let minute = 1;
+    for (const action of DISCOVERY_AUDIT_ACTIONS) {
+      await log(
+        staff.id,
+        action,
+        "org",
+        orgId,
+        { reason: `${action} reason`, competition_id: randomUUID() },
+        t(minute++),
+      );
+    }
+
+    const entries = await adjustmentsForOrg(orgId);
+    expect(entries.map((e) => e.action).sort()).toEqual([...DISCOVERY_AUDIT_ACTIONS].sort());
+    const byAction = Object.fromEntries(entries.map((e) => [e.action, e]));
+    for (const action of DISCOVERY_AUDIT_ACTIONS) {
+      expect(byAction[action]).toMatchObject({
+        category: "discovery",
+        reason: `${action} reason`,
+      });
+    }
+    // feature/block are the acts; unfeature/unblock are their undo, so only the
+    // first pair is reversible (the file's own convention).
+    expect(byAction.discovery_feature!.reversible).toBe(true);
+    expect(byAction.discovery_block!.reversible).toBe(true);
+    expect(byAction.discovery_unfeature!.reversible).toBe(false);
+    expect(byAction.discovery_unblock!.reversible).toBe(false);
+  });
+
   it("ADJUSTMENT_ACTIONS excludes non-per-org catalog/view actions", () => {
     expect(ADJUSTMENT_ACTIONS).toContain("credit_adjust");
     expect(ADJUSTMENT_ACTIONS).not.toContain("impersonate_start");
     expect(ADJUSTMENT_ACTIONS).not.toContain("size_pack_upsert");
+  });
+});
+
+// No DB: this is the guard over the four maps an allowlisted action has to
+// appear in. Three of them are `Record<AdjustmentAction, …>` so tsc already
+// refuses an omission — this test is what stands behind the fourth (the label
+// map lives in the /admin tree, where a page module cannot export it) and what
+// fails loudly if any of those types is ever widened back to `string`.
+describe("every allowlisted adjustment action is fully described", () => {
+  it("has a category, a reversibility and a label", () => {
+    for (const action of ADJUSTMENT_ACTIONS) {
+      expect(ADJUSTMENT_CATEGORY[action], `no category for ${action}`).toBeTruthy();
+      expect(typeof ADJUSTMENT_REVERSIBLE[action], `no reversibility for ${action}`).toBe("boolean");
+      expect(ADJUSTMENT_LABELS[action], `no label for ${action}`).toBeTruthy();
+    }
+  });
+
+  // The label is what an operator reads; a slug leaking through means the map
+  // was keyed on `string` again and the compile-time guard is gone.
+  it("labels no action with its own raw slug", () => {
+    for (const action of ADJUSTMENT_ACTIONS) {
+      expect(ADJUSTMENT_LABELS[action]).not.toBe(action);
+    }
+  });
+
+  // The whole point of deriving: the verbs the discovery route accepts and the
+  // actions it audits are one list. If someone re-types the enum, this fails.
+  it("covers exactly the discovery verbs the route accepts", () => {
+    expect([...DISCOVERY_AUDIT_ACTIONS]).toEqual([
+      "discovery_feature",
+      "discovery_unfeature",
+      "discovery_block",
+      "discovery_unblock",
+    ]);
+    for (const action of DISCOVERY_AUDIT_ACTIONS) {
+      expect(ADJUSTMENT_ACTIONS).toContain(action);
+    }
+  });
+
+  // The trap this whole change exists to close: the second suspension arm is
+  // `reactivate`. An allowlist carrying `unsuspend` type-checks, reads like a
+  // fix, and leaves the real action exactly as invisible as before.
+  it("allowlists the suspension arms the writer actually logs", () => {
+    expect([...SUSPENSION_ACTIONS]).toEqual(["suspend", "reactivate"]);
+    expect(ADJUSTMENT_ACTIONS).not.toContain("unsuspend");
+    for (const action of SUSPENSION_ACTIONS) {
+      expect(ADJUSTMENT_ACTIONS).toContain(action);
+    }
   });
 });

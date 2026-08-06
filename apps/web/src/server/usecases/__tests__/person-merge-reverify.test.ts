@@ -54,6 +54,7 @@ async function seedBoard(
   opts: { minutesApart: number; publish: boolean },
 ): Promise<{ divisionId: string; first: BoardRow; second: BoardRow }> {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Reverify Cup " + rnd(),
     visibility: "public",
     branding: {},

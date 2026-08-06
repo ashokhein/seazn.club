@@ -23,9 +23,26 @@ const PURGE_COOL_OFF_DAYS = 30;
 export function ArchivedDivisions({
   divisions,
   canEdit,
+  archivedSlotsExplainRefusal = false,
 }: {
   divisions: ArchivedDivisionLite[];
   canEdit: boolean;
+  /**
+   * Would releasing this competition's archived slot-holders let the refused
+   * restore through? (V354 — recorded results, minus a staff waiver, weighed
+   * against the same quota `restoreDivision` charges on.) Answered server-side
+   * by the settings page, which is the only side that can ask.
+   *
+   * `restoreDivision` refuses on exactly the count `createDivision` refuses
+   * on, so this surface owes the explanation the wizard already gives — and
+   * owes it more sharply: here the divisions doing the charging are the rows
+   * on screen, and without this line the reader is looking straight at the
+   * cause with nothing marking it as one.
+   *
+   * Optional, defaulting to false: a caller that has not been taught the
+   * question renders exactly what this component always rendered.
+   */
+  archivedSlotsExplainRefusal?: boolean;
 }) {
   const msg = useMsg();
   const router = useRouter();
@@ -82,8 +99,19 @@ export function ArchivedDivisions({
         <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}
       {paywallFeature && (
-        <div className="mt-2">
+        <div className="mt-2 space-y-2">
           <UpgradeGate feature={paywallFeature} />
+          {/* The cause, named — and it is on this screen. The gate says "you
+              are at your division limit"; the rows immediately below are the
+              ones spending the missing slots, and nothing said so. Gated on
+              BOTH the feature key and the server's marginality answer: a
+              refusal these rows did not cause is not explained by pointing at
+              them. */}
+          {paywallFeature === "divisions.per_competition.max" && archivedSlotsExplainRefusal && (
+            <p data-archived-slot-note className="text-xs text-slate-500">
+              {msg("division.limit.archivedCount")}
+            </p>
+          )}
         </div>
       )}
       <ul className="mt-3 divide-y divide-slate-100">

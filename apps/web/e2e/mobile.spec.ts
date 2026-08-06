@@ -33,7 +33,7 @@ let divisionId = "";
 let orgSlug = "";
 
 test("setup: public competition with an entrant-ready division", async ({ page, request }) => {
-  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Mobile Gate ${TAG}`,
     visibility: "public",
   });

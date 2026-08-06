@@ -91,7 +91,7 @@ async function seedAiDivision(
 ): Promise<{ competitionId: string; divisionId: string; stageId: string; fixtureIds: string[] }> {
   const { officials = false, settings = true } = opts;
   const rand = Math.random().toString(36).slice(2, 6);
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `AI Architect ${TAG}-${rand}`,
     visibility: "private",
   });
@@ -350,7 +350,7 @@ async function seedRungTwoDivision(
   request: APIRequestContext,
 ): Promise<{ divisionId: string }> {
   const rand = Math.random().toString(36).slice(2, 6);
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `AI Rung ${TAG}-${rand}`,
     visibility: "private",
   });
@@ -740,7 +740,7 @@ async function seedJointCompetition(
   request: APIRequestContext,
 ): Promise<{ competitionId: string; compSlug: string; divisionIds: string[] }> {
   const rand = Math.random().toString(36).slice(2, 6);
-  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `AI Joint ${TAG}-${rand}`,
     visibility: "private",
   });

@@ -945,6 +945,10 @@
   "pass.entry.ended.reasonTerminal": "No se ha eliminado nada — esta competición está finalizada o archivada, así que su pase de evento ha dejado de ampliar sus límites.",
   "pass.entry.ended.reasonPastEnds": "No se ha eliminado nada — esta competición ha superado su fecha de fin, así que su pase de evento ha dejado de ampliar sus límites. Actualiza la fecha de fin si sigue en marcha.",
   "pass.entry.ended.nextEdition": "Crear la edición del próximo año",
+  "pass.entry.closed.updateEndDate": "Actualizar la fecha de finalización",
+  "upgrade.closed.title": "Esta competición está cerrada a los Event Pass",
+  "upgrade.closed.reasonTerminal": "Esta competición ha finalizado o está archivada, por lo que ya no se puede comprar un Event Pass para ella.",
+  "upgrade.closed.reasonPastEnds": "Esta competición ha superado su fecha de finalización, por lo que ya no se puede comprar un Event Pass para ella. Actualiza la fecha de finalización si sigue en curso.",
   "pass.entry.ended.nextBody": "El pase y su recibo se quedan en esta competición. Pro mejora todas las competiciones de {org}, no solo esta, y las sigue mejorando la próxima temporada.",
   "pass.menu.buy": "Pase de evento — desde {price}",
   "me.console": "Consola",
@@ -3192,5 +3196,11 @@
   "board.ai.joint.undoChangedTitle": "Ya no se puede deshacer de una vez",
   "board.ai.joint.undoChanged": "La competición se ha vuelto a programar desde esta aplicación, así que deshacer ya no coincide con ella. Restaura cada división desde su propia página de horario.",
   "board.ai.joint.undoGoneTitle": "No queda nada que deshacer",
-  "board.ai.joint.undoGone": "En esta competición ya no queda ninguna aplicación conjunta que deshacer. Cada división conserva sus propios puntos de restauración en su página de horario."
+  "board.ai.joint.undoGone": "En esta competición ya no queda ninguna aplicación conjunta que deshacer. Cada división conserva sus propios puntos de restauración en su página de horario.",
+  "division.create.competitionEnded": "Esta competición ha finalizado, por lo que no se pueden añadir nuevas divisiones.",
+  "division.archive.slotWarning": "Esta división tiene resultados registrados, así que archivarla no liberará una plaza de división.",
+  "division.limit.archivedCount": "Las divisiones con resultados registrados cuentan para tu límite incluso después de archivarlas.",
+  "danger.archiveBodySlotHeld": "La división desaparece de tu consola y del sitio público. Tiene resultados registrados, así que su plaza de división no se recupera — nada se destruye y puedes restaurarla en cualquier momento desde la configuración de la competición → Divisiones archivadas. ¿La archivaste por error? Soporte puede liberar la plaza.",
+  "comp.wizard.endsOn.required": "Se requiere una fecha de fin.",
+  "comp.validation.endsBeforeStarts": "La fecha de fin no puede ser anterior a la fecha de inicio."
 }

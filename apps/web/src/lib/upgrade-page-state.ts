@@ -2,7 +2,7 @@ import { PASS_FEATURES } from "@/lib/pass-features";
 import type { PassLockReason } from "@/lib/entitlements";
 
 /**
- * Which of the upgrade page's six states is honest for this viewer (spec D10;
+ * Which of the upgrade page's seven states is honest for this viewer (spec D10;
  * v17 gap #301 added the sixth — the five below counted `offer` twice, once
  * per `canBuy`).
  *
@@ -36,6 +36,13 @@ import type { PassLockReason } from "@/lib/entitlements";
  * the one that tells them what to actually do next. `lockReason` MUST come from
  * `passLockReason(status, ends_on)`, the ONE place the terminal-status and
  * past-ends-on arms live.
+ *
+ * A locked competition with NO pass wins over both offer arms (#376). The
+ * route refuses the sale with 410 whatever the plan is, so a Buy button here
+ * is a dead end for a community org and for a paid org holding a #327
+ * exceeding rung alike. `hasPass` is what separates this from `ended`: same
+ * line crossed, but nothing was ever bought, so there is no purchase to
+ * report as stopped.
  */
 export type UpgradePageState =
   /** The org is on a paid plan. No pass is offered, at any price. */
@@ -56,6 +63,21 @@ export type UpgradePageState =
   | { kind: "ceiling"; feature: string; liftable: boolean }
   /** A pass is held and nothing is blocked. Confirm it, receipt it, offer Pro. */
   | { kind: "owned" }
+  /**
+   * Past the pass line, and NO pass was ever held (#376) — *sellable: no,
+   * held: never*. The fourth situation, which neither `ended` nor `offer`
+   * fits: `ended` would claim a purchase nobody made, and `offer` puts a Buy
+   * button on a checkout that answers 410 Gone
+   * (`pass-checkout/route.ts` — `if (passLockReason(comp.status, comp.ends_on))`).
+   *
+   * `reason` rather than a boolean because the two arms want opposite next
+   * steps, and this is the state where that matters most: `terminal` is done
+   * and the organiser's move is next season, while `past_ends_on` is usually a
+   * stale date on a competition still being played — fix the date and the pass
+   * becomes buyable again. This state is RECOVERABLE on one arm and not the
+   * other, and the copy has to say which.
+   */
+  | { kind: "closed"; reason: PassLockReason; canBuy: boolean }
   /**
    * No pass. `canBuy` is false for anyone but the owner — nobody else can spend.
    *
@@ -81,6 +103,12 @@ export function upgradePageState(input: {
    */
   exceedingRungs?: readonly string[];
 }): UpgradePageState {
+  // The lock, but ONLY where no pass was ever held. Bound once, as a
+  // `PassLockReason | null`, so both branches below narrow off the same value
+  // rather than re-deriving the condition — and so the `closed` return needs
+  // no non-null assertion.
+  const closedToPasses = input.hasPass ? null : input.lockReason;
+
   // A paid plan no longer ends the conversation. It still does wherever the plan
   // really is a superset — but L raises `entrants.per_division.max` above Pro's
   // 256, so a Pro organiser with one oversized division has something real to
@@ -91,10 +119,24 @@ export function upgradePageState(input: {
   // offering a second pass for one competition would advertise a purchase this
   // product cannot complete.
   if (input.paidPlan) {
-    if (!input.hasPass && (input.exceedingRungs?.length ?? 0) > 0)
+    // #327's offer is subject to the line like every other offer. A paid org
+    // with an exceeding rung on a FINISHED competition was being sold a pass
+    // the route refuses — the same defect as the community chip, one plan tier
+    // up, and absent from #376's write-up.
+    //
+    // BOTH conditions are load-bearing even though the second reads like it
+    // implies the first. `closedToPasses` collapses to null whenever `hasPass`
+    // is true — it is deliberately blind to a held pass's lock — so on its own
+    // it would wave a held pass straight through to the beyondPlan offer, which
+    // is the "no M→L upgrade path" refusal (#294 Q3), not this one.
+    if (!input.hasPass && closedToPasses === null && (input.exceedingRungs?.length ?? 0) > 0)
       return { kind: "offer", canBuy: input.isOwner, beyondPlan: true };
     return { kind: "paid_plan" };
   }
+  // Before `hasPass`, and before the ordinary offer: this is the arm that used
+  // to fall through to `offer` and render a checkout.
+  if (closedToPasses !== null)
+    return { kind: "closed", reason: closedToPasses, canBuy: input.isOwner };
   if (input.hasPass) {
     // Before the ceiling, deliberately: see the precedence note above.
     if (input.lockReason) return { kind: "ended", reason: input.lockReason };

@@ -71,7 +71,7 @@ test("device links are Pro-only", async ({ browser }) => {
     await page.waitForURL(/\/(me|onboarding|o\/)/, { timeout: 15_000 });
     await page.close();
     const req = ctx.request;
-    const comp = await apiJson<{ id: string }>(req, "/api/v1/competitions", "POST", {
+    const comp = await apiJson<{ id: string }>(req, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `DL Gate ${Date.now().toString(36)}`,
       visibility: "private",
     });

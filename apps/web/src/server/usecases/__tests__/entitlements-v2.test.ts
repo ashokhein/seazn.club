@@ -89,7 +89,7 @@ async function makeCompetition(
   name: string,
   visibility: "private" | "public" = "private",
 ) {
-  return createCompetition(auth, { name, visibility, branding: {} });
+  return createCompetition(auth, { ends_on: "2030-12-31", name, visibility, branding: {} });
 }
 
 async function makeDivision(auth: AuthCtx, competitionId: string, sport: string, config: object) {

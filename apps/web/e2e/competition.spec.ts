@@ -8,6 +8,12 @@ test("create a competition via the wizard", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "New competition" })).toBeVisible();
 
   await page.getByPlaceholder("Summer Championship 2026").fill(name);
+  // #376: an end date is mandatory, so the core organiser journey now includes
+  // supplying one — the wizard refuses to submit without it. Far future on
+  // purpose: this competition must stay RUNNING, because a date that slipped
+  // into the past would put it beyond the Event Pass line and change what the
+  // page under test renders.
+  await page.getByLabel(/^Ends on/i).fill("2030-12-31");
   await page.getByRole("button", { name: /create/i }).click();
 
   // Lands on the competition page (add-division CTA present).
@@ -20,7 +26,7 @@ test("create a competition via the wizard", async ({ page }) => {
 // tab. Showcase stays inline on General (under visibility, which gates it);
 // Archived only appears once something is archived.
 test("competition settings tabs share one form", async ({ page, request }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Tabs ${TAG}`,
     visibility: "public",
   });

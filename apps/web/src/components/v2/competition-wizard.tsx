@@ -28,6 +28,19 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
     e.preventDefault();
     setError(null);
     setPaywall(null);
+    // #376: the end date is mandatory server-side, so a missing or backwards
+    // one would come back as a bare 400 "Invalid input". Say it in the
+    // customer's language, before the round trip. Deliberately NOT the native
+    // `required` attribute: that fires the browser's own English tooltip and
+    // preempts this message entirely.
+    if (!endsOn) {
+      setError(msg("comp.wizard.endsOn.required"));
+      return;
+    }
+    if (startsOn && endsOn < startsOn) {
+      setError(msg("comp.validation.endsBeforeStarts"));
+      return;
+    }
     setBusy(true);
     try {
       const created = await apiV1<{ id: string; slug: string }>("/api/v1/competitions", {
@@ -39,7 +52,7 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
           // Same hard coupling as settings (doc 15 §1): showcase only public.
           discoverable: visibility === "public" && discoverable,
           starts_on: startsOn || null,
-          ends_on: endsOn || null,
+          ends_on: endsOn,
           // Branding (accent, logo, sponsors) lives in Settings post-create (F7).
           branding: {},
         },
@@ -126,9 +139,13 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
           />
         </label>
         <label className="block">
-          <span className="label">{msg("comp.wizard.endsOn")}</span>
+          {/* #376: mandatory — see submit() for why the message is ours and
+              not the browser's native `required` tooltip. */}
+          <span className="label">{msg("comp.wizard.endsOn")} *</span>
           <input
             type="date"
+            aria-required="true"
+            min={startsOn || undefined}
             value={endsOn}
             onChange={(e) => setEndsOn(e.target.value)}
             className="input"

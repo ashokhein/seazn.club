@@ -6,6 +6,7 @@ import { getCompetition } from "@/server/usecases/competitions";
 import { listDivisions } from "@/server/usecases/divisions";
 import { CompetitionSettings } from "@/components/v2/competition-settings";
 import { ArchivedDivisions } from "@/components/v2/archived-divisions";
+import { archivedSlotsExplainRefusal } from "@/server/usecases/division-slots";
 import { CompetitionPassEntry } from "@/components/competition-pass-entry";
 import { formatMinor } from "@/lib/currency";
 import { lowestPassRung, passActiveLabels, passEndedReasons } from "@/lib/pass-ladder";
@@ -32,8 +33,15 @@ export default async function CompetitionSettingsPage({
   const id = page.competition.id;
   const locale = await resolveLocale();
   const dict = await getDictionary(locale, "ui");
-  const [competition, discoveryBranding, themeBranding, allDivisions, currency, [subRow]] =
-    await Promise.all([
+  const [
+    competition,
+    discoveryBranding,
+    themeBranding,
+    allDivisions,
+    currency,
+    [subRow],
+    explainArchivedSlots,
+  ] = await Promise.all([
       getCompetition(auth, id),
       hasFeature(auth.orgId, "discovery.branding"),
       hasFeature(auth.orgId, "dashboard.branding"),
@@ -46,6 +54,12 @@ export default async function CompetitionSettingsPage({
         select s.trial_used_at from organizations o
         join subscriptions s on s.id = o.subscription_id
         where o.id = ${org.id}`,
+      // Read before anyone is refused anything, because the refusal happens in
+      // a client component after a DELETE this server render is long finished.
+      // Restore is charged on exactly the count a create is charged on (V354),
+      // so this surface owes the same explanation the wizard gives — and the
+      // rows doing the charging are the ones this page is about to list.
+      archivedSlotsExplainRefusal(auth, id),
     ]);
   const archivedDivisions = allDivisions.filter((d) => d.archived_at !== null);
   const trialAvailable = checkoutTrialDays(subRow) > 0;
@@ -96,6 +110,16 @@ export default async function CompetitionSettingsPage({
             endedReasons={passEndedReasons(dict)}
             nextEditionHref={routes.competitionNew(orgSlug)}
             nextEditionLabel={t(dict, "pass.entry.ended.nextEdition")}
+            closedLinks={{
+              terminal: {
+                href: routes.competitionNew(orgSlug),
+                label: t(dict, "pass.entry.ended.nextEdition"),
+              },
+              past_ends_on: {
+                href: routes.competitionSettings(orgSlug, compSlug),
+                label: t(dict, "pass.entry.closed.updateEndDate"),
+              },
+            }}
             goProHref={routes.billing(orgSlug)}
             goProLabel={t(dict, trialAvailable ? "upgrade.proCard.cta" : "upgrade.proCard.ctaNoTrial")}
             canBuy={canEdit}
@@ -138,6 +162,7 @@ export default async function CompetitionSettingsPage({
                 archived_at: d.archived_at as string,
               }))}
               canEdit={canEdit}
+              archivedSlotsExplainRefusal={explainArchivedSlots}
             />
           }
         />

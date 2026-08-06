@@ -49,6 +49,7 @@ async function person(orgId: string, opts: PersonOpts = {}): Promise<string> {
  *  an availability RSVP and an entrant roster off. */
 async function seedDivision(auth: AuthCtx, entrantCount = 2) {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Merge Cup " + rnd(),
     visibility: "public",
     branding: {},
@@ -164,6 +165,7 @@ describe.skipIf(!HAS_DB)("#404 mergePersons", () => {
   it("merges an entrant membership field-wise, strongest value winning", async () => {
     const { auth } = await seedOrg("pro");
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Merge Cup " + rnd(),
       visibility: "public",
       branding: {},
@@ -211,6 +213,7 @@ describe.skipIf(!HAS_DB)("#404 mergePersons", () => {
     // on a fresh CI database.
     await seedFootballCatalog();
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Stats Cup " + rnd(),
       visibility: "public",
       branding: {},

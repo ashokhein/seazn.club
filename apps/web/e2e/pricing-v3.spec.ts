@@ -116,7 +116,7 @@ test.describe.serial("event pass gate (community org)", () => {
       request,
       "/api/v1/competitions",
       "POST",
-      { name: `Pass Gate ${TAG}`, visibility: "private" },
+      { ends_on: "2030-12-31", name: `Pass Gate ${TAG}`, visibility: "private" },
     );
     const compId = comp.data!.id;
     const orgId = (
@@ -209,7 +209,7 @@ test.describe.serial("event pass gate (community org)", () => {
     await expect(owned).not.toContainText("$29");
     await expect(page.locator("[data-pass-cta]")).toHaveCount(0);
 
-    const sibling = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    const sibling = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Pass Gate Sibling ${TAG}`,
       visibility: "private",
     });

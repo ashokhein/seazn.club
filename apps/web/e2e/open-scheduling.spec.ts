@@ -106,7 +106,7 @@ interface Rig {
  *  stage's fixtures — created through the API as the signed-in owner. Slugs are
  *  read back, because the console pages are slug-routed. */
 async function seedRig(request: import("@playwright/test").APIRequestContext): Promise<Rig> {
-  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Open Sched ${TAG} ${hex()}`,
     visibility: "private",
   });

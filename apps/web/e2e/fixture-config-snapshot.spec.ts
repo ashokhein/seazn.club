@@ -39,7 +39,7 @@ async function seedDrawnFixture(
   request: Parameters<typeof apiJson>[0],
   label: string,
 ): Promise<{ divisionId: string; fixtureId: string; lastSeq: number }> {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Cfg snapshot ${label} ${TAG}`,
     visibility: "private",
   });

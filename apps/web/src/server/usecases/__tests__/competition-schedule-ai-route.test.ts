@@ -217,7 +217,7 @@ async function seedCompetition(
   name: string,
   specs: DivSpec[],
 ): Promise<{ competitionId: string; divisions: SeededDivision[] }> {
-  const comp = await createCompetition(auth, { name, visibility: "public", branding: {} });
+  const comp = await createCompetition(auth, { ends_on: "2030-12-31", name, visibility: "public", branding: {} });
   const divisions: SeededDivision[] = [];
   for (const spec of specs) divisions.push(await seedDivision(auth, comp.id, spec));
   return { competitionId: comp.id, divisions };
@@ -586,6 +586,7 @@ describe.skipIf(!HAS_DB)("aiPlanForCompetition gates (#350 Task 4)", () => {
     const walletId = await walletIdFor(auth.orgId);
     const before = await balance(walletId);
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Huge",
       visibility: "public",
       branding: {},

@@ -31,7 +31,12 @@ import type { ReactNode } from "react";
 import { CompetitionPassProvider } from "@/components/competition-pass-provider";
 import { PASS_FEATURES, UpgradeGate } from "@/components/upgrade-gate";
 import { formatMinor, passPrice, proPrice, type Currency, type PassKey } from "@/lib/currency";
-import { lowestPassRung, passActiveLabel, PASS_LOCK_REASON_KEY } from "@/lib/pass-ladder";
+import {
+  lowestPassRung,
+  passActiveLabel,
+  PASS_CLOSED_REASON_KEY,
+  PASS_LOCK_REASON_KEY,
+} from "@/lib/pass-ladder";
 // Type-only: `@/lib/entitlements` is a server module, and this file renders
 // client components. The value side of it must never reach this bundle.
 import type { PassLockReason } from "@/lib/entitlements";
@@ -439,15 +444,26 @@ describe("UpgradeGate — pass ended (v17 gap #301: a locked pass is not 'active
     expect(html).toContain("See plans &amp; upgrade");
   });
 
-  it("stays 'none' when a lock reason arrives with no pass row", () => {
-    // The provider checks passKey before lockReason precisely so a stray reason
-    // cannot invent an ended pass for a competition that never had one — that
-    // org must still be offered the pass it can genuinely buy.
+  it("does not invent an ended pass when a lock reason arrives with no pass row", () => {
+    // REWRITTEN for #376, and the half that survives is the half that was
+    // always right: the provider checks `passKey` before `lockReason`, so a
+    // lock on a competition that never held a pass must never render the ended
+    // card — there is no purchase to report as stopped.
+    //
+    // What it asserted BEFORE — that such an org "must still be offered the
+    // pass it can genuinely buy" — was true only while the layout could not
+    // judge the lock without a pass row. Since #376 it judges every
+    // competition, and this org genuinely CANNOT buy: the same
+    // `passLockReason` verdict makes `POST /api/billing/pass-checkout` answer
+    // 410 Gone. The old assertion was pinning a live CTA to a dead checkout.
     pathname = "/o/riverside/c/summer-league/d/new";
     const html = render(<UpgradeGate feature={LIFTABLE} />, { lockReason: "terminal" });
     expect(html).not.toContain("data-pass-ended");
-    expect(html).toContain("data-pass-gate");
-    expect(html).toContain(`href="${UPGRADE_HREF}"`);
+    expect(html).not.toContain("data-pass-owned");
+    expect(html).not.toContain("data-pass-gate");
+    expect(html).not.toContain("data-pass-cta");
+    expect(html).not.toContain(UPGRADE_HREF);
+    expect(html).not.toContain(FLOOR_USD);
   });
 
   it("quotes the Pro price in the org's own currency, not hardcoded usd", () => {
@@ -460,6 +476,127 @@ describe("UpgradeGate — pass ended (v17 gap #301: a locked pass is not 'active
     });
     expect(html).toContain(formatMinor(proPrice("monthly", "gbp"), "gbp"));
     expect(html).not.toContain(formatMinor(proPrice("monthly", "usd"), "usd"));
+  });
+});
+
+describe("UpgradeGate — competition closed to passes (#376: past the line, never bought)", () => {
+  // The fourth gate state, and the one this paywall had no branch for. Until
+  // #376 the layout could only judge the lock for a competition that HELD a
+  // pass, so a community org inside a finished competition read `none` and was
+  // shown the $29 path — a checkout that answers 410 Gone. With the lock now
+  // judged from the competition, that org reads `closed`, and the card has to
+  // say the true thing instead of falling through to the generic Pro card,
+  // which explains nothing about why the pass it was just offered has gone.
+  const dictEn = uiEn as unknown as Dict;
+  const closed = (reason: PassLockReason) => ({ passKey: null, lockReason: reason });
+
+  it("offers no pass at any price, and does not claim one ended", () => {
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, closed("terminal"));
+    expect(html).toContain('data-pass-closed-gate="');
+    expect(html).not.toContain("data-pass-cta");
+    expect(html).not.toContain("data-pass-gate");
+    expect(html).not.toContain(UPGRADE_HREF);
+    expect(html).not.toContain(PASS_PRICE);
+    expect(html).not.toContain(FLOOR_USD);
+    expect(html).not.toContain("data-pass-ended");
+    expect(html).not.toContain("data-pass-owned");
+  });
+
+  it("uses the never-bought sentence, not the one about a purchase that stopped", () => {
+    // Every `pass.entry.ended.reason*` string ends "so its Event Pass has
+    // stopped lifting its limits" — a claim about money this org never spent.
+    // Both maps are read from the dictionary rather than re-typed, so a
+    // hardcoded literal, a typo'd key and a reworded string all fail here.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, closed("terminal"));
+    expect(html).toContain(t(dictEn, PASS_CLOSED_REASON_KEY.terminal));
+    expect(html).not.toContain(t(dictEn, PASS_LOCK_REASON_KEY.terminal));
+  });
+
+  it("names each reason distinctly", () => {
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const terminalCopy = t(dictEn, PASS_CLOSED_REASON_KEY.terminal);
+    const pastEndsCopy = t(dictEn, PASS_CLOSED_REASON_KEY.past_ends_on);
+    expect(terminalCopy).not.toEqual(pastEndsCopy);
+
+    const terminal = render(<UpgradeGate feature={LIFTABLE} />, closed("terminal"));
+    expect(terminal).toContain(terminalCopy);
+    expect(terminal).not.toContain(pastEndsCopy);
+    expect(terminal).toContain('data-pass-closed-gate="terminal"');
+
+    const pastEnds = render(<UpgradeGate feature={LIFTABLE} />, closed("past_ends_on"));
+    expect(pastEnds).toContain(pastEndsCopy);
+    expect(pastEnds).not.toContain(terminalCopy);
+    expect(pastEnds).toContain('data-pass-closed-gate="past_ends_on"');
+  });
+
+  it("reads both reasons through the shared Record, so a new one cannot go unhandled", () => {
+    // The same guard the ended card carries: a `=== "terminal" ? … : …` keeps
+    // compiling when a third reason joins PASS_LOCK_REASONS and quietly files
+    // it under "ran past its end date".
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const seen = new Set<string>();
+    for (const reason of Object.keys(PASS_CLOSED_REASON_KEY) as PassLockReason[]) {
+      const copy = t(dictEn, PASS_CLOSED_REASON_KEY[reason]);
+      expect(render(<UpgradeGate feature={LIFTABLE} />, closed(reason))).toContain(copy);
+      expect(copy).not.toEqual("");
+      seen.add(copy);
+    }
+    expect(seen.size).toBe(Object.keys(PASS_CLOSED_REASON_KEY).length);
+  });
+
+  it("still sends the reader to Pro — the only path that is actually open", () => {
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, closed("terminal"));
+    expect(html).toContain("/settings/billing");
+  });
+
+  it("does not wear the console's 'this is on' eyebrow", () => {
+    pathname = "/o/riverside/c/summer-league/d/new";
+    expect(render(<UpgradeGate feature={LIFTABLE} />, closed("terminal"))).not.toContain(
+      "app-eyebrow",
+    );
+  });
+
+  it("marks the compact pill and sends it to billing, not to a dead checkout", () => {
+    pathname = "/o/riverside/c/summer-league/d/main/schedule";
+    const html = render(<UpgradeGate feature={LIFTABLE} compact />, closed("terminal"));
+    expect(html).toContain('data-pass-closed-gate="terminal"');
+    expect(html).toContain('href="/settings/billing"');
+    expect(html).not.toContain(UPGRADE_HREF);
+  });
+
+  it("says the same for a feature the pass could never have lifted", () => {
+    // The card explains the COMPETITION's state, not the feature's, so it does
+    // not branch on liftability the way the pass-owned card does.
+    pathname = "/o/riverside/c/summer-league/schedule";
+    const html = render(<UpgradeGate feature={NOT_LIFTABLE} />, closed("terminal"));
+    expect(html).toContain('data-pass-closed-gate="');
+    expect(html).toContain(t(dictEn, PASS_CLOSED_REASON_KEY.terminal));
+  });
+
+  it("is beaten by a paid plan, which closed the gate for a different reason", () => {
+    // usePassGateState decides precedence once: a paid org's block is its
+    // PLAN's, and explaining it with the competition's lifecycle would name the
+    // wrong limit entirely.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, {
+      paidPlan: true,
+      lockReason: "terminal",
+    });
+    expect(html).not.toContain("data-pass-closed-gate");
+    expect(html).toContain("See plans &amp; upgrade");
+  });
+
+  it("leaves a competition still inside the line offering the pass", () => {
+    // The control arm. Without it every assertion above would pass on a gate
+    // that had simply stopped offering the pass anywhere.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, { provider: true });
+    expect(html).not.toContain("data-pass-closed-gate");
+    expect(html).toContain("data-pass-gate");
+    expect(html).toContain(`href="${UPGRADE_HREF}"`);
   });
 });
 

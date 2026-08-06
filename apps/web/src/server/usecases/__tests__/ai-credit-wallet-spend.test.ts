@@ -93,7 +93,7 @@ async function seedPlannableDivision(
   auth: AuthCtx,
   opts: { officials?: number } = {},
 ): Promise<{ divisionId: string; fixtureIds: string[] }> {
-  const comp = await createCompetition(auth, { name: "Wallet AI", visibility: "public", branding: {} });
+  const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "Wallet AI", visibility: "public", branding: {} });
   const division = await createDivision(auth, comp.id, {
     name: "Open",
     slug: `open-${randomUUID().slice(0, 6)}`,

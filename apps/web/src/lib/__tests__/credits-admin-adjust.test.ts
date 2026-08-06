@@ -195,7 +195,10 @@ describe.skipIf(!HAS_DB)("adminAdjust", () => {
     const orgId = randomUUID();
     const staffId = await makeStaffUser();
     const key = `adj-${uniq()}`;
-    const audit = { orgId, action: "credit_adjust", details: { delta: 25 } };
+    // `as const`: hoisting the audit into a standalone object literal widens
+    // `action` to `string`, which `adminAdjust` no longer accepts (it is an
+    // AdjustmentAction — see the compile-time guard at the foot of this file).
+    const audit = { orgId, action: "credit_adjust" as const, details: { delta: 25 } };
 
     const first = await adminAdjust(walletId, 25, {
       createdBy: staffId,
@@ -226,6 +229,42 @@ describe.skipIf(!HAS_DB)("adminAdjust", () => {
     expect(b.applied).toBe(true);
     expect(await balance(walletId)).toBe(20);
     expect(await adjustRowCount(walletId)).toBe(2);
+  });
+});
+
+// `adminAdjust` writes its OWN staff_audit_log row against an org, so it mints
+// values in the same action namespace `/admin`'s adjustments panel allowlists.
+// While `audit.action` was `string` this was the last place an org-targeted
+// audit action could be spelled freehand with nothing failing: a transposition,
+// or a new verb nobody added to ADJUSTMENT_ACTIONS, writes a row that is audited
+// and invisible — the exact hole the derived constants close for suspension and
+// discovery curation.
+//
+// This guard is a TYPE assertion, so `npm run typecheck` is what enforces it,
+// not the vitest run: the moment `audit.action` widens back to `string` the
+// directive below becomes unused and tsc fails the build with TS2578. Neither
+// closure is ever called — no wallet, no DB, no ledger row.
+describe("adminAdjust's audit action is confined to the allowlist", () => {
+  it("rejects an action outside ADJUSTMENT_ACTIONS at compile time", () => {
+    const allowlisted = () =>
+      adminAdjust("wallet-never-used", 1, {
+        createdBy: "staff-1",
+        reason: "compile-time only",
+        idempotencyKey: "never-run",
+        audit: { orgId: "org-1", action: "credit_adjust" },
+      });
+    const bogus = () =>
+      adminAdjust("wallet-never-used", 1, {
+        createdBy: "staff-1",
+        reason: "compile-time only",
+        idempotencyKey: "never-run",
+        // @ts-expect-error — "adjust_credits" is not an ADJUSTMENT_ACTIONS
+        // member. A plausible transposition like this is precisely the row that
+        // reaches staff_audit_log and never reaches the panel.
+        audit: { orgId: "org-1", action: "adjust_credits" },
+      });
+    expect(typeof allowlisted).toBe("function");
+    expect(typeof bogus).toBe("function");
   });
 });
 

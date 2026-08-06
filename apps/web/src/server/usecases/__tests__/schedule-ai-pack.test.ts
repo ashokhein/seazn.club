@@ -123,7 +123,7 @@ async function seedRrBoard(): Promise<{ auth: AuthCtx; divisionId: string }> {
   // snapshot diff is the four added keys and nothing else. The divergent-zone
   // case gets its own test rather than being smeared across the golden pack.
   await sql`update organizations set timezone = ${TZ} where id = ${auth.orgId}`;
-  const comp = await createCompetition(auth, { name: "AI Arch", visibility: "public", branding: {} });
+  const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "AI Arch", visibility: "public", branding: {} });
   const division = await createDivision(auth, comp.id, {
     name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
     config: GENERIC_CONFIG, eligibility: [],
@@ -344,7 +344,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
   });
 
   it("packs a division regardless of the dormant scheduling_mode column", async () => {
-    const comp = await createCompetition(auth, { name: "Flex", visibility: "public", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "Flex", visibility: "public", branding: {} });
     const flex = await createDivision(auth, comp.id, {
       name: "Flexi", slug: "flexi", sport_key: "generic", variant_key: "score",
       config: GENERIC_CONFIG, eligibility: [],
@@ -361,6 +361,7 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
 // Bulk fixture seeder — direct inserts (no generator) to hit the size limits.
 async function seedBigDivision(auth: AuthCtx, n: number): Promise<string> {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Big ${randomUUID().slice(0, 6)}`, visibility: "public", branding: {},
   });
   const division = await createDivision(auth, comp.id, {
@@ -413,6 +414,7 @@ async function seedKoDivision(
   const { auth } = await seedOrg("pro");
   const tag = randomUUID().slice(0, 6);
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `${name} ${tag}`, visibility: "public", branding: {},
   });
   const division = await createDivision(auth, comp.id, {

@@ -93,8 +93,14 @@ const CompetitionPassContext = createContext<PassContext>({
  * - `paid_plan` — the org is on a paid plan, so the pass is MOOT. Not merely
  *   redundant: every key the pass lifts, the paid matrix lifts further, so
  *   offering it sells the customer less than they already hold.
+ * - `closed` — the competition is past the line where a pass may be sold at
+ *   all, and NO pass was ever held (#376). Distinct from `ended`, which reports
+ *   a purchase that has stopped applying: there is no purchase here, so nothing
+ *   to report as stopped — only a sale that is no longer available. `none`
+ *   used to swallow this whole, which put the buy link on a checkout the route
+ *   refuses with 410 Gone.
  */
-export type PassGateState = "none" | "held" | "ended" | "paid_plan";
+export type PassGateState = "none" | "held" | "ended" | "paid_plan" | "closed";
 
 /**
  * Provide the resolved Event Pass state to a competition subtree. Mounted by
@@ -216,9 +222,11 @@ export function usePassLockReason(): PassLockReason | null {
  * active (v17 gap #301). It is not "none" either — the pass is never re-sold,
  * so offering the purchase again would be a second lie in the other direction.
  *
- * Note the ORDER of the last two: `passKey` is checked before `lockReason`, so
- * a lock reason with no pass row stays "none" rather than inventing an ended
- * pass for a competition that never had one.
+ * Note the ORDER of the last two: `passKey` is checked before `lockReason`,
+ * and a lock reason with NO pass row resolves `closed` (#376) — never `ended`,
+ * which would invent a purchase for a competition that never had one, and
+ * never `none`, which would put the buy link on a sale the route answers with
+ * 410 Gone.
  */
 /** The rungs this org may still buy here (#327) — see `sellableRungs`. */
 export function usePassSellableRungs(): readonly PassKey[] {
@@ -228,6 +236,11 @@ export function usePassSellableRungs(): readonly PassKey[] {
 export function usePassGateState(): PassGateState {
   const { passKey, paidPlan, lockReason } = useContext(CompetitionPassContext);
   if (paidPlan) return "paid_plan";
-  if (passKey === null) return "none";
+  // No pass row, and the competition is past the line: `closed` (#376). This
+  // used to resolve `none`, which put the buy link on a purchase the route
+  // refuses with 410. It is NOT `ended` — nothing was bought, so there is no
+  // purchase to report as stopped, which is what the note above was right
+  // about and what `closed` exists to preserve.
+  if (passKey === null) return lockReason !== null ? "closed" : "none";
   return lockReason !== null ? "ended" : "held";
 }

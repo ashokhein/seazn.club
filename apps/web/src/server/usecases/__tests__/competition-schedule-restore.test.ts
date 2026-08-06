@@ -255,6 +255,7 @@ interface AppliedJoint {
 async function seedAppliedJoint(n: number): Promise<AppliedJoint> {
   const { auth } = await seedOrg("pro");
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Joint Restore Cup ${Date.now()}`,
     visibility: "public",
     branding: {},
@@ -310,6 +311,7 @@ interface TwoJointApplies {
 async function seedTwoJointApplies(): Promise<TwoJointApplies> {
   const { auth } = await seedOrg("pro");
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Joint Restore Twice ${Date.now()}`,
     visibility: "public",
     branding: {},
@@ -696,6 +698,7 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
   it("404s when the competition has no joint apply at all", async () => {
     const { auth } = await seedOrg("pro");
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: `Never Applied ${Date.now()}`,
       visibility: "public",
       branding: {},
@@ -713,6 +716,7 @@ describe.skipIf(!HAS_DB)("restoreCompetitionSchedule (#386)", () => {
   it("answers the BODY's 422 ahead of the missing-apply 404 when both are available", async () => {
     const { auth } = await seedOrg("pro");
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: `Never Applied Dup ${Date.now()}`,
       visibility: "public",
       branding: {},

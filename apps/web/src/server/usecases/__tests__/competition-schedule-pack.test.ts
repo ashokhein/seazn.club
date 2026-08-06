@@ -125,7 +125,7 @@ async function seedCompetition(
   // Saying it on the org row keeps every existing offset assertion true, so the
   // W2 diff is the four added fields and not a re-render of the whole pack.
   await sql`update organizations set timezone = ${TZ} where id = ${auth.orgId}`;
-  const comp = await createCompetition(auth, { name: compName, visibility: "public", branding: {} });
+  const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: compName, visibility: "public", branding: {} });
   const divisions: SeededDivision[] = [];
   for (const spec of specs) {
     const slug = spec.slug ?? spec.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -779,7 +779,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
 
   it("accepts exactly 500 summed movable fixtures", async () => {
     const { auth } = await seedOrg("pro");
-    const comp = await createCompetition(auth, { name: "Cap 500", visibility: "public", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "Cap 500", visibility: "public", branding: {} });
     const a = await seedBigDivision(auth, comp.id, "Aaa", 300);
     const b = await seedBigDivision(auth, comp.id, "Bbb", 200);
     const { movableIds } = await buildCompetitionPack(auth, comp.id, [a, b], {
@@ -801,7 +801,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
   // pre-check, and passed identically with the re-throw deleted.
   it("a division over the per-division cap surfaces the joint 409 from the pre-check", async () => {
     const { auth } = await seedOrg("pro");
-    const comp = await createCompetition(auth, { name: "Cap One Big", visibility: "public", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "Cap One Big", visibility: "public", branding: {} });
     const big = await seedBigDivision(auth, comp.id, "Aaa", 501);
     const small = await seedBigDivision(auth, comp.id, "Bbb", 2);
     vi.mocked(buildSchedulePack).mockClear();
@@ -822,7 +822,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
   // the only thing that can produce this refusal.
   it("refuses an oversized run before building any division's pack", async () => {
     const { auth } = await seedOrg("pro");
-    const comp = await createCompetition(auth, { name: "Precheck", visibility: "public", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "Precheck", visibility: "public", branding: {} });
     const a = await seedBigDivision(auth, comp.id, "Aaa", 300);
     const b = await seedBigDivision(auth, comp.id, "Bbb", 201);
     vi.mocked(buildSchedulePack).mockClear();
@@ -834,7 +834,7 @@ describe.skipIf(!HAS_DB)("buildCompetitionPack size limits (#350)", () => {
 
   it("over the cap refuses with AI_PLAN_TOO_LARGE", async () => {
     const { auth } = await seedOrg("pro");
-    const comp = await createCompetition(auth, { name: "Cap 501", visibility: "public", branding: {} });
+    const comp = await createCompetition(auth, { ends_on: "2030-12-31", name: "Cap 501", visibility: "public", branding: {} });
     const a = await seedBigDivision(auth, comp.id, "Aaa", 300);
     const b = await seedBigDivision(auth, comp.id, "Bbb", 201);
     await expect(

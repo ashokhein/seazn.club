@@ -6,7 +6,7 @@ import { TAG, apiJson, activeOrg, expectNoHorizontalScroll } from "./helpers";
 // 2026-07-10). The carrom pad records boards via carrom.board.summary.
 test("carrom fixture scores board-by-board through its own pad", async ({ page, request }) => {
   const org = await activeOrg(page);
-  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Carrom ${TAG}`,
     visibility: "private",
   });

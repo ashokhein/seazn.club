@@ -33,6 +33,7 @@ async function seed(): Promise<{ owner: AuthCtx; orgId: string; divisionId: stri
     on conflict do nothing`;
   const owner: AuthCtx = { orgId, via: "session", userId: ownerId, role: "owner", keyId: null };
   const competition = await createCompetition(owner, {
+    ends_on: "2030-12-31",
     name: `Evidence Cup ${suffix}`,
     visibility: "private",
     branding: {},

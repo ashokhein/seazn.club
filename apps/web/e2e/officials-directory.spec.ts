@@ -164,7 +164,7 @@ test.describe.serial("officiating: accept, score, and access boundaries", () => 
   test("organiser: seed a division, assign two officials, invite both to one email", async ({
     request,
   }) => {
-    const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Officiating E2E ${TAG}`,
       visibility: "public",
     });

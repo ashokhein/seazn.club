@@ -150,6 +150,7 @@ async function seedPlannable(
   opts: { officials?: boolean } = {},
 ): Promise<{ divisionId: string; fixtureIds: string[] }> {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "AI Arch",
     visibility: "public",
     branding: {},
@@ -191,6 +192,7 @@ async function seedPlannable(
 // Direct-insert bulk seeder to trip the >500 movable limit.
 async function seedBigDivision(auth: AuthCtx, n: number): Promise<string> {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Big ${randomUUID().slice(0, 6)}`,
     visibility: "public",
     branding: {},

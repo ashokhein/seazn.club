@@ -49,6 +49,7 @@ async function insertPerson(
 
 async function seedDivision(auth: AuthCtx): Promise<string> {
   const competition = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Duplicates Cup " + randomUUID().slice(0, 6),
     visibility: "public",
     branding: {},

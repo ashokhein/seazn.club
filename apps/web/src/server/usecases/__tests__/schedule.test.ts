@@ -121,6 +121,7 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
   it("drives the full plan-first lifecycle on an 8-team group+KO division", async () => {
     const { auth, orgSlug } = await seedOrg("pro");
     const competition = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Weekend Carnival",
       visibility: "public",
       branding: {},
@@ -338,7 +339,7 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
   // migration or an override switching either key back off reds this test.
   it("Community org: constraints/board are open, quick-start unaffected (#382)", async () => {
     const { auth } = await seedOrg("community");
-    const competition = await createCompetition(auth, { name: "Club Night", visibility: "private", branding: {} });
+    const competition = await createCompetition(auth, { ends_on: "2030-12-31", name: "Club Night", visibility: "private", branding: {} });
     const division = await createDivision(auth, competition.id, {
       name: "Open", sport_key: "generic", variant_key: "score",
       config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
@@ -405,7 +406,7 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
 
   it("quick-start generates fixtures and slots rolling round times (doc 12 §1.A)", async () => {
     const { auth } = await seedOrg("community");
-    const competition = await createCompetition(auth, { name: "Rolling", visibility: "private", branding: {} });
+    const competition = await createCompetition(auth, { ends_on: "2030-12-31", name: "Rolling", visibility: "private", branding: {} });
     const division = await createDivision(auth, competition.id, {
       name: "Open", sport_key: "generic", variant_key: "score",
       config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
@@ -443,7 +444,7 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
 
   it("rejects a stale expected_seq on schedule writes with 409 SEQ_CONFLICT (v3/11 gap 10)", async () => {
     const { auth } = await seedOrg("pro");
-    const competition = await createCompetition(auth, { name: "TwoAdmins", visibility: "private", branding: {} });
+    const competition = await createCompetition(auth, { ends_on: "2030-12-31", name: "TwoAdmins", visibility: "private", branding: {} });
     const division = await createDivision(auth, competition.id, {
       name: "Open", sport_key: "generic", variant_key: "score",
       config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
@@ -505,7 +506,7 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
 
   it("accepts source 'ai' and stamps schedule_source (v4/03 §4)", async () => {
     const { auth } = await seedOrg("pro");
-    const competition = await createCompetition(auth, { name: "AI Cup", visibility: "private", branding: {} });
+    const competition = await createCompetition(auth, { ends_on: "2030-12-31", name: "AI Cup", visibility: "private", branding: {} });
     const division = await createDivision(auth, competition.id, {
       name: "Open", sport_key: "generic", variant_key: "score",
       config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
@@ -571,6 +572,7 @@ describe.skipIf(!HAS_DB)("loadSettings resolves the organisation zone separately
     const { auth } = await seedOrg("pro");
     await sql`update organizations set timezone = ${orgTz} where id = ${auth.orgId}`;
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "TZ Cup",
       visibility: "public",
       branding: {},

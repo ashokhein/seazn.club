@@ -16,8 +16,8 @@ export async function GET(req: Request) {
  *  `clubs.hierarchy`; cap-enforced). Standalone when club_id is omitted. */
 export async function POST(req: Request) {
   return v1(async () => {
-    const body = await parseBody(req, CreateTeamStandalone);
     const auth = await requireAuth(req, "write");
+    const body = await parseBody(req, CreateTeamStandalone);
     return reply(201, await createTeam(auth, body));
   });
 }

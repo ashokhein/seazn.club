@@ -25,7 +25,7 @@ test.describe.serial("schedule board", () => {
     (await apiJson<FixtureRow>(request, `/api/v1/fixtures/${id}`)).data!;
 
   test("settings, auto-propose and apply build a two-court board", async ({ page, request }) => {
-    const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Board ${TAG}`,
       visibility: "private",
     });
@@ -350,7 +350,7 @@ test.describe.serial("schedule board", () => {
   }) => {
     // Fresh division with a stage but NO pre-generated fixtures — the path the
     // journey suites skip (they pre-generate, so start only refreshes).
-    const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Quickstart ${TAG}`,
       visibility: "private",
     });
@@ -390,7 +390,7 @@ test.describe.serial("schedule board", () => {
   test("scheduling_mode is retired: the PATCH is rejected and auto still solves", async ({
     request,
   }) => {
-    const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Flex ${TAG}`,
       visibility: "private",
     });
@@ -429,7 +429,7 @@ test("competition schedule shows an empty state when there are no divisions", as
   page,
   request,
 }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Board empty ${TAG}`,
     visibility: "private",
   });

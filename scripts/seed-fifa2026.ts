@@ -301,7 +301,7 @@ async function ensureCompetitionDivision(): Promise<{
 }> {
   const comps = asList<{ id: string; name: string }>(await call("/api/v1/competitions?limit=200"));
   let comp = comps.find((c) => c.name === COMP_NAME);
-  if (!comp) comp = await call("/api/v1/competitions", "POST", { name: COMP_NAME });
+  if (!comp) comp = await call("/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: COMP_NAME });
   const divs = asList<{ id: string; name: string }>(
     await call(`/api/v1/competitions/${comp!.id}/divisions`),
   );

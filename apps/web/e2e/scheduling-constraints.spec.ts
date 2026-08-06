@@ -67,7 +67,7 @@ async function seedDivision(
     stage: { kind: string; name: string; config?: Record<string, unknown> };
   },
 ): Promise<{ divisionId: string; stageId: string; fixtures: FixtureRow[] }> {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Constraints ${TAG}-${rand()}`,
     visibility: "private",
   });

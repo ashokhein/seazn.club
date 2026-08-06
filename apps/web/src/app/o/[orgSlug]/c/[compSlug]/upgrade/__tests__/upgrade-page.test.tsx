@@ -34,6 +34,12 @@ const h = vi.hoisted(() => ({
     status: string;
     ends_on: string | null;
   } | null,
+  // The COMPETITION's own lifecycle columns, which since #376 are read whether
+  // or not a pass row exists — the page LEFT JOINs the pass onto the
+  // competition, so `status`/`ends_on` reach `passLockReason` for a competition
+  // that was never sold one. A `passRow` (which carries the same two columns,
+  // because they come back on the same joined row) overrides these.
+  comp: { status: "live", ends_on: null } as { status: string; ends_on: string | null },
   purchases: [] as unknown[],
   reconciled: [] as string[],
   // The org→group join `groupAlreadyRedeemed(subscriptionId)` needs. Defaults
@@ -86,7 +92,31 @@ vi.mock("@/lib/db", () => {
   const sql = (strings: TemplateStringsArray | unknown[], ...vals: unknown[]) => {
     if (!Array.isArray(strings) || !("raw" in strings)) return { __fragment: strings };
     const text = (strings as TemplateStringsArray).join(" ");
-    if (text.includes("competition_passes")) return Promise.resolve(h.passRow ? [h.passRow] : []);
+    // MODEL the join; do not assume it. The page LEFT JOINs the pass onto the
+    // competition (#376), so the competition's own `status`/`ends_on` come back
+    // whether or not a pass exists, with the pass columns null when it does not.
+    //
+    // The `left join` test is the load-bearing part. A double that hands back
+    // one row whatever the query says cannot tell a LEFT JOIN from the INNER
+    // JOIN this page used before #376 — and the INNER one is the whole defect,
+    // because real Postgres returns NO row for a competition with no pass, so
+    // `status`/`ends_on` were never read and the lock could not be judged even
+    // in principle. Reproduce that faithfully: an inner join plus no pass row
+    // is an empty result, and every closed-state assertion here goes red if the
+    // query ever regresses to it.
+    if (text.includes("competition_passes")) {
+      const leftJoined = /left\s+(?:outer\s+)?join/i.test(text);
+      if (!leftJoined && h.passRow == null) return Promise.resolve([]);
+      return Promise.resolve([
+        {
+          purchased_at: null,
+          stripe_payment_intent: null,
+          pass_key: null,
+          ...h.comp,
+          ...(h.passRow ?? {}),
+        },
+      ]);
+    }
     if (text.includes("plan_entitlements")) return Promise.resolve(h.matrix);
     // groupAlreadyRedeemed's own query (pass-credit.ts) — checked before the
     // org→group join below since both mention "organizations"-adjacent tables.
@@ -151,7 +181,7 @@ import Page from "../page";
 // Pure module (no db, no server-only) — the real rung list, so the paid-plan
 // guard below covers every rung that exists rather than a copy of the list.
 import { PASS_KEYS } from "@/lib/currency";
-import { PASS_LOCK_REASON_KEY } from "@/lib/pass-ladder";
+import { PASS_CLOSED_REASON_KEY, PASS_LOCK_REASON_KEY } from "@/lib/pass-ladder";
 import { t } from "@/lib/i18n-runtime";
 import uiEn from "@/dictionaries/en/ui.json";
 
@@ -177,6 +207,7 @@ beforeEach(() => {
   h.role = "owner";
   h.planKey = "community";
   h.passRow = null;
+  h.comp = { status: "live", ends_on: null };
   h.purchases = [];
   h.reconciled = [];
   h.subscriptionId = "sub-1";
@@ -758,6 +789,145 @@ describe("ended — the pass is on the record but has stopped applying", () => {
     const html = await render();
     expect(html).toContain("data-pass-active");
     expect(html).not.toContain("data-pass-ended");
+  });
+});
+
+describe("closed — past the pass line, and nothing was ever bought (#376)", () => {
+  // The state the page had no branch for. `passLockReason` was asked only when
+  // a pass row existed, so a competition that finished — or ran a month past
+  // its end date — without ever being sold one fell straight through to the
+  // ordinary offer: a priced ticket, both rungs, and a Buy button that
+  // `POST /api/billing/pass-checkout` answers with 410 Gone. The page was
+  // taking a customer to a checkout the product refuses.
+  //
+  // It is NOT the `ended` state. That card is built around a purchase — rung
+  // name, purchase date, receipt stub — and every one of those would be
+  // invented here.
+  const CLOSED_TERMINAL = t(uiEn, PASS_CLOSED_REASON_KEY.terminal);
+  const CLOSED_PAST_ENDS = t(uiEn, PASS_CLOSED_REASON_KEY.past_ends_on);
+
+  /** A competition past the line, with no pass row of any kind. */
+  function closedComp({ reason = "terminal" as "terminal" | "past_ends_on" } = {}) {
+    h.passRow = null;
+    h.comp =
+      reason === "terminal"
+        ? { status: "completed", ends_on: null }
+        : { status: "live", ends_on: new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10) };
+  }
+
+  it("renders its own panel, and no checkout control anywhere", async () => {
+    closedComp();
+    const html = await render();
+    // Anchored on `="`, not on the bare attribute: React serialises an omitted
+    // prop as "$undefined", so `toContain("data-pass-closed-panel")` would pass
+    // in both states and prove nothing.
+    expect(html).toContain('data-pass-closed-panel="');
+    expect(html).not.toContain("data-pass-buy");
+    expect(html).not.toContain("data-pass-ticket");
+    expect(html).not.toContain("$29");
+    expect(html).not.toContain("$59");
+  });
+
+  it("invents no purchase — no rung, no bought-on date, no receipt", async () => {
+    // The whole reason this is not the `ended` ticket. Nothing was ever sold
+    // for this competition, so a stub carrying a rung name and a date would be
+    // three fabricated facts on the one page that exists to explain what the
+    // org has and has not bought.
+    closedComp();
+    const html = await render();
+    expect(html).not.toContain("data-pass-ended");
+    expect(html).not.toContain("data-pass-active");
+    expect(html).not.toContain("data-pass-held-rung");
+    expect(html).not.toContain("data-pass-receipt");
+  });
+
+  it("does not say a pass has stopped applying, because none ever did", async () => {
+    // `pass.entry.ended.reason*` every one of them ends "so its Event Pass has
+    // stopped lifting its limits" — a statement about a purchase. Asserted
+    // against the dictionary rather than a re-typed sentence, so a hardcoded
+    // literal, a typo'd key and a reworded string all fail.
+    closedComp();
+    const html = await render();
+    expect(html).toContain(CLOSED_TERMINAL);
+    expect(html).not.toContain(t(uiEn, PASS_LOCK_REASON_KEY.terminal));
+    expect(html).not.toContain(t(uiEn, PASS_LOCK_REASON_KEY.past_ends_on));
+  });
+
+  it("names the terminal reason distinctly from past-ends-on, and points them at different next steps", async () => {
+    // The two arms want opposite things. A finished competition is done and the
+    // organiser's move is next season; one that merely ran past `ends_on` is
+    // often still being played, and the end date is the thing to fix — which
+    // makes THAT arm recoverable and this one not.
+    expect(CLOSED_TERMINAL).not.toEqual(CLOSED_PAST_ENDS);
+
+    closedComp({ reason: "terminal" });
+    const terminal = await render();
+    expect(terminal).toContain(CLOSED_TERMINAL);
+    expect(terminal).not.toContain(CLOSED_PAST_ENDS);
+    expect(terminal).toContain('data-pass-closed-reason="terminal"');
+    expect(terminal).toContain('href="/o/riverside/c/new"');
+
+    closedComp({ reason: "past_ends_on" });
+    const pastEnds = await render();
+    expect(pastEnds).toContain(CLOSED_PAST_ENDS);
+    expect(pastEnds).not.toContain(CLOSED_TERMINAL);
+    expect(pastEnds).toContain('data-pass-closed-reason="past_ends_on"');
+    expect(pastEnds).toContain('href="/o/riverside/c/summer-league/settings"');
+  });
+
+  it("drops both pass columns from the comparison table", async () => {
+    // The table is the page's SECOND offer surface. A closed competition that
+    // still advertised a $29 and a $59 column would be recommending, in
+    // figures, the purchase the panel above it has just refused.
+    closedComp();
+    const html = await render();
+    for (const rung of PASS_KEYS) {
+      expect(html).not.toContain(`data-compare-col="${rung}"`);
+    }
+    // Not vacuous: the table is on screen and still compares the two things
+    // this org can actually choose between.
+    expect(html).toContain('data-compare-col="community"');
+    expect(html).toContain('data-compare-col="pro"');
+  });
+
+  it("still shows the ordinary offer on a competition that is merely inside its grace week", async () => {
+    // The discriminator. V338 gives a competition a week past `ends_on` before
+    // the pass line is crossed, and a page that closed on the date itself would
+    // stop selling to an event that has simply overrun by a day.
+    h.passRow = null;
+    h.comp = { status: "live", ends_on: new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10) };
+    const html = await render();
+    expect(html).not.toContain("data-pass-closed-panel");
+    expect(html).toContain("data-pass-buy");
+    expect(html).toContain("$29");
+  });
+
+  it("shows the panel to a non-owner too, without the action they cannot take", async () => {
+    // Same split the priced ticket makes: everyone is told what is true, and
+    // only the person who can act gets the control.
+    h.role = "admin";
+    closedComp();
+    const html = await render();
+    expect(html).toContain('data-pass-closed-panel="');
+    expect(html).toContain(CLOSED_TERMINAL);
+    expect(html).not.toContain("data-pass-closed-link");
+  });
+
+  it("leaves a HELD pass on a closed competition in the ended state, not this one", async () => {
+    // `hasPass` is the whole difference between the two. A competition that was
+    // sold a pass and then finished has a purchase to report — rung, date and
+    // receipt are all real — so it keeps the ticket.
+    h.passRow = {
+      purchased_at: new Date(Date.now() - 20 * 86_400_000).toISOString(),
+      stripe_payment_intent: "pi_live_1",
+      pass_key: "event_pass",
+      status: "completed",
+      ends_on: null,
+    };
+    h.purchases = [RECEIPT];
+    const html = await render();
+    expect(html).toContain("data-pass-ended");
+    expect(html).not.toContain("data-pass-closed-panel");
   });
 });
 

@@ -7,7 +7,7 @@ import { TAG, apiJson, activeOrg } from "./helpers";
 // sport banner on competitions, monogram tile on divisions.
 
 async function seedRig(request: APIRequestContext) {
-  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `V8 Settings ${TAG} ${Math.random().toString(36).slice(2, 6)}`,
     visibility: "public",
   });

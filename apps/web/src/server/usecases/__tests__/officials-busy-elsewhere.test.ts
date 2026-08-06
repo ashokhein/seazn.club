@@ -63,6 +63,7 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
  *  anything more than a day in the past. */
 async function seedFutureDivision(auth: AuthCtx) {
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Busy Cup", visibility: "public", branding: {},
   });
   const division = await createDivision(auth, comp.id, {

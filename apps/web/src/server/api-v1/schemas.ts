@@ -35,19 +35,42 @@ export const ApiKeyScope = z.enum(["read", "score", "manage", "write"]);
 // Competitions
 // ---------------------------------------------------------------------------
 
-export const CreateCompetition = z.object({
-  name: z.string().min(1).max(200),
-  slug: Slug.optional(), // derived from name when omitted
-  /** Markdown (v3/06 §2) — rendered through lib/prose on every surface. */
-  description: z.string().max(20_000).nullish(),
-  starts_on: z.iso.date().nullish(),
-  ends_on: z.iso.date().nullish(),
-  visibility: Visibility.default("private"),
-  branding: z.record(z.string(), z.unknown()).default({}),
-  /** Doc 15 §1 "Showcase on seazn.club" — opt-in at create time; requires
-   *  public visibility, same rule as PATCH. Omitted = false. */
-  discoverable: z.boolean().optional(),
-});
+/** #376: ISO `YYYY-MM-DD` sorts lexicographically, so a string compare IS the
+ *  date compare. Attached to both the create and the patch body; the patch can
+ *  only see the dates it CARRIES, which is why the same order is re-checked in
+ *  the use-case against the stored row. Message mirrors the `en` copy for
+ *  `comp.validation.endsBeforeStarts` — the forms render the localized key,
+ *  API clients read this sentence out of the 400's `issues`. */
+export const ENDS_BEFORE_STARTS = "The end date cannot be before the start date.";
+
+function checkDateOrder(
+  v: { starts_on?: string | null; ends_on?: string | null },
+  ctx: z.RefinementCtx,
+): void {
+  if (typeof v.starts_on === "string" && typeof v.ends_on === "string" && v.ends_on < v.starts_on) {
+    ctx.addIssue({ code: "custom", path: ["ends_on"], message: ENDS_BEFORE_STARTS });
+  }
+}
+
+export const CreateCompetition = z
+  .object({
+    name: z.string().min(1).max(200),
+    slug: Slug.optional(), // derived from name when omitted
+    /** Markdown (v3/06 §2) — rendered through lib/prose on every surface. */
+    description: z.string().max(20_000).nullish(),
+    starts_on: z.iso.date().nullish(),
+    /** #376: MANDATORY. A null end date can never cross `past_ends_on`, so the
+     *  Event Pass date lock never fires and the competition holds a
+     *  `competitions.max_active` slot for good. Required here, and non-nullable
+     *  on PATCH — a nullable patch would reopen the same door. */
+    ends_on: z.iso.date(),
+    visibility: Visibility.default("private"),
+    branding: z.record(z.string(), z.unknown()).default({}),
+    /** Doc 15 §1 "Showcase on seazn.club" — opt-in at create time; requires
+     *  public visibility, same rule as PATCH. Omitted = false. */
+    discoverable: z.boolean().optional(),
+  })
+  .superRefine(checkDateOrder);
 export type CreateCompetition = z.infer<typeof CreateCompetition>;
 
 /** Organiser-entered discovery presentation (doc 15 §1). tagline/hero are
@@ -68,7 +91,10 @@ export const PatchCompetition = z
     slug: Slug,
     description: z.string().max(20_000).nullable(),
     starts_on: z.iso.date().nullable(),
-    ends_on: z.iso.date().nullable(),
+    /** #376: changeable but NOT removable. `.partial()` below keeps it optional
+     *  to SEND; dropping `.nullable()` is what stops an org PATCHing it back to
+     *  null and falling out of the `past_ends_on` pass lock again. */
+    ends_on: z.iso.date(),
     visibility: Visibility,
     branding: z.record(z.string(), z.unknown()),
     status: CompetitionStatus,
@@ -77,7 +103,8 @@ export const PatchCompetition = z
     discovery: DiscoveryInfo,
   })
   .partial()
-  .refine((p) => Object.keys(p).length > 0, "empty patch");
+  .refine((p) => Object.keys(p).length > 0, "empty patch")
+  .superRefine(checkDateOrder);
 export type PatchCompetition = z.infer<typeof PatchCompetition>;
 
 export const Competition = z.object({

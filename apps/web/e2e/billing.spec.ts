@@ -136,7 +136,7 @@ test.describe.serial("billing", () => {
     // Each competition gets a division so the freeze has a write surface to block.
     const divisionIds: string[] = [];
     for (let i = 0; i < overQuota; i++) {
-      const comp = await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
+      const comp = await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
         name: `Freeze ${i + 1} ${TAG}`,
         visibility: "private",
       });

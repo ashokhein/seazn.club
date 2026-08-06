@@ -945,6 +945,10 @@
   "pass.entry.ended.reasonTerminal": "Er wordt niets verwijderd — deze competitie is afgerond of gearchiveerd, dus de Event Pass verhoogt de limieten niet meer.",
   "pass.entry.ended.reasonPastEnds": "Er wordt niets verwijderd — deze competitie is voorbij de einddatum, dus de Event Pass verhoogt de limieten niet meer. Pas de einddatum aan als de competitie nog loopt.",
   "pass.entry.ended.nextEdition": "Editie van volgend jaar aanmaken",
+  "pass.entry.closed.updateEndDate": "Einddatum bijwerken",
+  "upgrade.closed.title": "Deze competitie is gesloten voor Event Passes",
+  "upgrade.closed.reasonTerminal": "Deze competitie is afgelopen of gearchiveerd, dus er kan geen Event Pass meer voor worden gekocht.",
+  "upgrade.closed.reasonPastEnds": "Deze competitie is voorbij haar einddatum, dus er kan geen Event Pass meer voor worden gekocht. Werk de einddatum bij als de competitie nog loopt.",
   "pass.entry.ended.nextBody": "De pass en de bon blijven bij deze competitie. Pro upgradet elke competitie in {org}, niet alleen deze — en blijft dat volgend seizoen doen.",
   "pass.menu.buy": "Event Pass — vanaf {price}",
   "me.console": "Console",
@@ -3192,5 +3196,11 @@
   "board.ai.joint.undoChangedTitle": "Dit kan niet meer in één keer ongedaan worden gemaakt",
   "board.ai.joint.undoChanged": "De competitie is sinds deze toepassing opnieuw ingepland, dus het ongedaan maken past er niet meer bij. Herstel elke divisie via haar eigen planningspagina.",
   "board.ai.joint.undoGoneTitle": "Niets meer om ongedaan te maken",
-  "board.ai.joint.undoGone": "Er is voor deze competitie geen gezamenlijke toepassing meer om ongedaan te maken. Elke divisie bewaart haar eigen herstelpunten op haar planningspagina."
+  "board.ai.joint.undoGone": "Er is voor deze competitie geen gezamenlijke toepassing meer om ongedaan te maken. Elke divisie bewaart haar eigen herstelpunten op haar planningspagina.",
+  "division.create.competitionEnded": "Deze competitie is afgelopen, dus er kunnen geen nieuwe divisies aan worden toegevoegd.",
+  "division.archive.slotWarning": "Deze divisie heeft geregistreerde resultaten, dus archiveren maakt geen divisieplek vrij.",
+  "division.limit.archivedCount": "Divisies met geregistreerde resultaten tellen mee voor je limiet, ook nadat ze zijn gearchiveerd.",
+  "danger.archiveBodySlotHeld": "De divisie verdwijnt van je console en de openbare site. Hij heeft geregistreerde resultaten, dus zijn divisieplek komt niet terug — er wordt niets vernietigd en je kunt hem op elk moment herstellen via competitie-instellingen → Gearchiveerde divisies. Per ongeluk gearchiveerd? Support kan de plek vrijgeven.",
+  "comp.wizard.endsOn.required": "Een einddatum is verplicht.",
+  "comp.validation.endsBeforeStarts": "De einddatum kan niet vóór de startdatum liggen."
 }

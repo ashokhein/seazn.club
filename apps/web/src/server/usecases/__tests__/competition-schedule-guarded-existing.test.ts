@@ -169,6 +169,7 @@ async function seedFixedOccupancyBoard(): Promise<{
   const { auth } = await seedOrg("pro");
   const tag = randomUUID().slice(0, 6);
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Fixed Occupancy ${tag}`,
     visibility: "public",
     branding: {},
@@ -233,6 +234,7 @@ async function seedFeedForwardBoard(): Promise<{
   const { auth } = await seedOrg("pro");
   const tag = randomUUID().slice(0, 6);
   const comp = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: `Feed Forward ${tag}`,
     visibility: "public",
     branding: {},

@@ -22,4 +22,4 @@ When the last stage completes, the division is done — the champion banner goes
 
 **I started too early — can I go back?** If nothing has been scored, an admin can void the accidental start from the division's **Settings tab → Danger zone**. Once real results exist, the lock is the point.
 
-**What about archiving?** [Archive](/help/divisions/archive) hides a division without deleting anything.
+**What about archiving?** [Archive](/help/divisions/archive) hides a division without deleting anything. It hands the slot back to your division limit only if the division never recorded a result — once results exist, the division keeps its place in that limit whether it's archived or not.

@@ -33,7 +33,7 @@ import { TAG, apiJson, activeOrg } from "./helpers";
 // probe that only checked NODE_ENV would have missed this entirely; checking
 // the actual header is what makes this guard meaningful once it's fixed.
 test("public competition page emits s-maxage for CDN caching", async ({ page, request }) => {
-  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Cache Header ${TAG}`,
     visibility: "public",
   });

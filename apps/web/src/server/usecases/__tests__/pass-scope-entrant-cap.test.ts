@@ -106,6 +106,7 @@ async function seedFullDivision(
 ): Promise<{ competitionId: string; compSlug: string; divisionId: string }> {
   const s = uniq();
   const competition = await createCompetition(auth, {
+    ends_on: "2030-12-31",
     name: "Cap Cup " + s, visibility: "unlisted", branding: {},
   });
   const division = await createDivision(auth, competition.id, {

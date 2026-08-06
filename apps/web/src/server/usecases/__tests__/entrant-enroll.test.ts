@@ -96,6 +96,7 @@ describe.skipIf(!HAS_DB)("enroll an existing team", () => {
     // org that lost Pro keeps working with its imported teams.
     const { auth } = await seedOrg("pro");
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Rollover Cup",
       visibility: "private",
       branding: {},
@@ -134,6 +135,7 @@ describe.skipIf(!HAS_DB)("enroll an existing team", () => {
   it("copies the roster, keeping keys within a sport and dropping invalid ones across sports", async () => {
     const { auth } = await seedOrg("pro");
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Copy Cup",
       visibility: "private",
       branding: {},
@@ -226,6 +228,7 @@ describe.skipIf(!HAS_DB)("enroll an existing team", () => {
     const { auth } = await seedOrg("pro");
     const other = await seedOrg("pro");
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Warn Cup",
       visibility: "private",
       branding: {},
@@ -269,6 +272,7 @@ describe.skipIf(!HAS_DB)("enroll an existing team", () => {
   it("leaves the entrant name unchanged after the team is renamed", async () => {
     const { auth } = await seedOrg("pro");
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Rename Cup",
       visibility: "private",
       branding: {},
@@ -292,6 +296,7 @@ describe.skipIf(!HAS_DB)("enroll an existing team", () => {
   it("a started division refuses new entrants — except open formats (ladder/americano)", async () => {
     const { auth } = await seedOrg("pro");
     const comp = await createCompetition(auth, {
+      ends_on: "2030-12-31",
       name: "Lock Cup",
       visibility: "private",
       branding: {},
