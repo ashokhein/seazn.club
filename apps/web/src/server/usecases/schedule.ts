@@ -1240,9 +1240,28 @@ async function reflowExisting(args: {
       // `lost` is baseline rows this run could not place (R21). REFLOW's
       // baseline is where the movable cards sit RIGHT NOW — `args.placed` —
       // since `args.pinned` cannot move and rejoins `full` unconditionally.
-      // Computed rather than stubbed to 0: a repair that drops a card the
-      // organiser had scheduled is exactly what this number exists to surface,
+      //
+      // A TRIPWIRE, NOT A MEASUREMENT, and saying so is the point. No input
+      // this code can receive today makes it non-zero: `repairSchedule` is
+      // TOTAL over the proposal on every return path — `clean` hands back
+      // `[...proposal]` (repair.ts:287) and both `repaired` returns come off
+      // `proposal.map(…)` (repair.ts:1012), which is 1:1 by construction — and
+      // the `timeout` and `infeasible` arms below settle the proposal itself.
+      // `proposal` is `[...args.placed, …]`, so every baseline row is in it.
+      // Stubbing this to `lost: 0` therefore survives every functional reflow
+      // test in the suite; that is what makes it worth a comment.
+      //
+      // It is computed anyway because a repair that silently drops a card the
+      // organiser had scheduled is exactly the harm this number exists to
+      // surface, and totality is a property of TODAY's solver rather than a
+      // guarantee of the interface. `lost: 0` would hide the day that changes,
       // and `moved` no longer carries it.
+      //
+      // But a guard nothing can trip is indistinguishable from dead code, so it
+      // is PROVEN live rather than argued for: `schedule-reflow-lost.test.ts`
+      // mocks a `repaired` result with one row removed and pins both ends — the
+      // count here, and the `no_slot` row the absence loop above raises for the
+      // dropped fixture. Do not delete this line without deleting that file.
       lost: args.placed.filter((a) => !placedIds.has(a.fixtureId)).length,
     };
   };
