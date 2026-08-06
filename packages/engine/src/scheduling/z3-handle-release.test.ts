@@ -35,21 +35,32 @@ const read = (name: string): string =>
     .join("\n");
 
 describe("no z3 handle is left to the finaliser", () => {
+  // Model handles taken out, against model handles handed back. `stats.release()`
+  // is excluded because the third case below owns that pairing, and counting it
+  // here would let a released statistic stand in for a leaked model.
+  //
+  // A COUNT, NOT A SHAPE. An earlier draft pinned `withModel`'s layout with a
+  // regex over `const m = …` / `try {` / `} finally {` / `m.release()`, which
+  // made a prettier reflow or renaming the local red a correct file — an
+  // assertion about the formatter, not about the handle discipline. What is
+  // load-bearing is that the two counts agree; what is knowingly NOT covered
+  // either way is whether the release sits in a `finally`, which no source scan
+  // can distinguish from a release on the happy path alone.
+  const handles = (src: string): { models: number; released: number } => ({
+    models: (src.match(/solver\.model\(\)/g) ?? []).length,
+    released: (src.match(/(?<!stats)\.release\(\);/g) ?? []).length,
+  });
+
   it("build.ts reads a model only through the releasing helper", () => {
-    const src = read("build.ts");
-    // Exactly one place takes a model out, and it is the one with the
-    // `finally`. The inline `model.slotOf(solver.model())` this file was written
-    // against — there were two of them — would show up as extra occurrences.
-    expect(src.match(/solver\.model\(\)/g) ?? []).toHaveLength(1);
-    expect(src).toMatch(
-      /const m = solver\.model\(\);\s*\n\s*try \{[\s\S]*?\} finally \{\s*\n\s*m\.release\(\);/,
-    );
+    // Exactly one place takes a model out. The inline
+    // `model.slotOf(solver.model())` this file was written against — there were
+    // two of them — would show up as extra occurrences with no release beside
+    // them.
+    expect(handles(read("build.ts"))).toEqual({ models: 1, released: 1 });
   });
 
   it("repair.ts releases the model it reads a solution out of", () => {
-    const src = read("repair.ts");
-    expect(src.match(/solver\.model\(\)/g) ?? []).toHaveLength(1);
-    expect(src).toMatch(/\bmodel\.release\(\);/);
+    expect(handles(read("repair.ts"))).toEqual({ models: 1, released: 1 });
   });
 
   it("every statistics() read is paired with a release", () => {
