@@ -656,6 +656,14 @@ async function main() {
   // org, so it runs on every smoke invocation.
   await schedulingConstraintsSuite();
 
+  // --- T14 z3 auto-schedule: all three solver modes (build / re-flow / polish)
+  // against a real division, asserting the returned telemetry. The load-bearing
+  // one is `solver.engine`: it is the only field that distinguishes a z3 run
+  // from the greedy fallback the server takes when the WASM will not boot out of
+  // a traced standalone bundle, and no unit test can see that difference.
+  // Keyless, own Pro org, so it runs on every smoke invocation.
+  await z3AutoScheduleSuite();
+
   // --- v10 sponsor CRM: tiers + placement + tracked clicks + Connect rail
   // on the pro org; flat free strip + 402 gates on a fresh community owner.
   await sponsorsSuite(admin, org2.id, renamed.slug);
@@ -7342,6 +7350,262 @@ async function schedulingConstraintsSuite(): Promise<void> {
   );
 }
 
+/**
+ * T14 — the z3 auto-schedule solver, in a production-shaped run.
+ *
+ * WHAT ONLY THIS CAN PROVE. `buildSchedule` boots a WASM module. Every unit test
+ * in the repo loads it from `node_modules` in a vitest process; production loads
+ * it out of a traced `output: standalone` bundle, and the two have already come
+ * apart once — a WASM dependency needs BOTH a tracing include and a
+ * `serverExternalPackages` entry, and without them the solver shipped as a
+ * silent no-op that fell back to the greedy pass while every gate stayed green.
+ * That failure is invisible to any assertion about the BOARD, because the greedy
+ * board is also a valid board. It is visible in exactly one field:
+ * `solver.engine`. Asserting it is `z3`/`z3+lns` and not `greedy` is the reason
+ * this suite exists, and the reason the build assertions below refuse
+ * `z3_unavailable` instead of tolerating it as a graceful degradation.
+ *
+ * All three modes run, because they are three different solvers behind one
+ * endpoint (`AutoScheduleRequest`'s preprocess derives `mode` from
+ * `only_unlocked`) and each reports something the other two cannot:
+ *
+ *   BUILD  — the tier solver over an empty board. The z3 proof.
+ *   REFLOW — the repair solver. Deliberately NOT asserted to be z3: a clean
+ *            board is answered without loading the WASM at all, so its greedy
+ *            seed IS the contract. What it must show is `seeded`/`moved`, the
+ *            two fields the strip's copy depends on.
+ *   POLISH — the tier solver again, this time under a freeze. Asserted on the
+ *            frozen card keeping its exact slot AND the makespan improving,
+ *            since "nothing moved" satisfies a freeze check on its own.
+ *
+ * BOUNDED BY THE INSTANCE, NOT BY A WALL — and that is a deviation worth naming.
+ * The brief asked for an explicit short wall, but `AUTO_SOLVER_WALL_MS` is a
+ * module constant in `usecases/schedule.ts` and the auto endpoint's body accepts
+ * only `only_unlocked` and `mode`, so no wall can be passed over HTTP. The
+ * instance is kept tiny instead: 4 entrants, 6 fixtures, 2 courts, well inside
+ * the R18 size gate, so each solve returns far short of the 8 s ceiling. Every
+ * assertion is on returned telemetry; none is on elapsed time.
+ */
+async function z3AutoScheduleSuite(): Promise<void> {
+  const s = newSession();
+  // The board apply path and the constraints family are Pro.
+  const orgId = (await signIn(s, `smoke-z3-solver-${tag}@example.com`)).org_id;
+  await setPlan(orgId, "pro", s);
+
+  const comp = v1data<{ id: string }>(
+    await v1(s, "/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: `Z3 Solver ${tag}` }),
+  );
+  const div = v1data<{ id: string }>(
+    await v1(s, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "Solver",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  await v1(
+    s,
+    `/api/v1/divisions/${div.id}/entrants`,
+    "POST",
+    ["A", "B", "C", "D"].map((n, i) => ({
+      kind: "individual",
+      display_name: `Z3 ${n}${tag}`,
+      seed: i + 1,
+    })),
+  );
+  const stage = v1data<{ id: string }>(
+    await v1(s, `/api/v1/divisions/${div.id}/stages`, "POST", {
+      seq: 1,
+      kind: "league",
+      name: "League",
+    }),
+  );
+  const generated = v1data<{ fixtures: { id: string }[] }>(
+    await v1(s, `/api/v1/stages/${stage.id}/generate`, "POST"),
+  ).fixtures;
+  // 4 entrants -> 6 matches over 3 rounds of 2. On a 2-court grid that has an
+  // exact 3-slot optimum, which is what makes the polish improvement below
+  // forced rather than merely likely.
+  check("z3 solver: a 4-entrant round robin generated 6 fixtures", generated.length === 6);
+
+  const START = "2026-09-21T09:00:00.000Z";
+  const SLOT_MIN = 30;
+  const slotAt = (n: number) =>
+    new Date(Date.parse(START) + n * SLOT_MIN * 60_000).toISOString();
+  // `perEntrantMinRest: 0` on purpose: a rest shortfall is warn-only, and a
+  // board carrying warnings would make "the solver produced a legal board" and
+  // "the solver produced something it had to apologise for" look alike.
+  await v1(s, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
+    tz: "UTC",
+    config: {
+      startAt: START,
+      matchMinutes: SLOT_MIN,
+      gapMinutes: 0,
+      courts: ["Court A", "Court B"],
+      perEntrantMinRest: 0,
+      blackouts: [],
+      sessionWindows: [],
+    },
+  });
+
+  interface SolverInfo {
+    engine: string;
+    mode?: string;
+    status: string;
+    tiers_completed: number;
+    tiers_total: number;
+    budget_expired: boolean;
+    elapsed_ms: number;
+    moved: number;
+    seeded?: number;
+    lost?: number;
+  }
+  interface AutoRun {
+    assignments: { fixture_id: string; scheduled_at: string; court_label: string }[];
+    metrics?: {
+      makespan_minutes: number;
+      worst_idle_gap_minutes: number;
+      court_imbalance_minutes: number;
+      placed: number;
+      total: number;
+    };
+    solver?: SolverInfo;
+  }
+  const auto = async (body: Record<string, unknown>): Promise<AutoRun | undefined> =>
+    v1data<AutoRun>(await v1(s, `/api/v1/stages/${stage.id}/schedule/auto`, "POST", body));
+  const fixtureSlot = async (id: string): Promise<string> => {
+    const f = v1data<{ scheduled_at: string | null; court_label: string | null }>(
+      await v1(s, `/api/v1/fixtures/${id}`),
+    );
+    return `${f?.scheduled_at ?? "-"}@${f?.court_label ?? "-"}`;
+  };
+
+  // ======================================================================
+  // 1. BUILD — the z3 proof
+  // ======================================================================
+  const build = await auto({ only_unlocked: false });
+  check(
+    // THE assertion this suite exists for. `greedy` here means the WASM did not
+    // load in the standalone bundle; the board would still be valid and every
+    // other check in this suite would still pass.
+    "z3 build: the run was produced by the z3 solver, not the greedy fallback (WASM loaded in prod)",
+    build?.solver?.engine === "z3" || build?.solver?.engine === "z3+lns",
+  );
+  check(
+    "z3 build: the request derived mode=build and the solver reported a solved status",
+    build?.solver?.mode === "build" &&
+      (build.solver.status === "ok" || build.solver.status === "already_optimal"),
+  );
+  check(
+    "z3 build: every fixture was placed, across both courts",
+    (build?.assignments ?? []).length === 6 &&
+      build?.metrics?.placed === 6 &&
+      build.metrics.total === 6 &&
+      new Set((build.assignments ?? []).map((a) => a.court_label)).size === 2,
+  );
+  check(
+    // Telemetry POPULATED, not merely present: a strip full of structural zeros
+    // is what a serialisation that lost the payload renders, and it is
+    // indistinguishable from a real run by any presence check.
+    "z3 build: the telemetry came back populated (elapsed, tier ladder, real makespan)",
+    (build?.solver?.elapsed_ms ?? 0) > 0 &&
+      (build?.solver?.tiers_total ?? 0) > 0 &&
+      (build?.solver?.tiers_completed ?? -1) >= 0 &&
+      (build?.metrics?.makespan_minutes ?? 0) > 0,
+  );
+
+  await v1(s, `/api/v1/stages/${stage.id}/schedule/apply`, "POST", {
+    assignments: (build?.assignments ?? []).map((a) => ({
+      fixture_id: a.fixture_id,
+      scheduled_at: a.scheduled_at,
+      court_label: a.court_label,
+    })),
+    source: "auto",
+  });
+
+  // ======================================================================
+  // 2. REFLOW — the repair solver, with a pin it may not touch
+  // ======================================================================
+  const pinnedId = generated[0]!.id;
+  await v1(s, `/api/v1/fixtures/${pinnedId}`, "PATCH", { schedule_locked: true });
+  const pinnedBefore = await fixtureSlot(pinnedId);
+  // Empty every UNLOCKED slot. Over an already-legal board the repair solver is
+  // entitled to return `clean` and move nothing, so "the pin held" would pass on
+  // a mode that never ran at all; five cards with no time cannot.
+  await v1(s, "/api/v1/schedule/clear", "POST", {
+    division_id: div.id,
+    scope: { excludeLocked: true },
+    confirm: true,
+  });
+  const reflow = await auto({ only_unlocked: true });
+  check(
+    "z3 reflow: the request derived mode=reflow and reported the repair solver's empty ladder",
+    reflow?.solver?.mode === "reflow" && reflow.solver.tiers_completed === 0,
+  );
+  check(
+    // `seeded` is the field the strip's copy branches on — "N matches scheduled"
+    // versus "N matches moved" — and only the reflow path populates it.
+    "z3 reflow: it re-placed the five cleared cards and said so via seeded/moved",
+    (reflow?.assignments ?? []).length === 6 &&
+      (reflow?.solver?.seeded ?? 0) >= 5 &&
+      (reflow?.solver?.moved ?? 0) >= 5 &&
+      reflow?.metrics?.placed === 6,
+  );
+  const pinnedProposed = (reflow?.assignments ?? []).find((a) => a.fixture_id === pinnedId);
+  check(
+    "z3 reflow: the pinned card is handed back on exactly the slot it already held",
+    !!pinnedProposed &&
+      `${pinnedProposed.scheduled_at}@${pinnedProposed.court_label}` === pinnedBefore,
+  );
+
+  // ======================================================================
+  // 3. POLISH — the tier solver under a freeze
+  // ======================================================================
+  // A deliberately poor but entirely legal incumbent: all six matches strung
+  // down Court A in consecutive slots, Court B unused. Makespan 180 minutes
+  // against a two-court optimum of 90, so tier 1 has somewhere to go and a
+  // polish that returns the board unchanged is a real failure, not a tie.
+  const POOR_MAKESPAN_MIN = 180;
+  await v1(s, `/api/v1/fixtures/${pinnedId}`, "PATCH", { schedule_locked: false });
+  await v1(s, `/api/v1/stages/${stage.id}/schedule/apply`, "POST", {
+    assignments: generated.map((f, i) => ({
+      fixture_id: f.id,
+      scheduled_at: slotAt(i),
+      court_label: "Court A",
+    })),
+    source: "manual",
+  });
+  // Lock the FIRST slot: at the board's own start it constrains neither the
+  // makespan floor nor the court balance, so a solver honouring it can still
+  // reach the optimum. An unmoved locked card is then a freeze being respected
+  // rather than a solver with nowhere to put it.
+  const lockedId = generated[0]!.id;
+  await v1(s, `/api/v1/fixtures/${lockedId}`, "PATCH", { schedule_locked: true });
+  const lockedBefore = await fixtureSlot(lockedId);
+
+  const polish = await auto({ only_unlocked: true, mode: "polish" });
+  check(
+    "z3 polish: the explicit mode reached the tier solver, not the repair solver",
+    polish?.solver?.mode === "polish" &&
+      (polish.solver.engine === "z3" || polish.solver.engine === "z3+lns"),
+  );
+  const lockedProposed = (polish?.assignments ?? []).find((a) => a.fixture_id === lockedId);
+  check(
+    "z3 polish: the locked card keeps its exact time AND court",
+    !!lockedProposed &&
+      `${lockedProposed.scheduled_at}@${lockedProposed.court_label}` === lockedBefore,
+  );
+  check(
+    // The other half. A polish that froze the whole board would satisfy the
+    // check above and improve nothing.
+    "z3 polish: ...and the rest of the board was compacted off the single court",
+    (polish?.assignments ?? []).length === 6 &&
+      polish?.metrics?.placed === 6 &&
+      (polish.metrics.makespan_minutes ?? POOR_MAKESPAN_MIN) < POOR_MAKESPAN_MIN &&
+      new Set((polish.assignments ?? []).map((a) => a.court_label)).size === 2,
+  );
+}
+
 /** design/v4 (Task 18): the AI Schedule Architect end-to-end over HTTP.
  *
  *  A fresh Pro Plus org walks the two-phase happy path — schedule ai-plan
@@ -11329,6 +11593,9 @@ async function cleanup(tag: string): Promise<void> {
     // #404 personMergeSuite — its own Pro org (its two persons, their
     // suspension and the person_merges ledger row all cascade with it).
     `dupmerge_${tag}@example.com`,
+    // T14 z3AutoScheduleSuite — its own Pro org (one competition, one division
+    // and its six fixtures all cascade with it).
+    `smoke-z3-solver-${tag}@example.com`,
     `p72comm_${tag}@example.com`,
     `smoke-community-${tag}@example.com`,
     `smoke-pro-${tag}@example.com`,
