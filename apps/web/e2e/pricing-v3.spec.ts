@@ -140,9 +140,11 @@ test.describe.serial("event pass gate (community org)", () => {
     // The gate renders where the limit bites: submitting a 3rd division in
     // the builder 402s and the paywall offers BOTH paths (v3/07 §3) — the
     // one-time pass CTA links to this competition's upgrade page.
-    await page.goto(await competitionPath(page.request, compId));
-    await page.waitForURL(/\/o\/[^/]+\/c\/[^/]+/, { timeout: 20_000 });
-    await page.goto(`${new URL(page.url()).pathname}/d/new`);
+    // One navigation, straight to the builder. The `waitForURL` that used to sit
+    // between two `goto`s was waiting out a redirect that no longer happens —
+    // `competitionPath` resolves the slug itself, so the pattern matched the URL
+    // the first `goto` had already landed on and the wait was vacuous.
+    await page.goto(await competitionPath(page.request, compId, "/d/new"));
     await page.getByPlaceholder("U16 Boys T20").fill("Gate Trigger");
     // The builder is a stepped wizard — submit lives on the last tab.
     await page.getByRole("button", { name: "Scheduling" }).click();

@@ -492,16 +492,25 @@ test("the publish gate offers a way through for warnings, and none for a blocker
   // A two-hour rest floor, so a 60-minute turnaround is a `warn.rest` — a
   // warning, NOT a blocker. (`conflict.start_window` is non-blocking and
   // `warn.window` IS blocking; the prefix decides nothing.)
-  await apiJson(request, `/api/v1/divisions/${divisionId}/schedule-settings`, "PUT", {
-    tz: "UTC",
-    config: {
-      startAt: at(9),
-      matchMinutes: 30,
-      gapMinutes: 0,
-      courts: ["Court A", "Court B"],
-      perEntrantMinRest: 120,
+  const warnSettings = await apiJson(
+    request,
+    `/api/v1/divisions/${divisionId}/schedule-settings`,
+    "PUT",
+    {
+      tz: "UTC",
+      config: {
+        startAt: at(9),
+        matchMinutes: 30,
+        gapMinutes: 0,
+        courts: ["Court A", "Court B"],
+        perEntrantMinRest: 120,
+      },
     },
-  });
+  );
+  // Every ScheduleConfig field carries a `.default()`, so a rejected PUT leaves
+  // a usable config behind and the only symptom is "the gate dialog never
+  // appeared" — a failure reported three screens from its cause.
+  expect(warnSettings.status).toBe(200);
 
   // Two fixtures SHARING an entrant, an hour apart on different courts. The
   // rest of the board stays unscheduled on purpose — an incomplete board is not
@@ -552,17 +561,25 @@ test("the publish gate offers a way through for warnings, and none for a blocker
   // outside the competition window, which IS blocking. Done through settings
   // because a card-level clash cannot be created through the API at all — the
   // delta gate refuses the PATCH that would introduce one.
-  await apiJson(request, `/api/v1/divisions/${divisionId}/schedule-settings`, "PUT", {
-    tz: "UTC",
-    config: {
-      startAt: at(9),
-      endAt: new Date(DAY - 3_600_000).toISOString(),
-      matchMinutes: 30,
-      gapMinutes: 0,
-      courts: ["Court A", "Court B"],
-      perEntrantMinRest: 120,
+  const blockSettings = await apiJson(
+    request,
+    `/api/v1/divisions/${divisionId}/schedule-settings`,
+    "PUT",
+    {
+      tz: "UTC",
+      config: {
+        startAt: at(9),
+        endAt: new Date(DAY - 3_600_000).toISOString(),
+        matchMinutes: 30,
+        gapMinutes: 0,
+        courts: ["Court A", "Court B"],
+        perEntrantMinRest: 120,
+      },
     },
-  });
+  );
+  // This one CREATES the blocking half: a rejected PUT means no `endAt`, no
+  // `warn.window`, and the blocking assertions below fail as "no dialog".
+  expect(blockSettings.status).toBe(200);
 
   await page.reload();
   await page.getByTestId("board-publish-schedule").click();
