@@ -1198,6 +1198,13 @@ async function reflowExisting(args: {
       // the build budget, and it drew nothing.
       rlimitSpent: 0,
       lnsWindowRlimits: [],
+      // `lost` is baseline rows this run could not place (R21). REFLOW's
+      // baseline is where the movable cards sit RIGHT NOW — `args.placed` —
+      // since `args.pinned` cannot move and rejoins `full` unconditionally.
+      // Computed rather than stubbed to 0: a repair that drops a card the
+      // organiser had scheduled is exactly what this number exists to surface,
+      // and `moved` no longer carries it.
+      lost: args.placed.filter((a) => !placedIds.has(a.fixtureId)).length,
     };
   };
 
