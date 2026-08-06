@@ -19,10 +19,14 @@ import {
   REBASELINE_GOLDEN,
   UPDATE_GOLDEN,
   buildCorpus,
+  configStateKey,
+  corpusStateDiff,
+  corpusWriteGuard,
   declaredOptionalConfigFields,
   declaredOptionalFields,
   eventTypesIn,
   extendCorpus,
+  formatCorpusStateDiff,
   payloadParseFailures,
   readCorpus,
   reachableStatePaths,
@@ -43,7 +47,26 @@ import {
   writeCorpus,
 } from "./golden.ts";
 
-if (UPDATE_GOLDEN) {
+// #429 — the corpus-write guard. Both modes that rewrite a committed corpus are
+// gated on a working tree that holds NOTHING but corpus changes, because the
+// policy they exist under ("deliberate, isolated in its own commit, reviewed as
+// a state diff" — see GOLDEN-POLICY.md) is unverifiable otherwise: a re-baseline
+// landed on top of a half-finished branch produces a commit in which no reader
+// can tell which state moved because the fold changed. The guard runs BEFORE any
+// writing test is registered, so a refusal cannot half-write the corpus.
+const corpusWriteRefusal =
+  UPDATE_GOLDEN || REBASELINE_GOLDEN ? (() => {
+    const verdict = corpusWriteGuard();
+    return verdict.ok ? null : verdict.reason;
+  })() : null;
+
+if (corpusWriteRefusal !== null) {
+  describe("golden corpus write guard (#429)", () => {
+    it("refuses to rewrite the corpus from a dirty working tree", () => {
+      expect.fail(corpusWriteRefusal);
+    });
+  });
+} else if (UPDATE_GOLDEN) {
   describe("golden corpus regeneration (UPDATE_GOLDEN=1)", () => {
     for (const module of builtinModules) {
       it(`records ${module.key}`, () => {
@@ -84,6 +107,14 @@ if (UPDATE_GOLDEN) {
         const before = readCorpus(module.key);
         const after = rebaselineCorpus(module, before);
         expect(after.streams.map((s) => s.events)).toEqual(before.streams.map((s) => s.events));
+        // The third clause of the policy, made mechanical: print WHAT MOVED —
+        // per stream, which step indices and which top-level state keys, plus
+        // whether outcome/summary/deltas moved. That printout is the state diff
+        // a reviewer is supposed to be reviewing.
+        const diff = corpusStateDiff(before, after);
+        expect(diff.eventsMoved, `${module.key}: a re-baseline must keep the ledger`).toBe(false);
+        // eslint-disable-next-line no-console
+        console.log(formatCorpusStateDiff(diff));
         writeCorpus(after);
       });
     }
@@ -316,6 +347,9 @@ if (UPDATE_GOLDEN) {
           const raw = corpus.configs[stream.config];
           const label = `${module.key} config=${stream.config} seed=${stream.seed}`;
           const actual = recomputeStream(module, raw, stream.events, stream.lineups);
+          // WHERE the config lives comes from the module (#429 item 4), never
+          // from the literal key name "cfg" — see configStateKey.
+          const configKey = configStateKey(module, raw, stream.lineups);
           for (let i = 0; i < stream.states.length; i++) {
             // Exact everywhere except `cfg`, which is compared as a subset: a
             // new OPTIONAL config knob is additive and must not red a corpus it
@@ -323,7 +357,7 @@ if (UPDATE_GOLDEN) {
             // and every fold change, still reds — golden-compare.test.ts pins
             // that both ways.
             expect(
-              stateMismatch(actual.states[i] as string, stream.states[i] as string),
+              stateMismatch(actual.states[i] as string, stream.states[i] as string, configKey),
               `${label} state after event ${i} (${stream.events[i]?.type})`,
             ).toBeNull();
           }
