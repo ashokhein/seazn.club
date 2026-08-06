@@ -3200,5 +3200,7 @@
   "division.create.competitionEnded": "Deze competitie is afgelopen, dus er kunnen geen nieuwe divisies aan worden toegevoegd.",
   "division.archive.slotWarning": "Deze divisie heeft geregistreerde resultaten, dus archiveren maakt geen divisieplek vrij.",
   "division.limit.archivedCount": "Divisies met geregistreerde resultaten tellen mee voor je limiet, ook nadat ze zijn gearchiveerd.",
-  "danger.archiveBodySlotHeld": "De divisie verdwijnt van je console en de openbare site. Hij heeft geregistreerde resultaten, dus zijn divisieplek komt niet terug — er wordt niets vernietigd en je kunt hem op elk moment herstellen via competitie-instellingen → Gearchiveerde divisies. Per ongeluk gearchiveerd? Support kan de plek vrijgeven."
+  "danger.archiveBodySlotHeld": "De divisie verdwijnt van je console en de openbare site. Hij heeft geregistreerde resultaten, dus zijn divisieplek komt niet terug — er wordt niets vernietigd en je kunt hem op elk moment herstellen via competitie-instellingen → Gearchiveerde divisies. Per ongeluk gearchiveerd? Support kan de plek vrijgeven.",
+  "comp.wizard.endsOn.required": "Een einddatum is verplicht.",
+  "comp.validation.endsBeforeStarts": "De einddatum kan niet vóór de startdatum liggen."
 }

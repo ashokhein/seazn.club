@@ -131,6 +131,18 @@ export function CompetitionSettings({
     setError(null);
     setPaywallFeature(null);
     setSaved(false);
+    // #376: the end date is changeable but not removable — clearing the field
+    // and saving would send null, which the schema now refuses. Say so here
+    // rather than surface a bare 400, and keep the same order check the wizard
+    // and the API do.
+    if (!form.ends_on) {
+      setError(msg("comp.wizard.endsOn.required"));
+      return;
+    }
+    if (form.starts_on && form.ends_on < form.starts_on) {
+      setError(msg("comp.validation.endsBeforeStarts"));
+      return;
+    }
     setBusy(true);
     try {
       await apiV1(`/api/v1/competitions/${competition.id}`, {
@@ -139,7 +151,7 @@ export function CompetitionSettings({
           name: form.name,
           description: form.description.trim() || null,
           starts_on: form.starts_on || null,
-          ends_on: form.ends_on || null,
+          ends_on: form.ends_on,
           visibility: form.visibility,
           status: form.status,
           // Hard-coupled server-side too (doc 15 §1): a non-public visibility
@@ -273,9 +285,13 @@ export function CompetitionSettings({
                   />
                 </label>
                 <label className="block">
-                  <span className="label">{msg("compset.ends")}</span>
+                  {/* #376: still editable, but no longer clearable — save()
+                      refuses an empty value with the same copy the wizard uses. */}
+                  <span className="label">{msg("compset.ends")} *</span>
                   <input
                     type="date"
+                    aria-required="true"
+                    min={form.starts_on || undefined}
                     disabled={readOnly}
                     value={form.ends_on}
                     onChange={(e) => setForm({ ...form, ends_on: e.target.value })}
