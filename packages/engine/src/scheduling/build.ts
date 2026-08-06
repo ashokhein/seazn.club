@@ -888,7 +888,23 @@ function greedyOnly(input: BuildInput, status: BuildStatus): BuildResult {
  */
 export const MAX_SOLVER_QUEUE = 2;
 
+/** Builds that have entered `buildSchedule` and not yet finished — running or
+ *  waiting on the lock, which from a caller's point of view is the same thing.
+ *  Incremented SYNCHRONOUSLY, before anything is awaited, so two calls made in
+ *  one tick cannot both read a stale depth. */
+let queued = 0;
+
 export function buildSchedule(input: BuildInput): Promise<BuildResult> {
+  // The queue cap comes FIRST, ahead of every other reason to fall back to
+  // greedy (Gap 4). The R22 size gate (`canSolveWithin`) and `solveBuild`'s own
+  // lattice checks also end in a greedy board, but each of them has to build the
+  // seed and the lattice to decide — behind the lock, where this caller would be
+  // waiting out two full budgets first. This test is a single integer read: it
+  // is the only one that can be answered before joining the queue, which is the
+  // whole point of it. Order therefore costs nothing either way in the answer
+  // and everything in the latency.
+  if (queued >= MAX_SOLVER_QUEUE) return Promise.resolve(greedyOnly(input, "solver_busy"));
+  queued++;
   // `withZ3Lock` is NOT reentrant. It is taken exactly here, and nothing below
   // may take it again — `loadZ3` deliberately does not, neither does anything
   // in `build-encode.ts`, and the LNS pass re-enters `solveBuild` rather than
@@ -906,7 +922,15 @@ export function buildSchedule(input: BuildInput): Promise<BuildResult> {
   // now matches. `withZ3LockAndReset` rather than a `finally` around this call
   // because the reset has to happen while the lock is still HELD — see its
   // comment for what the obvious spelling does instead.
-  return withZ3LockAndReset(() => solveBuild(input));
+  //
+  // `finally` on the promise, not a `try`/`finally` around the call: the
+  // decrement has to happen when the SOLVE settles, and it must run on the throw
+  // path too — `solveBuild` swallows a boot failure but not an encoder-drift
+  // throw, and a counter that leaked one of those would refuse every subsequent
+  // build in this process for as long as it lived.
+  return withZ3LockAndReset(() => solveBuild(input)).finally(() => {
+    queued--;
+  });
 }
 
 /**
