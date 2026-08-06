@@ -43,6 +43,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { renderIsland } from "@/components/__tests__/_hook-harness";
+import { dayKey } from "@/lib/schedule-board";
 import { useBoardActions, type BoardActions } from "../use-board-actions";
 import type { BoardDivision, BoardFixture } from "../types";
 
@@ -73,21 +74,36 @@ const SOLVER = {
   moved: 6,
 };
 
+/** The same card, already on the timetable — the shape every bulk tool needs
+ *  before it will PATCH anything. `shiftDay` and `swapCourts` skip cards with no
+ *  time, so a test using the unplaced fixture above would prove nothing about
+ *  either of them. */
+const AT = "2026-08-05T10:00:00.000Z";
+const PLACED_FIXTURE = {
+  ...FIXTURE,
+  scheduled_at: AT,
+  court_label: "1",
+} as unknown as BoardFixture;
+
 // Stable identities: the hook memoises on these, and fresh arrays every render
 // re-fire the effects that set state — an infinite loop, not a test.
 const DIVISIONS = [DIVISION];
 const FIXTURES = [FIXTURE];
+const PLACED_FIXTURES = [PLACED_FIXTURE];
 const NAMES = {};
 const LABELS = {};
 
-function driveHook() {
+function driveWith(fixtures: BoardFixture[]) {
   let latest: BoardActions | null = null;
   renderIsland(() => {
-    latest = useBoardActions(DIVISIONS, FIXTURES, NAMES, LABELS, true);
+    latest = useBoardActions(DIVISIONS, fixtures, NAMES, LABELS, true);
     return null;
   }, {});
   return () => latest as BoardActions;
 }
+
+const driveHook = () => driveWith(FIXTURES);
+const drivePlaced = () => driveWith(PLACED_FIXTURES);
 
 describe("autoRun -> result strip wiring", () => {
   beforeEach(() => {
@@ -155,6 +171,100 @@ describe("autoRun -> result strip wiring", () => {
     };
     await actions().autoRun("s1", false);
 
+    expect(actions().lastRun).toBeNull();
+  });
+});
+
+/**
+ * THE STRIP DESCRIBES A BOARD. The moment that board is edited, every number on
+ * it is about a timetable that no longer exists — "Optimised · Scheduled 6/6 ·
+ * Total length 1h 30m" sitting above a board the organiser has just dragged a
+ * card across. `lastRun` was set and cleared only inside `autoRun`, so it
+ * outlived every other write on the surface.
+ *
+ * The rule is the simplest one that cannot rot: EVERY board write clears it.
+ * `togglePin` is included even though a pin moves no card and invalidates no
+ * number the strip prints — "which writes invalidate which cell" is a judgement
+ * the next person has to re-make, and re-make correctly, on every new cell.
+ *
+ * Each case proves the write actually happened (a PATCH went out, or the gate
+ * endpoint was called) before asserting the clear. Without that half, an action
+ * that silently did nothing — a bulk tool skipping every card because it has no
+ * time — would satisfy the assertion by never running at all.
+ */
+describe("a board write clears the previous run's report", () => {
+  beforeEach(() => {
+    net.calls = [];
+    net.auto = {
+      assignments: [{ fixture_id: "f1", scheduled_at: AT, court_label: "1" }],
+      conflicts: [],
+      metrics: METRICS,
+      solver: SOLVER,
+    };
+  });
+
+  const patches = () => net.calls.filter((c) => c.startsWith("/api/v1/fixtures/"));
+
+  it("moveCard clears it", async () => {
+    const actions = drivePlaced();
+    await actions().autoRun("s1", false);
+    expect(actions().lastRun).not.toBeNull();
+    net.calls = [];
+
+    await actions().moveCard("f1", "2026-08-05T11:00:00.000Z", "2");
+
+    expect(patches()).toHaveLength(1);
+    expect(actions().lastRun).toBeNull();
+  });
+
+  it("togglePin clears it", async () => {
+    const actions = drivePlaced();
+    await actions().autoRun("s1", false);
+    expect(actions().lastRun).not.toBeNull();
+    net.calls = [];
+
+    await actions().togglePin(PLACED_FIXTURE);
+
+    expect(patches()).toHaveLength(1);
+    expect(actions().lastRun).toBeNull();
+  });
+
+  it("shiftDay clears it", async () => {
+    const actions = drivePlaced();
+    await actions().autoRun("s1", false);
+    expect(actions().lastRun).not.toBeNull();
+    net.calls = [];
+
+    await actions().shiftDay(dayKey(AT), 15);
+
+    expect(patches()).toHaveLength(1);
+    expect(actions().lastRun).toBeNull();
+  });
+
+  it("swapCourts clears it", async () => {
+    const actions = drivePlaced();
+    await actions().autoRun("s1", false);
+    expect(actions().lastRun).not.toBeNull();
+    net.calls = [];
+
+    await actions().swapCourts(dayKey(AT), "1", "2");
+
+    expect(patches()).toHaveLength(1);
+    expect(actions().lastRun).toBeNull();
+  });
+
+  /** Publish and start go through `act`. Starting a division WRITES — the
+   *  quick-start rolling-times pass runs inside `startDivision` — so the board
+   *  under the strip can change here too. */
+  it("act clears it", async () => {
+    const actions = drivePlaced();
+    await actions().autoRun("s1", false);
+    expect(actions().lastRun).not.toBeNull();
+    net.calls = [];
+
+    await actions().act("/api/v1/divisions/d1/start", "started");
+
+    expect(net.calls).toContain("/api/v1/divisions/d1/start");
     expect(actions().lastRun).toBeNull();
   });
 });
