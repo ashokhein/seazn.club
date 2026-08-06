@@ -372,9 +372,10 @@ export type BuildStatus =
   | "verifier_rejected"
   /** The WASM would not boot. A fallback, never an exception. */
   | "z3_unavailable"
-  /** Reserved for a caller that declines to queue behind `withZ3Lock` rather
-   *  than wait for it (Task 6). `buildSchedule` itself always waits, so it
-   *  never returns this. */
+  /** This build declined to QUEUE behind `withZ3Lock` rather than wait it out:
+   *  `MAX_SOLVER_QUEUE` builds were already in flight, so the greedy board came
+   *  back at once and the solver was never consulted. Ordinary rather than an
+   *  error — the board is valid, and a retry can do better. */
   | "solver_busy";
 
 export interface BuildInput {
