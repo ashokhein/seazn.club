@@ -195,6 +195,55 @@ describe("federation cascades on complete data are unaffected", () => {
   });
 });
 
+// A metric key that is not a `TiebreakerKey` cannot affect ORDER. That is the
+// guarantee display-only metrics rest on — the set-piece conversion counters
+// are emitted for every gated fixture and must never move a table.
+//
+// It is enforced at runtime, not merely by the type: `validateCascade`'s switch
+// has NO `default` branch, so an unregistered key passes validation untouched;
+// and `rankStandings` looks the key up in `COMPARATORS` behind
+// `if (cmp !== undefined)` with no `else` (tiebreakers.ts:534-535), so it is
+// SILENTLY SKIPPED at rank time. Both halves are asserted below, because either
+// one changing is a behaviour change worth noticing: an `else` that threw, or a
+// validation that started rejecting, would break every caller passing a cascade
+// this engine does not know — and would do it at rank time, in production.
+describe("an unregistered cascade key is silently skipped, never an ordering input", () => {
+  // Cast: the point of the test is the RUNTIME behaviour on a key the type
+  // system is supposed to exclude, so the cast is the fixture, not a shortcut.
+  const unknown = "sp_pc_scored" as Parameters<typeof rankStandings>[1]["cascade"][number];
+
+  it("validateCascade accepts it — the switch has no `default`, so it passes through", () => {
+    expect(() => validateCascade([unknown], { metrics: [] })).not.toThrow();
+  });
+
+  it("rankStandings ignores it rather than throwing, and the order is unmoved", () => {
+    // B leads on the unknown key, A leads on GD. If the unknown key were an
+    // ordering input at all, B would come first.
+    const rows = [
+      row("A", 4, { gd: 5, sp_pc_scored: 0 }),
+      row("B", 4, { gd: 1, sp_pc_scored: 99 }),
+    ];
+    const ranked = rankStandings(rows, { cascade: [unknown, "diff"], results: [] });
+    expect(ranked.rows.map((entry) => entry.entrantId)).toEqual(["A", "B"]);
+    // And the split is attributed to `diff`, not to the key that was skipped.
+    expect(ranked.rows[0]?.tieBreak?.key).toBe("diff");
+  });
+
+  it("a cascade of NOTHING BUT unregistered keys falls through to the seed", () => {
+    // The strongest form: the cascade contributes NOTHING, so the residual-tie
+    // seed fallback decides. If the skip ever became a throw this reds; if it
+    // ever became a real comparison, B would lead on `sp_pc_scored: 99` and the
+    // split would be attributed to that key instead of to `seed`.
+    const rows = [
+      row("A", 4, { sp_pc_scored: 0 }),
+      row("B", 4, { sp_pc_scored: 99 }),
+    ];
+    const ranked = rankStandings(rows, { cascade: [unknown], results: [] });
+    expect(ranked.rows.map((entry) => entry.entrantId)).toEqual(["A", "B"]);
+    expect(ranked.rows[0]?.tieBreak?.key).toBe("seed");
+  });
+});
+
 describe("validateCascade rejections (spec 05 §4.1)", () => {
   const cases: [string, Parameters<typeof validateCascade>[0]][] = [
     ["goal/run difference", ["diff"]],

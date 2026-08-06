@@ -116,6 +116,16 @@ export const hockey = makePeriodModule({
     { key: "cards_green", label: "Green cards", direction: "asc", display: false },
     { key: "cards_yellow", label: "Yellow cards", direction: "asc", display: false },
     { key: "cards_red", label: "Red cards", direction: "asc", display: false },
+    // Set-piece conversion, DISPLAY ONLY. Declared so `validateCascade` can see
+    // the ledgers a future ratio comparator would need; no federation ranks on
+    // conversion (FIH is points → GD → GF → H2H), so nothing consults them for
+    // ORDER today, and `display: false` keeps them out of the standings table.
+    { key: "sp_pc_awarded", label: "PC awarded", direction: "desc", display: false },
+    { key: "sp_pc_scored", label: "PC scored", direction: "desc", display: false },
+    { key: "sp_pc_resolved", label: "PC resolved", direction: "desc", display: false },
+    { key: "sp_stroke_awarded", label: "Strokes awarded", direction: "desc", display: false },
+    { key: "sp_stroke_scored", label: "Strokes scored", direction: "desc", display: false },
+    { key: "sp_stroke_resolved", label: "Strokes resolved", direction: "desc", display: false },
   ],
   // FIH standard: points → GD → GF → H2H (v6/00 §4).
   defaultTiebreakers: ["points", "diff", "for", "h2h_points", "seed"],

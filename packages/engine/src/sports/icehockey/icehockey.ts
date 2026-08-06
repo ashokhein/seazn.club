@@ -144,6 +144,13 @@ export const icehockey = makePeriodModule({
     { key: "pim", label: "PIM", direction: "asc", display: false },
     { key: "goals_pp", label: "PP goals", direction: "desc", display: false },
     { key: "goals_sh", label: "SH goals", direction: "desc", display: false },
+    // Penalty-shot conversion, DISPLAY ONLY. Declared so `validateCascade` can
+    // see the ledgers a future ratio comparator would need; IIHF ranks
+    // points → H2H → GD → GF, so nothing consults them for ORDER today, and
+    // `display: false` keeps them out of the standings table.
+    { key: "sp_ps_awarded", label: "PS awarded", direction: "desc", display: false },
+    { key: "sp_ps_scored", label: "PS scored", direction: "desc", display: false },
+    { key: "sp_ps_resolved", label: "PS resolved", direction: "desc", display: false },
   ],
   // Event Code §220 — H2H sub-group first, then overall (maps directly onto
   // the existing comparator registry, v6/00 §1).

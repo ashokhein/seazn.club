@@ -70,6 +70,37 @@ Prose in a comment enforced none of this, so the harness now does.
    reviewer actually checks: a fold change to the shoot-out should not move
    `cards`.
 
+   **Two things can silently deprive you of that review, and both hand you a
+   reassuring number rather than an error.**
+
+   *`unslimCorpus` must never be used to compare two versions of the engine.*
+   It rebuilds the digested states by re-folding the stored ledger with whatever
+   code is loaded **now**, so in
+
+       corpusStateDiff(unslimCorpus(before), unslimCorpus(after))
+
+   *both* sides are the current behaviour and the diff compares a thing with
+   itself. It reported `changedStates: 0` for the set-piece `resolved` change,
+   whose real footprint was **39 full states and 51 digests across 7 streams**.
+   That is the exact compare-a-thing-with-itself failure the slimming work
+   existed to eliminate, reintroduced by the recovery function added to recover
+   from it — and it cannot be guarded, because a wrong `0` is indistinguishable
+   from a right one. The correct comparison is against the **recorded bytes**:
+   loop `verifyStream` over `readCorpus(key).streams`. `corpusStateDiff` is
+   honest only when its `after` is a real `rebaselineCorpus` output and its
+   `before` is the committed corpus as read from disk.
+
+   *The printout can be swallowed by the tool wrapper.* Under `rtk` a
+   `REBASELINE_GOLDEN=1` run reports `11 passed` and nothing else — the
+   `corpusStateDiff` printout, which **is** the artefact this clause requires,
+   never reaches the terminal. A re-baseline that looks clean may simply be
+   unreviewed. Reconstruct it from the bytes instead: diff each written corpus
+   against `git show HEAD:<path>` and confirm, per stream, that `events`,
+   `lineups` and `configs` are byte-identical and which of `states` / `summary`
+   / `outcome` / `deltas` moved. The bytes are the better source regardless —
+   the harness summary says what the harness believes, the bytes say what
+   shipped.
+
 3. **The ledger is preserved.** The run asserts that every recorded `events`
    array is unchanged, and `corpusStateDiff.eventsMoved` says so independently.
    A re-baseline that moves an event is a re-record wearing a re-baseline's

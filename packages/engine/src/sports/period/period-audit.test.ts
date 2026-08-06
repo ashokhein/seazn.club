@@ -587,6 +587,131 @@ describe("W4 audit — event union stays disambiguated", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Set-piece conversion in the standings ledger — DISPLAY ONLY.
+//
+// Three INTEGER counters per kind, never a rate: `compareRatio` already
+// cross-multiplies two ledger counters and owns the 0/0 no-data branch, so a
+// float here would fix the precision and the rounding for every consumer and
+// throw away the "no attempts" case that #429 taught `metricOf` to keep.
+//
+// Gated on `state.setPieces !== undefined`, which is what keeps the cost to the
+// fixtures that actually recorded a set piece. `metricOf` is partial since
+// #429, so a fixture that emits nothing ranks BELOW one that did rather than
+// scoring a genuine zero — which is why the gate is safe.
+// ---------------------------------------------------------------------------
+
+describe("set-piece conversion counters in standingsDelta", () => {
+  const fihAdvance = (to: string): ModuleEvent => ({
+    type: "hockey.period.advance",
+    payload: { to },
+  });
+  const iceAdvanceAudit = (to: string): ModuleEvent => ({
+    type: "icehockey.period.advance",
+    payload: { to },
+  });
+  const fihDeltas = (state: PeriodState) =>
+    hockey.standingsDelta(state.outcome!, state.cfg, { kind: "league" }, state);
+  const iceDeltas = (state: PeriodState) =>
+    icehockey.standingsDelta(state.outcome!, state.cfg, { kind: "league" }, state);
+  const fihFullTime = (events: ModuleEvent[]): PeriodState =>
+    foldFih([start, ...events, fihAdvance("Q2"), fihAdvance("Q3"), fihAdvance("Q4"), fihAdvance("FT")]);
+
+  it("emits awarded / scored / resolved per kind, per side", () => {
+    const state = fihFullTime([
+      fihGoal(FH),
+      { type: "hockey.set_piece", payload: { by: FH, kind: "pc", outcome: "scored" } },
+      { type: "hockey.set_piece", payload: { by: FH, kind: "pc", outcome: "saved" } },
+      { type: "hockey.set_piece", payload: { by: FH, kind: "pc" } }, // unresolved
+      { type: "hockey.set_piece", payload: { by: FA, kind: "stroke", outcome: "missed" } },
+    ]);
+    const [home, away] = fihDeltas(state);
+    // Home: 3 corners, 2 resolved, 1 scored ⇒ conversion 1/2, one unknown.
+    expect(home.metrics.sp_pc_awarded).toBe(3);
+    expect(home.metrics.sp_pc_scored).toBe(1);
+    expect(home.metrics.sp_pc_resolved).toBe(2);
+    // A declared kind this side never took is a real recorded zero, not absent —
+    // the fixture DID record set pieces, so "no strokes" is data.
+    expect(home.metrics.sp_stroke_awarded).toBe(0);
+    expect(away.metrics.sp_stroke_awarded).toBe(1);
+    expect(away.metrics.sp_stroke_scored).toBe(0);
+    expect(away.metrics.sp_stroke_resolved).toBe(1);
+  });
+
+  it("emits NOTHING for a fixture that recorded no set piece — the gate", () => {
+    // This is the whole cost control: without it every fixture in every period
+    // corpus gains six keys. `metricOf` ranks an absent key below a recorded
+    // one, so the omission is honest rather than a hidden zero.
+    const state = fihFullTime([fihGoal(FH)]);
+    const [home] = fihDeltas(state);
+    const keys = Object.keys(home.metrics).filter((k) => k.startsWith("sp_"));
+    expect(keys).toEqual([]);
+  });
+
+  it("counts integers only — no rate, no float, anywhere in the delta", () => {
+    const state = fihFullTime([
+      fihGoal(FH),
+      { type: "hockey.set_piece", payload: { by: FH, kind: "pc", outcome: "scored" } },
+      { type: "hockey.set_piece", payload: { by: FH, kind: "pc", outcome: "saved" } },
+      { type: "hockey.set_piece", payload: { by: FH, kind: "pc", outcome: "saved" } },
+    ]);
+    const [home] = fihDeltas(state);
+    // 1/3 is the classic non-terminating case: if anyone ever divides here, it
+    // shows up as a non-integer rather than as a rounded-looking number.
+    for (const [key, value] of Object.entries(home.metrics)) {
+      expect(Number.isInteger(value), `${key} = ${value}`).toBe(true);
+    }
+  });
+
+  it("ice hockey emits the penalty-shot counters on its own kind", () => {
+    const state = foldIce([
+      start,
+      iceGoal(IH),
+      { type: "icehockey.set_piece", payload: { by: IH, kind: "ps", outcome: "scored" } },
+      { type: "icehockey.set_piece", payload: { by: IH, kind: "ps" } },
+      iceAdvanceAudit("P2"),
+      iceAdvanceAudit("P3"),
+      iceAdvanceAudit("FT"),
+    ]);
+    const [home] = iceDeltas(state);
+    expect([home.metrics.sp_ps_awarded, home.metrics.sp_ps_scored, home.metrics.sp_ps_resolved]).toEqual([2, 1, 1]);
+    // ...and never field hockey's kinds.
+    expect(Object.keys(home.metrics).filter((k) => k.startsWith("sp_")).sort()).toEqual([
+      "sp_ps_awarded",
+      "sp_ps_resolved",
+      "sp_ps_scored",
+    ]);
+  });
+
+  it("a forfeit zeroes the SCORE but not the set pieces actually awarded", () => {
+    // `zeroGoals` exists so an awarded forfeit reports cfg.awardScore rather
+    // than the goals played. Set pieces follow `pim` and `cards_*`, which are
+    // records of what happened and are NOT zeroed. Corpus stream 10 of
+    // icehockey is exactly this shape, so the choice is observable there.
+    const state = foldIce([
+      start,
+      { type: "icehockey.set_piece", payload: { by: IH, kind: "ps", outcome: "scored" } },
+      { type: "core.forfeit", payload: { by: IA, reason: "no-show" } },
+    ]);
+    const [home] = iceDeltas(state);
+    expect(home.metrics.gf).toBe(5); // cfg.awardScore, not the played goals
+    expect(home.metrics.sp_ps_awarded).toBe(1);
+    expect(home.metrics.sp_ps_scored).toBe(1);
+  });
+
+  it("the counters are declared on the module so validateCascade can see them", () => {
+    const keys = (m: typeof hockey) => m.metrics.map((spec) => spec.key);
+    expect(keys(hockey)).toEqual(expect.arrayContaining(["sp_pc_awarded", "sp_pc_scored", "sp_pc_resolved"]));
+    expect(keys(icehockey)).toEqual(expect.arrayContaining(["sp_ps_awarded", "sp_ps_scored", "sp_ps_resolved"]));
+    // Display-only: they must never render as a standings column.
+    for (const module of [hockey, icehockey]) {
+      for (const spec of module.metrics) {
+        if (spec.key.startsWith("sp_")) expect(spec.display, spec.key).toBe(false);
+      }
+    }
+  });
+});
+
 describe("W4 audit — module identity is unchanged", () => {
   it("both modules stay at 1.0.0 and keep every declared variant", () => {
     expect(hockey.version).toBe("1.0.0");
