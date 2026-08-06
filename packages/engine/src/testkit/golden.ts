@@ -20,6 +20,7 @@
 // src/sport/** or src/sports/** may import it — @seazn/engine ships with zero
 // runtime dependencies.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1026,21 +1027,85 @@ export function extendCorpus(module: AnySportModule, existing: GoldenCorpus): Co
   return { corpus, gained, stillMissing: [...wanted], appended };
 }
 
+/** Re-folds one stream's ledger and puts the RECORDED config back into every
+ *  state. The shared half of `rebaselineCorpus` and `unslimCorpus`.
+ *
+ *  #429 scope item 3: the recorded config is stored only at the anchors now, so
+ *  a step whose own state was digested takes it from the stream's first STORED
+ *  state. That is exact, not an approximation — no fold rewrites the config, so
+ *  every state in a stream carries the same one, which is the fact
+ *  `recordedCfgOf` has always relied on. */
+function refoldStream(
+  module: AnySportModule,
+  corpus: GoldenCorpus,
+  stream: GoldenStream,
+): {
+  fresh: ReplayedStream;
+  states: string[];
+  configKey: string | null;
+  collapse: ReadonlySet<string>;
+} {
+  const raw = corpus.configs[stream.config];
+  const fresh = recomputeStream(module, raw, stream.events, stream.lineups);
+  const { configKey, collapse } = streamLens(module, corpus, stream);
+  const carrier = stream.states.find((state) => !isStateDigest(state));
+  const states = fresh.states.map((state, i) => {
+    const own = stream.states[i];
+    const recorded = own !== undefined && !isStateDigest(own) ? own : carrier;
+    return recorded === undefined ? state : keepRecordedConfig(state, recorded, configKey);
+  });
+  return { fresh, states, configKey, collapse };
+}
+
 export function rebaselineCorpus(module: AnySportModule, existing: GoldenCorpus): GoldenCorpus {
   return {
     ...existing,
     streams: existing.streams.map((stream) => {
-      const raw = existing.configs[stream.config];
-      const fresh = recomputeStream(module, raw, stream.events, stream.lineups);
-      const configKey = configStateKey(module, raw, stream.lineups);
+      const { fresh, states, configKey, collapse } = refoldStream(module, existing, stream);
       return {
         ...stream,
         ...fresh,
-        states: fresh.states.map((state, i) =>
-          keepRecordedConfig(state, stream.states[i] as string, configKey),
+        states: slimStates(
+          states,
+          new Set(anchorSteps(states, { collapse, configKey })),
+          configKey,
         ),
       };
     }),
+  };
+}
+
+/** Every digested step restored to its full state, by re-folding the ledger the
+ *  corpus still stores. `outcome`, `summary` and `deltas` are left exactly as
+ *  recorded — this restores STATES and nothing else.
+ *
+ *  This is the recomputability claim the whole of scope item 3 rests on, written
+ *  as code rather than as a sentence in a failure message, and it is what keeps
+ *  the equivalence proof honest. Once the committed corpora are slim there is no
+ *  full corpus left on disk to compare a slim one against, so
+ *  `golden-mutations.test.ts` would otherwise degrade into comparing a corpus
+ *  with itself — the two "forms" identical, every entry still redding, and the
+ *  proof asserting nothing. It derives the full form here instead.
+ *
+ *  Round-tripping it is also a gate in its own right: `slimCorpus(unslimCorpus(
+ *  committed))` must reproduce the committed corpus exactly, which is how a
+ *  hand-edited digest or a hand-edited anchor is caught.
+ *
+ *  A stream that stores no digest is ALREADY full, so it is returned untouched
+ *  rather than re-folded. That is not a shortcut that weakens anything — the
+ *  re-fold is provably an identity there (`rebaselineCorpus` reports
+ *  `changedStates=0` on a corpus that replays, and `keepRecordedConfig` puts the
+ *  recorded config back regardless) — it is what keeps this callable from a test
+ *  that runs over all eleven modules without paying a full re-fold per module
+ *  for nothing. Cricket alone folds ~700 steps. */
+export function unslimCorpus(module: AnySportModule, corpus: GoldenCorpus): GoldenCorpus {
+  return {
+    ...corpus,
+    streams: corpus.streams.map((stream) =>
+      stream.states.some(isStateDigest)
+        ? { ...stream, states: refoldStream(module, corpus, stream).states }
+        : stream,
+    ),
   };
 }
 
@@ -1174,10 +1239,21 @@ export function corpusWritablePaths(repoRoot: string): string[] {
     .map((path) => path.split(sep).join("/"));
 }
 
+/** git's stderr is DISCARDED, not inherited: "not a git repository" is a normal
+ *  answer here, not a fault, and the tests that prove the guard fails closed
+ *  probe a non-checkout deliberately. Inheriting it printed three fatals into
+ *  every green run, which is how a real one stops being read. The `catch` owns
+ *  the outcome either way. */
+const GIT_STDIO = ["ignore", "pipe", "ignore"] as const;
+
 /** `git status --porcelain` for `cwd`, or `null` when it is not a checkout. */
 export function gitPorcelain(cwd: string): string[] | null {
   try {
-    return execFileSync("git", ["status", "--porcelain"], { cwd, encoding: "utf8" })
+    return execFileSync("git", ["status", "--porcelain"], {
+      cwd,
+      encoding: "utf8",
+      stdio: [...GIT_STDIO],
+    })
       .split("\n")
       .filter((line) => line.trim() !== "");
   } catch {
@@ -1188,7 +1264,11 @@ export function gitPorcelain(cwd: string): string[] | null {
 /** The repository root containing this file, or `null` when there is none. */
 export function gitRepoRoot(cwd: string): string | null {
   try {
-    return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      encoding: "utf8",
+      stdio: [...GIT_STDIO],
+    }).trim();
   } catch {
     return null;
   }
@@ -1216,6 +1296,12 @@ export interface StreamStateDiff {
   seed: number;
   /** Indices into `stream.states` whose recorded JSON moved. */
   changedSteps: number[];
+  /** The subset of `changedSteps` the corpus stores only as a digest, on one or
+   *  both sides. No key can be named for these — see the note on the summary. */
+  digestOnlySteps: number[];
+  /** Steps whose stored FORM changed (a full state replaced by its own digest,
+   *  or the reverse) while the state itself did not. Not a move. */
+  reformattedSteps: number[];
   /** Distinct TOP-LEVEL state keys that moved, across this stream's steps. */
   changedStateKeys: string[];
   outcomeMoved: boolean;
@@ -1231,6 +1317,12 @@ export interface CorpusStateDiff {
   streams: StreamStateDiff[];
   changedStreams: number;
   changedStates: number;
+  /** Moved states the corpus stores only as a digest — reported, but with no
+   *  key attribution possible. */
+  digestOnlyStates: number;
+  /** States rewritten from a full state to its own digest (or back) without
+   *  moving. The run that slims the corpora is ~2,450 of these and 0 moves. */
+  reformattedStates: number;
   /** Distinct top-level state keys that moved anywhere in the corpus. */
   changedStateKeys: string[];
   /** True if any recorded event moved, or the stream count did. Always a bug. */
@@ -1253,34 +1345,82 @@ function changedTopLevelKeys(before: string, after: string): string[] {
   return [...keys].filter((key) => left.get(key) !== right.get(key)).sort();
 }
 
-/** What a re-baseline moved, per module and per stream. */
-export function corpusStateDiff(before: GoldenCorpus, after: GoldenCorpus): CorpusStateDiff {
+/** What a re-baseline moved, per module and per stream.
+ *
+ *  `module` is optional and only ever used to resolve where a module files its
+ *  config, so that a step rewritten from a full state to its own DIGEST can be
+ *  recognised as a re-format rather than reported as a move. Without it such a
+ *  step is reported as moved — fail loud, because the alternative is a summary
+ *  that quietly under-reports. Supply it whenever you have it; the re-baseline
+ *  run does. */
+export function corpusStateDiff(
+  before: GoldenCorpus,
+  after: GoldenCorpus,
+  module?: AnySportModule,
+): CorpusStateDiff {
   const streams: StreamStateDiff[] = [];
   let eventsMoved = after.streams.length !== before.streams.length;
   const allKeys = new Set<string>();
   let changedStates = 0;
+  let digestOnlyStates = 0;
+  let reformattedStates = 0;
 
   const shared = Math.min(before.streams.length, after.streams.length);
   for (let i = 0; i < shared; i++) {
     const was = before.streams[i] as GoldenStream;
     const now = after.streams[i] as GoldenStream;
     const changedSteps: number[] = [];
+    const digestOnlySteps: number[] = [];
+    const reformattedSteps: number[] = [];
     const keys = new Set<string>();
+    // `undefined` means "no module was supplied, so the config cannot be
+    // located"; `null` means "this module embeds no config in its state".
+    const configKey =
+      module === undefined ? undefined : configStateKey(module, after.configs[now.config], now.lineups);
     const steps = Math.max(was.states.length, now.states.length);
     for (let step = 0; step < steps; step++) {
       const oldState = was.states[step];
       const newState = now.states[step];
       if (oldState === newState) continue;
+      const oldIsDigest = oldState !== undefined && isStateDigest(oldState);
+      const newIsDigest = newState !== undefined && isStateDigest(newState);
+
+      // One side kept the state, the other kept only its digest. That is the
+      // slimming pass itself, and reporting ~2,450 of them as moves would make
+      // the one printout whose whole point is MINIMALITY unreadable at the exact
+      // moment it matters most. Compare like with like when the config can be
+      // located, and fall through to reporting it when it cannot.
+      if (oldIsDigest !== newIsDigest && oldState !== undefined && newState !== undefined) {
+        if (configKey !== undefined) {
+          const a = oldIsDigest ? oldState : stateDigest(oldState, configKey);
+          const b = newIsDigest ? newState : stateDigest(newState, configKey);
+          if (a === b) {
+            reformattedSteps.push(step);
+            continue;
+          }
+        }
+        changedSteps.push(step);
+        digestOnlySteps.push(step);
+        continue;
+      }
+      if (oldIsDigest || newIsDigest) {
+        changedSteps.push(step);
+        digestOnlySteps.push(step);
+        continue;
+      }
       changedSteps.push(step);
       for (const key of changedTopLevelKeys(oldState ?? "", newState ?? "")) keys.add(key);
     }
     const streamEventsMoved = JSON.stringify(was.events) !== JSON.stringify(now.events);
     if (streamEventsMoved) eventsMoved = true;
+    reformattedStates += reformattedSteps.length;
     const diff: StreamStateDiff = {
       index: i,
       config: now.config,
       seed: now.seed,
       changedSteps,
+      digestOnlySteps,
+      reformattedSteps,
       changedStateKeys: [...keys].sort(),
       outcomeMoved: was.outcome !== now.outcome,
       summaryMoved: was.summary !== now.summary,
@@ -1296,6 +1436,7 @@ export function corpusStateDiff(before: GoldenCorpus, after: GoldenCorpus): Corp
     ) {
       streams.push(diff);
       changedStates += changedSteps.length;
+      digestOnlyStates += digestOnlySteps.length;
       for (const key of keys) allKeys.add(key);
     }
   }
@@ -1305,6 +1446,8 @@ export function corpusStateDiff(before: GoldenCorpus, after: GoldenCorpus): Corp
     streams,
     changedStreams: streams.length,
     changedStates,
+    digestOnlyStates,
+    reformattedStates,
     changedStateKeys: [...allKeys].sort(),
     eventsMoved,
   };
@@ -1313,12 +1456,16 @@ export function corpusStateDiff(before: GoldenCorpus, after: GoldenCorpus): Corp
 /** The summary a reviewer reads. One line per moved stream; the distinct set of
  *  moved state keys last, because that is the minimality claim. */
 export function formatCorpusStateDiff(diff: CorpusStateDiff): string {
+  const reformatted =
+    diff.reformattedStates > 0
+      ? ` (${diff.reformattedStates} state(s) re-formatted to digests, unmoved)`
+      : "";
   if (diff.streams.length === 0 && !diff.eventsMoved) {
-    return `[rebaseline] ${diff.key}: nothing moved`;
+    return `[rebaseline] ${diff.key}: nothing moved${reformatted}`;
   }
   const lines = [
     `[rebaseline] ${diff.key}: ${diff.changedStreams} stream(s), ` +
-      `${diff.changedStates} state(s) moved`,
+      `${diff.changedStates} state(s) moved${reformatted}`,
   ];
   for (const stream of diff.streams) {
     const moved = [
@@ -1331,10 +1478,23 @@ export function formatCorpusStateDiff(diff: CorpusStateDiff): string {
       `  #${stream.index} config=${stream.config} seed=${stream.seed} ` +
         `steps=[${stream.changedSteps.join(",")}] ` +
         `keys=[${stream.changedStateKeys.join(",")}]` +
+        (stream.digestOnlySteps.length > 0
+          ? ` digests=[${stream.digestOnlySteps.join(",")}]`
+          : "") +
         (moved.length > 0 ? ` moved=${moved.join("+")}` : ""),
     );
   }
   lines.push(`  state keys moved: ${diff.changedStateKeys.join(", ") || "(none)"}`);
+  // The honest residual of #429 scope item 3, printed where the reviewer is
+  // rather than left in a policy document they may not open.
+  if (diff.digestOnlyStates > 0) {
+    lines.push(
+      `  ${diff.digestOnlyStates} of those state(s) are stored as digests only, so no key ` +
+        `can be named for them. Recompute the full state from the recorded ledger: ` +
+        `recomputeStream(module, corpus.configs[stream.config], stream.events, ` +
+        `stream.lineups).states[N]`,
+    );
+  }
   if (diff.eventsMoved) {
     lines.push(`  !! RECORDED EVENTS MOVED — this is not a re-baseline, it is a re-record`);
   }
@@ -1627,6 +1787,364 @@ export function stateMismatch(
     return `state is not JSON: recorded ${expected}, replayed ${actual}`;
   }
   return subsetMismatch(actualConfigValue, expectedConfigValue, configKey);
+}
+
+// ------------------------------------- per-step digests (#429 scope item 3)
+//
+// WHY. The eleven corpora recorded a full `JSON.stringify(state)` after every
+// event — 4,507,821 bytes across eleven single-line files, of which the states
+// were roughly 90%. Cricket alone was 1.8 MB. That weight buys one thing the
+// harness genuinely needs (a per-step tripwire) and one thing it does not (the
+// bytes of every intermediate state, all but a handful of which no human will
+// ever read).
+//
+// WHAT THIS COSTS, stated first because it is the part that is easy to lose.
+// Scope item 1 made "reviewed as a state diff" the core of the re-baseline
+// policy, and a digest tells a reviewer THAT a step moved and never WHAT moved:
+// only the digest was stored, so the previous state is a hash in git too and
+// `corpusStateDiff` cannot name a key for it. That is a real degradation and it
+// is why the anchors below are chosen by a rule rather than by a stride someone
+// liked. It is bounded by one fact: the corpus still stores the `config`, the
+// `lineups` and every `event`, so the full state at ANY step is recomputable
+// locally — `recomputeStream(module, corpus.configs[stream.config],
+// stream.events, stream.lineups).states[N]`. A digest mismatch says so.
+//
+// WHAT THIS DOES NOT COST. The digest is taken over `comparableStateText` —
+// the exact text the byte-exact half of `stateMismatch` compares, with the
+// module's config replaced by its placeholder. So it reds on precisely what
+// that comparison redded on and tolerates precisely what it tolerated. In
+// particular it is ORDER-SENSITIVE (it hashes the recorded source text, member
+// by member, in the recorded order) and it keeps the config-subset tolerance,
+// which is permanent: hashing the raw state instead would red all eleven
+// corpora the next time a knob gains a `.default()`.
+
+/** Marks a `states[i]` entry as a digest rather than a recorded state.
+ *
+ *  `#` is chosen because it is NOT valid JSON. Every existing reader that walks
+ *  the recorded states for a shape already parses inside a `try/catch
+ *  { continue }` — `recordedStatePaths` here, `stateShapeOf` in
+ *  schema-snapshot.ts, `recordedCfgOf` below — so each of them skips a
+ *  digest-only step without being taught about digests at all. Skipping is the
+ *  CORRECT behaviour for them, and not by luck: `anchorSteps` keeps every step
+ *  at which the state shape grows, so a skipped step contributes no path and no
+ *  kind that an anchor did not already contribute. `golden-slim.test.ts` proves
+ *  that for all eleven modules rather than asserting it. */
+export const STATE_DIGEST_PREFIX = "#";
+
+/** Hex characters of SHA-256 kept. 64 bits: the corpora hold ~3,600 states, so
+ *  the chance of a mutated fold colliding with its recorded digest is ~5e-20
+ *  per step, against ~20 bytes per step of file weight. */
+export const STATE_DIGEST_HEX = 16;
+
+/** Whether a `states[i]` entry is a digest rather than a recorded state. */
+export function isStateDigest(entry: string): boolean {
+  return entry.startsWith(STATE_DIGEST_PREFIX);
+}
+
+/** The text `stateMismatch` compares byte for byte — the recorded state's own
+ *  source bytes, in the recorded member order, with the module's config swapped
+ *  for `CONFIG_PLACEHOLDER` so the subset tolerance still applies and the
+ *  config's POSITION in key order still compares. */
+export function comparableStateText(state: string, configKey: string | null): string {
+  if (configKey === null) return state;
+  const members = jsonObjectMembers(state);
+  if (members === null) return state;
+  return withoutConfig(members, configKey);
+}
+
+/** The digest a slim corpus stores in place of a recorded state. */
+export function stateDigest(state: string, configKey: string | null): string {
+  const hex = createHash("sha256")
+    .update(comparableStateText(state, configKey), "utf8")
+    .digest("hex")
+    .slice(0, STATE_DIGEST_HEX);
+  return `${STATE_DIGEST_PREFIX}${hex}`;
+}
+
+// -------------------------------------------------------------- the anchors
+//
+// "Keep a handful of full states" is only as good as WHICH handful, so the rule
+// is three clauses and each earns its place:
+//
+//   FIRST and LAST, always. The first state carries the config the corpus was
+//     frozen against (`recordedCfgOf` reads it, and the subset pin lives there
+//     — no fold rewrites the config, so pinning it once per stream pins it for
+//     every step). The last is the state `outcome`, `summary` and `deltas` are
+//     derived from, and those are never digested.
+//   EVERY STRIDE-th STEP, for review. This is the localisation budget: a
+//     reviewer looking at a moved digest is at most ANCHOR_STRIDE steps from a
+//     stored full state, in both directions, and the harness names the nearest.
+//   EVERY STEP AT WHICH THE STATE SHAPE GROWS. This is the clause that makes
+//     the anchor set deliberate rather than a sample. Both gates that walk the
+//     recorded states — `recordedStatePaths` and, more sharply,
+//     `stateShapeOf`, whose output is committed as `<key>.schema.json` under a
+//     byte-equality CI gate — union a path/kind set over the states. Keeping
+//     exactly the steps that ADD to that set preserves both outputs by
+//     construction, so slimming cannot narrow a different tripwire or drop
+//     eleven schema snapshots on the floor. It is also the clause a reviewer
+//     wants: those are the steps where something structurally new happened.
+
+/** Steps between forced interior anchors. */
+export const ANCHOR_STRIDE = 10;
+
+const MAX_SHAPE_DEPTH = 12; // no engine state nests anywhere near this deep
+
+type StateKind = "array" | "boolean" | "null" | "number" | "object" | "string";
+
+function stateKindOf(value: unknown): StateKind {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  const t = typeof value;
+  if (t === "string" || t === "number" || t === "boolean") return t;
+  return "object";
+}
+
+function walkShape(
+  value: unknown,
+  prefix: string,
+  out: Set<string>,
+  collapse: ReadonlySet<string>,
+  depth: number,
+): void {
+  if (depth > MAX_SHAPE_DEPTH) return;
+  if (Array.isArray(value)) {
+    const path = `${prefix}[]`;
+    for (const item of value) {
+      out.add(`${path} ${stateKindOf(item)}`);
+      walkShape(item, path, out, collapse, depth + 1);
+    }
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const [key, member] of Object.entries(value as Record<string, unknown>)) {
+    if (member === undefined) continue; // a JSON round-trip drops the key
+    const path = collapse.has(key) ? `${prefix}[]` : prefix === "" ? key : `${prefix}.${key}`;
+    out.add(`${path} ${stateKindOf(member)}`);
+    walkShape(member, path, out, collapse, depth + 1);
+  }
+}
+
+/** `path kind` tokens for one state — the same grammar `statePathKinds` in
+ *  schema-snapshot.ts walks, flattened into a set.
+ *
+ *  DUPLICATED DELIBERATELY. schema-snapshot.ts imports `readCorpus`,
+ *  `goldenPath` and `configStateKey` from this file, so importing its walker
+ *  back would make the two modules a cycle for the sake of two dozen lines.
+ *  `golden-slim.test.ts` asserts the two walkers agree token for token on a
+ *  real folded state, which is what actually holds them together: if either
+ *  grammar drifts, the anchor rule stops preserving the committed snapshots and
+ *  that test reds before the CI drift gate does. */
+export function stateShapeTokens(
+  state: unknown,
+  collapse: ReadonlySet<string>,
+  omit: ReadonlySet<string>,
+): Set<string> {
+  const out = new Set<string>();
+  const root =
+    typeof state !== "object" || state === null || Array.isArray(state)
+      ? state
+      : Object.fromEntries(
+          Object.entries(state as Record<string, unknown>).filter(([key]) => !omit.has(key)),
+        );
+  walkShape(root, "", out, collapse, 0);
+  return out;
+}
+
+export interface AnchorOptions {
+  /** Object keys rendered as `[]` — `collapseKeysFor(lineups)`. Without it a
+   *  new person id reads as a new state path and every step that introduces one
+   *  becomes an anchor, which for cricket is most of them. */
+  collapse?: ReadonlySet<string>;
+  /** Where the module files its config, from `configStateKey`. Dropped from the
+   *  shape walk: the config is constant across a stream and step 0 pins it. */
+  configKey?: string | null;
+  stride?: number;
+}
+
+/** Which steps of a stream keep their full recorded state. Sorted, unique. */
+export function anchorSteps(states: readonly string[], options: AnchorOptions = {}): number[] {
+  if (states.length === 0) return [];
+  const collapse = options.collapse ?? new Set<string>();
+  const configKey = options.configKey ?? null;
+  const omit = configKey === null ? new Set<string>() : new Set([configKey]);
+  const stride = options.stride ?? ANCHOR_STRIDE;
+
+  const keep = new Set<number>([0, states.length - 1]);
+  for (let i = 0; i < states.length; i += stride) keep.add(i);
+
+  const seen = new Set<string>();
+  for (let i = 0; i < states.length; i++) {
+    const text = states[i] as string;
+    if (isStateDigest(text)) continue; // already slim: it can contribute no shape
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      keep.add(i); // unparseable: keep it, so nothing is silently thrown away
+      continue;
+    }
+    let grew = false;
+    for (const token of stateShapeTokens(parsed, collapse, omit)) {
+      if (seen.has(token)) continue;
+      seen.add(token);
+      grew = true;
+    }
+    if (grew) keep.add(i);
+  }
+  return [...keep].sort((a, b) => a - b);
+}
+
+// ------------------------------------------------------------------ slimming
+
+/** Whether a stream is already stored in slim form. */
+export function isSlimStream(stream: GoldenStream): boolean {
+  return stream.states.some(isStateDigest);
+}
+
+/** `states` with every step outside `keep` replaced by its digest. */
+export function slimStates(
+  states: readonly string[],
+  keep: ReadonlySet<number>,
+  configKey: string | null,
+): string[] {
+  return states.map((state, i) =>
+    keep.has(i) || isStateDigest(state) ? state : stateDigest(state, configKey),
+  );
+}
+
+/** The lens a stream's states are walked and compared under. */
+function streamLens(
+  module: AnySportModule,
+  corpus: GoldenCorpus,
+  stream: GoldenStream,
+): { configKey: string | null; collapse: ReadonlySet<string> } {
+  const raw = corpus.configs[stream.config];
+  const configKey = configStateKey(module, raw, stream.lineups);
+  let collapse: ReadonlySet<string> = new Set<string>();
+  try {
+    const cfg = module.configSchema.parse(raw);
+    collapse = collapseKeysFor(lineupsFor(module, cfg, stream.lineups));
+  } catch {
+    // A stream whose config no longer parses is the replay test's problem, not
+    // the anchor rule's; an empty collapse set only ever keeps MORE anchors.
+  }
+  return { configKey, collapse };
+}
+
+/** One stream in slim form. A stream that is already slim is returned as it
+ *  stands — re-slimming would hash a hash, and the anchor rule cannot see the
+ *  shape of a state that is no longer stored. */
+export function slimStream(
+  module: AnySportModule,
+  corpus: GoldenCorpus,
+  stream: GoldenStream,
+): GoldenStream {
+  if (isSlimStream(stream)) return stream;
+  const { configKey, collapse } = streamLens(module, corpus, stream);
+  const keep = new Set(anchorSteps(stream.states, { collapse, configKey }));
+  return { ...stream, states: slimStates(stream.states, keep, configKey) };
+}
+
+/** A corpus with every stream slimmed. `events`, `configs`, `outcome`,
+ *  `summary` and `deltas` are untouched — the last three are what standings
+ *  depend on, they are small, and they are never digested. Idempotent. */
+export function slimCorpus(module: AnySportModule, corpus: GoldenCorpus): GoldenCorpus {
+  return { ...corpus, streams: corpus.streams.map((s) => slimStream(module, corpus, s)) };
+}
+
+// -------------------------------------------------------------- the replay
+//
+// One gate, called by the replay test AND by the mutation list, so a mutation
+// is proven against the code that actually guards the corpus rather than
+// against a re-implementation of it that could drift green.
+
+/** The half of a `GoldenStream` a replay reproduces. */
+export type ReplayedStream = Pick<GoldenStream, "states" | "outcome" | "summary" | "deltas">;
+
+/** The nearest step at or around `step` whose full state the corpus stores. */
+function nearestFullStep(stream: GoldenStream, step: number): number | null {
+  for (let d = 1; d < stream.states.length; d++) {
+    for (const i of [step - d, step + d]) {
+      const entry = stream.states[i];
+      if (entry !== undefined && !isStateDigest(entry)) return i;
+    }
+  }
+  return null;
+}
+
+/** Why a replayed state differs from what the corpus recorded for that step, or
+ *  null. An anchored step is compared byte for byte (config aside) exactly as
+ *  before; a digest-only step is compared by digest, and the message then has
+ *  to carry what the corpus no longer can — WHERE to get the detail. */
+export function stepMismatch(
+  stream: GoldenStream,
+  step: number,
+  actual: string,
+  configKey: string | null,
+): string | null {
+  const recorded = stream.states[step];
+  if (recorded === undefined) return `the corpus records no state for step ${step}`;
+  if (!isStateDigest(recorded)) return stateMismatch(actual, recorded, configKey);
+
+  const replayed = stateDigest(actual, configKey);
+  if (replayed === recorded) return null;
+  const nearest = nearestFullStep(stream, step);
+  return (
+    `digest moved: recorded ${recorded}, replayed ${replayed}. This step is stored as a ` +
+    `digest (#429 scope item 3), so the corpus cannot say which key moved — only the digest ` +
+    `was kept, so the previous state is a hash in git too. The full state IS recomputable ` +
+    `locally, because the ledger it folds from is still recorded: ` +
+    `recomputeStream(module, corpus.configs[${JSON.stringify(stream.config)}], stream.events, ` +
+    `stream.lineups).states[${step}]` +
+    (nearest === null ? "." : `. The nearest stored full state is step ${nearest}.`)
+  );
+}
+
+/** Everything the replay of one committed stream disagrees with the corpus
+ *  about, as messages. Empty means the stream replays.
+ *
+ *  `replayed` is injectable so a mutation can be applied to the RESULT of a
+ *  real fold — deterministic, cheap and CI-safe — instead of to a module's
+ *  source. See `golden-mutations.ts`. */
+export function verifyStream(
+  module: AnySportModule,
+  corpus: GoldenCorpus,
+  stream: GoldenStream,
+  replayed?: ReplayedStream,
+): string[] {
+  const raw = corpus.configs[stream.config];
+  const label = `${module.key} config=${stream.config} seed=${stream.seed}`;
+  const result = replayed ?? recomputeStream(module, raw, stream.events, stream.lineups);
+  const configKey = configStateKey(module, raw, stream.lineups);
+  const out: string[] = [];
+
+  if (result.states.length !== stream.states.length) {
+    out.push(
+      `${label}: the corpus records ${stream.states.length} states, the replay produced ` +
+        `${result.states.length}`,
+    );
+  }
+  for (let i = 0; i < stream.states.length; i++) {
+    const actual = result.states[i];
+    if (actual === undefined) continue; // the length mismatch above owns this
+    const hit = stepMismatch(stream, i, actual, configKey);
+    if (hit !== null) {
+      out.push(`${label} state after event ${i} (${stream.events[i]?.type ?? "?"}): ${hit}`);
+    }
+  }
+  // Never digested, always exact: standings are derived from these three, and
+  // they are a few hundred bytes per stream against the states' several
+  // thousand, so there is nothing to buy by weakening them.
+  if (result.outcome !== stream.outcome) {
+    out.push(`${label} outcome: recorded ${stream.outcome}, replayed ${result.outcome}`);
+  }
+  if (result.summary !== stream.summary) {
+    out.push(`${label} summary: recorded ${stream.summary}, replayed ${result.summary}`);
+  }
+  if (result.deltas !== stream.deltas) {
+    out.push(`${label} deltas: recorded ${stream.deltas}, replayed ${result.deltas}`);
+  }
+  return out;
 }
 
 // ------------------------------------------------- additive-only tripwire
