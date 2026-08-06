@@ -11,7 +11,7 @@ import { requireFeature } from "@/lib/entitlements";
 import { cacheDelPattern } from "@/lib/cache";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { publishDivisionUpdate } from "@/lib/realtime";
-import { REASON_CODE } from "@/lib/schedule-board";
+import { PUBLISH_BLOCKED, PUBLISH_UNACKNOWLEDGED, REASON_CODE } from "@/lib/schedule-board";
 import { resolveVenueTz } from "@/lib/tz";
 import { EngineError } from "@seazn/engine/core";
 import {
@@ -50,6 +50,7 @@ import {
   type ScheduleConflict,
   type ScheduleMetrics,
   type ScheduleSolverInfo,
+  type StartDivisionRequest,
 } from "@/server/api-v1/schemas";
 import { sendOfficialAssignmentChangedEmail } from "@/lib/email";
 import { buildEngineConstraints } from "./engine-constraints";
@@ -1866,14 +1867,83 @@ export interface PublishScheduleOut {
   published: boolean;
 }
 
-/** Blocking conflicts on the board at the moment of publish. There is NO
- *  override for these — `acknowledge_warnings` is checked strictly after, and
- *  only ever against the warnings. */
-export const PUBLISH_BLOCKED = "SCHEDULE_BLOCKING_CONFLICTS";
-/** Warning-level conflicts the organiser has not yet said "publish anyway" to.
- *  A distinguishable code, so the console can offer the confirm step instead of
- *  rendering a dead end. */
-export const PUBLISH_UNACKNOWLEDGED = "SCHEDULE_UNACKNOWLEDGED_WARNINGS";
+// The two refusal codes now live in `lib/schedule-board` (isomorphic) so the
+// board's confirm dialog can branch on them without importing this module.
+// Re-exported unchanged: every server-side importer still reads them here.
+export { PUBLISH_BLOCKED, PUBLISH_UNACKNOWLEDGED };
+
+/**
+ * THE GATE, in one place, for the two actions that put a timetable in front of
+ * players: publish, and start (which publishes on the way through).
+ *
+ * Deliberately not two copies of four lines. The publish gate and the start
+ * gate must refuse the same boards with the same codes and the same payload —
+ * that is what lets ONE confirm dialog in the console serve both buttons — and
+ * a second copy is exactly how the placer and the verifier in this subsystem
+ * drifted apart three times.
+ *
+ * It rejects CONFLICTS, never INCOMPLETENESS. `validateAssignments` reports
+ * only on rows it is given as `assignments`, and `validateScheduleIn` builds
+ * those from fixtures carrying BOTH a `scheduled_at` and a `court_label` — so
+ * an empty or half-slotted board yields no assignments and therefore nothing to
+ * report. Dozens of suites (and organisers) start divisions in exactly that
+ * state; a gate that refused them would be the wrong gate.
+ */
+function assertPublishable(
+  conflicts: readonly ScheduleConflict[],
+  acknowledged: boolean,
+): void {
+  // Blocking is tested FIRST and independently of the flag. Folding the two
+  // tests together — or testing the flag first — turns `acknowledge_warnings`
+  // into an override for a physically impossible board.
+  if (conflicts.some((c) => c.blocking)) {
+    throw new HttpError(
+      422,
+      "this schedule cannot be published: the board has conflicts that must be fixed first",
+      PUBLISH_BLOCKED,
+      { conflicts },
+    );
+  }
+  if (conflicts.length > 0 && !acknowledged) {
+    throw new HttpError(
+      422,
+      "this schedule has warnings — confirm to publish it anyway",
+      PUBLISH_UNACKNOWLEDGED,
+      { conflicts },
+    );
+  }
+}
+
+/**
+ * Record a publish on the division ledger. Returns the new seq.
+ *
+ * The report rides the event, so the ledger answers "what did this board look
+ * like when it was published" — the question a dispute asks, and the one a count
+ * of fixtures could never answer. Greenfield: older events carry
+ * `fixturesScheduled` alone and no backfill is owed.
+ *
+ * Shared by `publishSchedule` and `startDivision` so a publish that happened on
+ * the way into `active` is indistinguishable, in the ledger and in
+ * `history-panel.tsx`, from one the organiser pressed Publish for.
+ */
+async function appendPublishedEvent(
+  tx: Tx,
+  divisionId: string,
+  conflicts: readonly ScheduleConflict[],
+  acknowledged: boolean,
+  reason: string | undefined,
+): Promise<number> {
+  const [{ n }] = await tx<{ n: number }[]>`
+    select count(*)::int as n from fixtures
+    where division_id = ${divisionId} and scheduled_at is not null`;
+  return appendDivisionEvent(tx, divisionId, "schedule_published", {
+    fixturesScheduled: n,
+    conflicts,
+    acknowledged,
+    // Omitted rather than set to `undefined` — the payload is jsonb.
+    ...(reason !== undefined ? { reason } : {}),
+  });
+}
 
 /**
  * Publish the timetable (doc 12 §1.B step 4) — now behind a final validation
@@ -1915,46 +1985,14 @@ export async function publishSchedule(
 
     // THE GATE. After the lock, before anything is written.
     const { conflicts } = await validateScheduleIn(tx, divisionId, division.competition_id);
-    const blocking = conflicts.filter((c) => c.blocking);
-    const warnings = conflicts.filter((c) => !c.blocking);
-    // Blocking is tested FIRST and independently of the flag. Folding the two
-    // tests together — or testing the flag first — turns `acknowledge_warnings`
-    // into an override for a physically impossible board.
-    if (blocking.length > 0) {
-      throw new HttpError(
-        422,
-        "this schedule cannot be published: the board has conflicts that must be fixed first",
-        PUBLISH_BLOCKED,
-        { conflicts },
-      );
-    }
     const acknowledged = input.acknowledge_warnings === true;
-    if (warnings.length > 0 && !acknowledged) {
-      throw new HttpError(
-        422,
-        "this schedule has warnings — confirm to publish it anyway",
-        PUBLISH_UNACKNOWLEDGED,
-        { conflicts },
-      );
-    }
+    assertPublishable(conflicts, acknowledged);
 
     const status = division.status === "setup" ? "scheduled" : division.status;
     if (status !== division.status) {
       await tx`update divisions set status = ${status} where id = ${divisionId}`;
     }
-    const [{ n }] = await tx<{ n: number }[]>`
-      select count(*)::int as n from fixtures
-      where division_id = ${divisionId} and scheduled_at is not null`;
-    // The report rides the event, so the ledger answers "what did this board
-    // look like when it was published" — the question a dispute asks, and the
-    // one a count of fixtures could never answer. Greenfield: older events carry
-    // `fixturesScheduled` alone and no backfill is owed.
-    const seq = await appendDivisionEvent(tx, divisionId, "schedule_published", {
-      fixturesScheduled: n,
-      conflicts,
-      acknowledged,
-      ...(input.reason !== undefined ? { reason: input.reason } : {}),
-    });
+    const seq = await appendPublishedEvent(tx, divisionId, conflicts, acknowledged, input.reason);
     await tx`update divisions set seq = ${seq} where id = ${divisionId}`;
     return { competitionId: division.competition_id, status };
   });
@@ -1974,8 +2012,31 @@ export interface StartDivisionOut {
  * from setup generates the first stage's fixtures when none exist and, when
  * `roundMinutes` is configured, slots rolling times (round r at startAt +
  * (r−1)·roundMinutes). Scoring opens only after this (division_started).
+ *
+ * **Starting the tournament publishes the schedule** (#230 item 2 follow-up).
+ * Not a second gate — the same one: `assertPublishable` over
+ * `validateScheduleIn`, the same two codes, the same `acknowledge_warnings`
+ * contract, so the console's confirm dialog serves Publish and Start with one
+ * code path. Without this, the publish gate was a door beside an open window:
+ * an organiser refused at Publish could press Start, `scoring.ts` opens scoring
+ * on `active`, and the same broken timetable went live with nothing in the
+ * ledger to say a publish had ever happened.
+ *
+ * Two orderings inside are load-bearing:
+ *
+ *  - the check runs AFTER the quick-start rolling-times write, in the same
+ *    transaction. Before it, the board being judged does not exist yet — and a
+ *    refusal rolls those times back with it, so a rejected start never leaves a
+ *    half-slotted board behind.
+ *  - `schedule_published` is appended BEFORE the status moves to `active`, and
+ *    only when the division was still `setup`. `scheduled → active` is a start,
+ *    not a second publish.
  */
-export async function startDivision(auth: AuthCtx, divisionId: string): Promise<StartDivisionOut> {
+export async function startDivision(
+  auth: AuthCtx,
+  divisionId: string,
+  input: StartDivisionRequest = {},
+): Promise<StartDivisionOut> {
   const pre = await withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ status: string; competition_id: string }[]>`
       select status, competition_id from divisions where id = ${divisionId}`;
@@ -2003,8 +2064,8 @@ export async function startDivision(auth: AuthCtx, divisionId: string): Promise<
 
   const out = await withTenant(auth.orgId, async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + divisionId}))`;
-    const [division] = await tx<{ status: string }[]>`
-      select status from divisions where id = ${divisionId}`;
+    const [division] = await tx<{ status: string; competition_id: string }[]>`
+      select status, competition_id from divisions where id = ${divisionId}`;
     if (!division || division.status === "active") return { started: false };
 
     // Rolling quick-start times (doc 12 §1.A) — only for a straight
@@ -2025,6 +2086,20 @@ export async function startDivision(auth: AuthCtx, divisionId: string): Promise<
           where stage_id = ${pre.firstStage.id} and round_no = ${r.round_no}
             and scheduled_at is null`;
       }
+    }
+
+    // THE GATE — the publish gate, reached by the other door. After the lock and
+    // after the rolling-times write above, so it judges the board this call is
+    // actually about to open scoring on.
+    const { conflicts } = await validateScheduleIn(tx, divisionId, division.competition_id);
+    const acknowledged = input.acknowledge_warnings === true;
+    assertPublishable(conflicts, acknowledged);
+
+    // Published on the way through, from `setup` only: this is the moment the
+    // timetable goes in front of players, and the event is the only record
+    // anywhere that it did (`history-panel.tsx` renders it).
+    if (division.status === "setup") {
+      await appendPublishedEvent(tx, divisionId, conflicts, acknowledged, input.reason);
     }
 
     await tx`update divisions set status = 'active' where id = ${divisionId}`;

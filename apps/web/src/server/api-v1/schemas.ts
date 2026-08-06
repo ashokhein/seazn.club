@@ -1141,6 +1141,24 @@ export const AssignedFixture = z.object({
   status: z.string(),
 });
 
+/** POST /divisions/{id}/start (#230 item 2 follow-up).
+ *
+ *  Starting the tournament PUBLISHES the schedule, so it carries the publish
+ *  contract verbatim: blocking conflicts refuse outright with no override,
+ *  `acknowledge_warnings` covers only the warning level, and `reason` records
+ *  why on the `schedule_published` event. A separate schema rather than a reuse
+ *  of `PublishScheduleRequest` because the two endpoints are separate promises
+ *  to API clients — but any divergence between them is a defect, not a feature.
+ *
+ *  Every field is optional and the route parses an ABSENT body as `{}`: the
+ *  console and existing key clients POST this endpoint with no body at all, and
+ *  adding a gate is not a licence to 400 them. */
+export const StartDivisionRequest = z.object({
+  acknowledge_warnings: z.boolean().optional(),
+  reason: z.string().max(500).optional(),
+});
+export type StartDivisionRequest = z.infer<typeof StartDivisionRequest>;
+
 export const StartDivisionResult = z.object({
   division_id: Uuid,
   status: DivisionStatus,

@@ -10007,6 +10007,47 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
     });
     check("v1 W4: an unrelated edit on the same board still applies", legal.status === 200);
   }
+
+  // --- #230 item 2 follow-up: START runs the publish gate -------------------
+  // Publish validates the board; start did not, so an organiser refused at
+  // Publish could simply press Start and the same broken timetable went live
+  // with scoring open on it. Starting now publishes, under the same validation.
+  //
+  // The blocking board is made by moving the competition's WINDOW off the
+  // board rather than by moving a card onto another: a card-level clash is
+  // refused at the PATCH by the delta gate, so it can never be created through
+  // the API. Every card is then outside the window — `warn.window`, which IS
+  // blocking despite the `warn.` prefix (`isBlockingConflict`).
+  {
+    const windowed = {
+      startAt: "2030-01-01T09:00:00.000Z",
+      endAt: "2030-01-02T23:00:00.000Z",
+      matchMinutes: 30,
+      gapMinutes: 0,
+      courts: ["Court 1", "Court 9"],
+      perEntrantMinRest: 0,
+      blackouts: [],
+      sessionWindows: [],
+    };
+    await v1(admin, `/api/v1/divisions/${divId}/schedule-settings`, "PUT", { config: windowed });
+    const blockedStart = await v1(admin, `/api/v1/divisions/${divId}/start`, "POST");
+    check(
+      "v1 start on a blocking board → 422 SCHEDULE_BLOCKING_CONFLICTS",
+      blockedStart.status === 422 &&
+        blockedStart.json.error?.code === "SCHEDULE_BLOCKING_CONFLICTS",
+    );
+    // Refused, not half-done: the status assertion is the one a gate that
+    // throws AFTER flipping the division would fail.
+    check(
+      "v1 the refused start left the division in setup",
+      v1data<{ status: string }>(await v1(admin, `/api/v1/divisions/${divId}`)).status === "setup",
+    );
+    // Put the window back so the start below is the one this section always ran.
+    await v1(admin, `/api/v1/divisions/${divId}/schedule-settings`, "PUT", {
+      config: { ...windowed, startAt: null, endAt: null },
+    });
+  }
+
   const startRes = await v1(admin, `/api/v1/divisions/${divId}/start`, "POST");
   check("v1 division start → active", v1data<{ status: string }>(startRes).status === "active");
 

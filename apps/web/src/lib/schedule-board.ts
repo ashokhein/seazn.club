@@ -31,6 +31,26 @@ export const REASON_CODE: Record<Conflict["reason"], ScheduleConflict["code"]> =
   start_window: "conflict.start_window",
 };
 
+// ---------------------------------------------------------------------------
+// The publish gate's two refusal codes (#230 item 2 + follow-up).
+//
+// Isomorphic on purpose. `publishSchedule` and `startDivision` throw them and
+// the board's confirm dialog branches on them — and the board is a client
+// component, so importing a VALUE out of `server/usecases/schedule` would drag
+// `postgres` into the browser bundle. One definition, both sides; the usecase
+// re-exports these so existing server importers are unaffected.
+// ---------------------------------------------------------------------------
+
+/** Blocking conflicts on the board at the moment of publish. There is NO
+ *  override for these — `acknowledge_warnings` is checked strictly after, and
+ *  only ever against the warnings, so a client must not offer a way past this
+ *  one. */
+export const PUBLISH_BLOCKED = "SCHEDULE_BLOCKING_CONFLICTS";
+/** Warning-level conflicts the organiser has not yet said "publish anyway" to.
+ *  A distinguishable code, so the console can offer the confirm step instead of
+ *  rendering a dead end. */
+export const PUBLISH_UNACKNOWLEDGED = "SCHEDULE_UNACKNOWLEDGED_WARNINGS";
+
 export interface FeedRow {
   id: string;
   round_no: number;
