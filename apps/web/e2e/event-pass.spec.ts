@@ -119,6 +119,19 @@ interface Rig {
   compSlug: string;
 }
 
+/** The end date every OPEN scene below carries.
+ *
+ *  These scenes mean one thing — "this competition is not past the pass line" —
+ *  and they used to say it by leaving `ends_on` at its column default of null.
+ *  Null still says it, but since #376 made `ends_on` mandatory at create there
+ *  is no longer any journey through the product that produces such a row, and a
+ *  browser test should describe a competition a real organiser could actually
+ *  have. A date far beyond `PASS_END_GRACE_DAYS` in the other direction says
+ *  "open" just as unambiguously. (The column stays nullable and older rows may
+ *  still hold null; proving the read handles that is a unit test's job, not a
+ *  journey's — see `competition-pass-layout.test.tsx`.) */
+const OPEN_ENDS_ON = "2099-12-31";
+
 /** A community org with its own owner and one unlisted competition.
  *
  *  Unlisted, not public: public registration accepts both, and community holds
@@ -153,8 +166,9 @@ async function seedRig(label: string): Promise<Rig> {
       values ('generic', 'score', 'Score', ${sql.json({ resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false })}, true)
       on conflict do nothing`;
     const [{ id: compId }] = await sql<{ id: string }[]>`
-      insert into competitions (org_id, name, slug, visibility, branding)
-      values (${orgId}, ${"EP Cup " + tag}, ${compSlug}, 'unlisted', ${sql.json({})})
+      insert into competitions (org_id, name, slug, visibility, branding, ends_on)
+      values (${orgId}, ${"EP Cup " + tag}, ${compSlug}, 'unlisted', ${sql.json({})},
+              ${OPEN_ENDS_ON})
       returning id`;
     return { orgId, orgSlug, ownerEmail, compId, compSlug };
   });
@@ -167,8 +181,9 @@ async function seedSiblingCompetition(orgId: string, label: string): Promise<{ i
   const slug = `ep-${label}-plain-${tag}`;
   return withDb(async (sql) => {
     const [row] = await sql<{ id: string }[]>`
-      insert into competitions (org_id, name, slug, visibility, branding)
-      values (${orgId}, ${"EP Plain " + tag}, ${slug}, 'unlisted', ${sql.json({})})
+      insert into competitions (org_id, name, slug, visibility, branding, ends_on)
+      values (${orgId}, ${"EP Plain " + tag}, ${slug}, 'unlisted', ${sql.json({})},
+              ${OPEN_ENDS_ON})
       returning id`;
     return { id: row!.id, slug };
   });

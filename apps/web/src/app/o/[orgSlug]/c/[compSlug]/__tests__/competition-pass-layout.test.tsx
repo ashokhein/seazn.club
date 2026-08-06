@@ -306,9 +306,14 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
   });
 
   it("stays 'held' for a live competition with no end date at all", async () => {
-    // `ends_on` is nullable and most competitions carry no date. If the join
-    // or the null handling were wrong this is the case that would flip the
-    // whole product to "ended" at once.
+    // `ends_on` is nullable in the database and stays that way, but since #376
+    // made it mandatory at create — and non-nullable on PATCH — the API can no
+    // longer produce a null. The case is still real, and still worth pinning,
+    // because the column outlives the schema that writes it: every competition
+    // created before #376 kept whatever it had, and nothing backfills them. So
+    // the read must keep handling null even though no new row can carry one.
+    // If the join or the null handling were wrong, this is the case that would
+    // flip those rows to "ended" at once.
     const rig = await seed();
     await sql`insert into competition_passes (competition_id, org_id)
               values (${rig.compId}, ${rig.orgId})`;

@@ -45,9 +45,11 @@ test.describe.serial("api keys", () => {
       extraHTTPHeaders: { Authorization: `Bearer ${secret}` },
     });
     try {
-      // #376: POST /competitions parses the BODY before it checks the scope,
-      // so an incomplete body 400s and the 403 this test exists for is never
-      // reached. Send one the schema accepts.
+      // The 403 has to come from the scope check. POST /competitions now
+      // authenticates before it parses, so the body no longer decides which
+      // refusal comes back — but it is kept valid so this probe stays about
+      // scope even if that order is ever reversed again. The order itself is
+      // pinned by api/v1/competitions/__tests__/create-auth-order.test.ts.
       const res = await keyApi.post("/api/v1/competitions", {
         data: { name: `Nope ${TAG}`, ends_on: "2030-12-31" },
       });
