@@ -102,6 +102,36 @@ Append one line per ruling: date, session, decision, reason. Never delete.
   live defect is **false**; the status quo was already green there. It ships as a
   regression guard, mutation-proved. The live defect was the sibling write path
   `keepRecordedConfig`, which was untested and carried both weaknesses.
+- 2026-08-06 — S1 — **three of the five "deferred correctness rows" in #429 had
+  false premises.** (a) Auto early-release of a minor on a powerplay goal is
+  **already implemented** — `period/kernel.ts:745-773` `releaseForGoal`, shipped
+  in W4a §3.4, documented at `icehockey/DOMAIN.md:50`; `double_minor` is
+  deliberately excluded (`:54`). Nothing to do. (b) `Cfg.overtime.skaters` is
+  genuinely dead (zero readers) but lives in the **shared** `sports/period/`
+  kernel, not in icehockey — blast radius is the whole period family, so the fix
+  must stay cfg-driven. (c) The corpus holds **35** OT-with-penalty states across
+  3 icehockey streams (3, 4, 13), not the "two states" the issue body claims.
+- 2026-08-06 — S1 — **GWS +1 goal: implement, derived at the score layer.**
+  IIHF Rule 87 and NHL Rule 84.4 agree — the shoot-out winner is credited one
+  additional goal in the FINAL SCORE (3-3 won on shoot-out is recorded 4-3), so
+  winner GF +1, loser GA +1, and it flows into goal difference. The same rules
+  say shoot-out attempts produce **no** player goals or goals-against; only the
+  deciding scorer gets the game-winning goal. So the +1 is awarded in the
+  official-score / `sideMetrics` layer (`period/kernel.ts:1302-1306`) and
+  **never** by mutating `state.goals` or minting a goal event — a phantom goal
+  with no scorer would corrupt the per-person attribution that S8 and S9 read.
+  `icehockey/DOMAIN.md:70` called this a product deferral; no rulebook supports
+  the current output, so it was a deferral, not a different semantic.
+- 2026-08-06 — S1 — **conversion rate stays unemitted; `metricOf` is fixed.**
+  No federation ranks on conversion rate — FIH ranks points → GD → GF →
+  head-to-head, IIHF points → head-to-head → GD → GF; PC-conversion and
+  penalty-shot conversion are display statistics. Emitting them would move
+  eleven corpora and every standings delta for no behavioural gain. The live
+  defect underneath is `competition/tiebreakers.ts:239-245` `metricOf`, which
+  returns **0 silently** for an absent metric key, so a row predating any metric
+  scores a genuine zero rather than "no data" — that blocks every future metric,
+  including S8's, and is fixed here. Conversion rate itself is deferred: a later
+  session emits it cheaply once a consumer exists.
 - _(append below)_
 
 ## Open questions for the owner
