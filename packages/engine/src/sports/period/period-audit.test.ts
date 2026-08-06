@@ -277,8 +277,8 @@ describe("W4 audit — awarded vs converted set pieces", () => {
       { type: "hockey.set_piece", payload: { by: FA, kind: "stroke", person: "fa-8" } },
     ]);
     expect(state.setPieces).toEqual({
-      home: { pc: { awarded: 3, scored: 1 } },
-      away: { stroke: { awarded: 1, scored: 0 } },
+      home: { pc: { awarded: 3, scored: 1, resolved: 1 } },
+      away: { stroke: { awarded: 1, scored: 0, resolved: 0 } },
     });
     const detail = hockey.summary(state).detail as { setPieces: unknown };
     expect(detail.setPieces).toEqual(state.setPieces);
@@ -302,7 +302,7 @@ describe("W4 audit — awarded vs converted set pieces", () => {
       { type: "icehockey.set_piece", payload: { by: IH, kind: "ps", person: "ih-7" } },
     ] as ModuleEvent[];
     const state = foldIce(events);
-    expect(state.setPieces?.home?.ps).toEqual({ awarded: 1, scored: 0 });
+    expect(state.setPieces?.home?.ps).toEqual({ awarded: 1, scored: 0, resolved: 0 });
     const rows = aggregatePlayerStats(envelopes(events), icehockey.playerStats!);
     expect(rows.find((r) => r.personId === "ih-7")?.stats.ps_taken).toBe(1);
     expect(() =>
@@ -330,7 +330,10 @@ describe("W4 audit — awarded vs converted set pieces", () => {
         { type: "hockey.set_piece", payload: { by: FH, kind: "pc", outcome: "scored" } },
         { type: "hockey.set_piece", payload: { by: FH, kind: "pc", outcome: "saved" } },
       ]);
-      expect(state.setPieces).toEqual({ home: { pc: { awarded: 3, scored: 1 } }, away: {} });
+      expect(state.setPieces).toEqual({
+        home: { pc: { awarded: 3, scored: 1, resolved: 2 } },
+        away: {},
+      });
     });
 
     it("rejects the pre-unification `converted` boolean outright", () => {
@@ -346,7 +349,56 @@ describe("W4 audit — awarded vs converted set pieces", () => {
       // Absence is the honest reading of "the scorer did not say": the goal, if
       // there was one, arrives as a goal event, so nothing is lost.
       const state = foldFih([start, { type: "hockey.set_piece", payload: { by: FA, kind: "stroke" } }]);
-      expect(state.setPieces?.away?.stroke).toEqual({ awarded: 1, scored: 0 });
+      expect(state.setPieces?.away?.stroke).toEqual({ awarded: 1, scored: 0, resolved: 0 });
+    });
+
+    // `outcome` is OPTIONAL and stays that way — requiring it is a schema
+    // narrowing that would stop every already-recorded event without one from
+    // parsing. But two counters cannot express three states, so an attempt the
+    // scorer never resolved folded to exactly the same numbers as a recorded
+    // MISS. `resolved` is the third: `awarded − resolved` is the visible
+    // unknown, and a conversion rate is `scored / resolved`, never
+    // `scored / awarded`.
+    describe("an unresolved set piece is not a miss (#429 silent-0, one level down)", () => {
+      const pc = (outcome?: string): ModuleEvent => ({
+        type: "hockey.set_piece",
+        payload: { by: FH, kind: "pc", ...(outcome === undefined ? {} : { outcome }) },
+      });
+
+      it("counts an attempt with no recorded result as UNRESOLVED, not as a miss", () => {
+        const state = foldFih([start, pc("scored"), pc("saved"), pc()]);
+        // 3 awarded, 2 resolved, 1 scored ⇒ conversion 1/2 and one unknown.
+        // Before this the same stream read {awarded: 3, scored: 1} and every
+        // consumer computing a rate got 1/3.
+        expect(state.setPieces?.home?.pc).toEqual({ awarded: 3, scored: 1, resolved: 2 });
+      });
+
+      it("a recorded MISS and an unrecorded result are no longer the same tally", () => {
+        // The crux. These two states were byte-identical before, which is what
+        // made the drag toward zero silent rather than visible.
+        const missed = foldFih([start, pc("missed")]);
+        const silent = foldFih([start, pc()]);
+        expect(missed.setPieces?.home?.pc).toEqual({ awarded: 1, scored: 0, resolved: 1 });
+        expect(silent.setPieces?.home?.pc).toEqual({ awarded: 1, scored: 0, resolved: 0 });
+        expect(missed.setPieces).not.toEqual(silent.setPieces);
+      });
+
+      it("every non-scoring token still resolves — `post` and `saved` are results", () => {
+        // `resolved` must key on the PRESENCE of an outcome, not on a list of
+        // tokens: keying on tokens would silently unresolve any member added to
+        // `AttemptOutcome` later.
+        const state = foldFih([start, pc("post"), pc("saved"), pc("missed")]);
+        expect(state.setPieces?.home?.pc).toEqual({ awarded: 3, scored: 0, resolved: 3 });
+      });
+
+      it("the summary detail carries the same three counters, not a derived rate", () => {
+        // Integers only. A float here would fix the precision and the rounding
+        // for every consumer, and `compareRatio` already cross-multiplies.
+        const state = foldFih([start, pc("scored"), pc()]);
+        const detail = hockey.summary(state).detail as { setPieces: unknown };
+        expect(detail.setPieces).toEqual(state.setPieces);
+        expect(JSON.stringify(detail.setPieces)).not.toMatch(/\./);
+      });
     });
 
     it("shares the vocabulary with football's penalty, which cannot say `scored`", () => {
@@ -386,7 +438,7 @@ describe("W4 audit — awarded vs converted set pieces", () => {
         { type: "hockey.set_piece", payload: { by: FH, kind: "penalty_corner_rebound" } },
       ]);
       expect(state.setPieces).toEqual({
-        home: { penalty_corner_rebound: { awarded: 1, scored: 0 } },
+        home: { penalty_corner_rebound: { awarded: 1, scored: 0, resolved: 0 } },
         away: {},
       });
     });

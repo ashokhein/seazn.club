@@ -357,6 +357,30 @@ export interface SetPieceTally {
   /** Attempts whose `outcome` was `scored` — the counter the FIH match record
    *  prints beside the awarded count. Named for the token that feeds it. */
   scored: number;
+  /**
+   * Attempts carrying ANY recorded `outcome`, scored or not.
+   *
+   * `PeriodSetPiece.outcome` is optional and stays optional — requiring it
+   * would be a schema narrowing, and every already-recorded event without one
+   * would stop parsing, bricking replay of the frozen corpora. But two
+   * counters cannot express three states, so before this an attempt the scorer
+   * never resolved folded to exactly the numbers a recorded MISS folds to, and
+   * any conversion rate computed as `scored / awarded` was dragged toward zero
+   * by the missing data, silently. That is the #429 silent-0 defect one level
+   * below where it was fixed: `metricOf` learned to tell "no data" from a
+   * recorded zero at the RANKING layer, while the tally underneath was still
+   * collapsing the two.
+   *
+   * So: a conversion rate is `scored / resolved`, and `awarded − resolved` is
+   * the unknown, as a number a consumer can put on screen. Keyed on the
+   * PRESENCE of an outcome rather than on a token list, so a future member of
+   * `AttemptOutcome` resolves without an edit here.
+   *
+   * Three counters and not five (one per token) deliberately: this is the
+   * minimum that makes the unknown visible, and a per-token breakdown is
+   * additive later if a consumer ever wants one.
+   */
+  resolved: number;
 }
 
 export interface PeriodState {
@@ -1144,10 +1168,12 @@ function applySetPiece(
     invalid(`set piece kind "${payload.kind}" is not valid for this sport`, { kind: payload.kind });
   }
   const base = state.setPieces ?? { home: {}, away: {} };
-  const previous = base[side][payload.kind] ?? { awarded: 0, scored: 0 };
+  const previous = base[side][payload.kind] ?? { awarded: 0, scored: 0, resolved: 0 };
   const tally: SetPieceTally = {
     awarded: previous.awarded + 1,
     scored: previous.scored + (payload.outcome === "scored" ? 1 : 0),
+    // The PRESENCE of an outcome, not a token list — see `SetPieceTally`.
+    resolved: previous.resolved + (payload.outcome === undefined ? 0 : 1),
   };
   return {
     ...state,
