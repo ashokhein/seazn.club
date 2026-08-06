@@ -3222,5 +3222,10 @@
   "board.result.dur.hm": "{h} h {m} min",
   "board.result.dur.m": "{m} min",
   "board.result.dur.s": "{s} s",
-  "board.result.dur.ms": "{ms} ms"
+  "board.result.dur.ms": "{ms} ms",
+  "board.polish": "Mejorar horarios",
+  "board.polishTitle": "Ajusta el calendario existente: los partidos fijados y bloqueados conservan sus horarios",
+  "board.result.repairBudget": "Se agotó el tiempo antes de que la redistribución terminara de buscar: no se movió nada de lo que ya estaba en el calendario.",
+  "board.result.lost.one": "Un partido perdió el horario que tenía.",
+  "board.result.lost.other": "{count} partidos perdieron los horarios que tenían."
 }

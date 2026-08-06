@@ -833,6 +833,30 @@ export async function autoSchedule(
   // re-places every unlocked card even when nothing is wrong, which is the
   // defect this mode replaces.
   const { schedulable, config, board, total } = plan;
+  /**
+   * The organiser's board as it stands — every movable card that currently has a
+   * time, whether or not this run may move it.
+   *
+   * POLISH ONLY, and that is the whole of ruling R20. `BuildInput.current` does
+   * two things the engine cannot do for itself: it is the baseline `moved` and
+   * `lost` are measured against, and it is where a `frozen` id with no `locked`
+   * anchor gets pinned. Without it POLISH measured its churn against a board
+   * greedy invented during the run — so a pass that relocated every card
+   * reported "nothing moved" — and froze published cards onto slots nobody had
+   * ever seen, which is the exact opposite of the mode's purpose.
+   *
+   * NOT sent on BUILD. A fresh full pass is not a rearrangement of anything, and
+   * anchoring its churn to a board it was asked to replace would report every
+   * card as moved by definition.
+   *
+   * EMPTY MEANS NO BOARD, and the array is withheld rather than sent empty. The
+   * engine draws the same line (`input.current.length > 0 ? … : undefined`), so
+   * this is belt-and-braces on today's engine rather than an independently
+   * observable guard — kept because the alternative reading of `[]` is "every
+   * card moved and every card was lost" on a stage nobody has ever scheduled,
+   * and that is too sharp an edge to leave to one package's internals.
+   */
+  const currentBoard = [...plan.placedNow, ...plan.pinnedNow];
   const out = await withZ3Teardown<BuildResult | ReflowResult>(() =>
     body.mode === "reflow"
       ? // Pinned cards are handed separately from the rest: the solver may not
@@ -849,7 +873,13 @@ export async function autoSchedule(
           config,
           existing: board,
           wallMs: AUTO_SOLVER_WALL_MS,
-          ...(body.mode === "polish" ? { mode: "polish" as const, frozen: plan.frozen } : {}),
+          ...(body.mode === "polish"
+            ? {
+                mode: "polish" as const,
+                frozen: plan.frozen,
+                ...(currentBoard.length > 0 ? { current: currentBoard } : {}),
+              }
+            : {}),
         }),
   );
 
@@ -903,11 +933,21 @@ export async function autoSchedule(
     solver: {
       engine: out.engine,
       status: out.status,
+      // The mode the CALLER asked for, not a property of the result. `engine`
+      // names what produced the board and cannot stand in for it: an expired
+      // REFLOW and a BUILD that ran out before its first tier are both
+      // `greedy` / `budget_expired` / `tiersCompleted: 0` / `tiers_total: 4`,
+      // and only one of them was ever on a tier ladder.
+      mode: body.mode,
       tiers_completed: out.tiersCompleted,
       tiers_total: TIERS_TOTAL,
       budget_expired: out.budgetExpired,
       elapsed_ms: out.elapsedMs,
       moved: out.moved,
+      // Relocations and losses are separate counts since R21. Forwarded on every
+      // mode: it is 0 wherever the run had no baseline to lose from, and that 0
+      // is a fact rather than a placeholder.
+      lost: out.lost,
       // REFLOW only — the one path that can tell a first-time placement from a
       // relocation. BUILD and POLISH re-place everything by definition, so the
       // distinction does not arise and the field stays off the payload.

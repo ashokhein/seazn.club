@@ -3222,5 +3222,10 @@
   "board.result.dur.hm": "{h}h {m}m",
   "board.result.dur.m": "{m}m",
   "board.result.dur.s": "{s}s",
-  "board.result.dur.ms": "{ms}ms"
+  "board.result.dur.ms": "{ms}ms",
+  "board.polish": "Improve times",
+  "board.polishTitle": "Tighten the existing board — pinned and locked matches keep the times they already have",
+  "board.result.repairBudget": "Time ran out before the re-flow finished searching — nothing already on the board was moved.",
+  "board.result.lost.one": "One match lost the slot it had.",
+  "board.result.lost.other": "{count} matches lost the slots they had."
 }

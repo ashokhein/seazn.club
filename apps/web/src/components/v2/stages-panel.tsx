@@ -17,6 +17,8 @@ import { TipCallout } from "@/components/ui/tip";
 import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import { DocumentsMenu } from "@/components/v2/board/documents-menu";
+import { ScheduleResultStrip } from "@/components/v2/board/result-strip";
+import type { ScheduleMetrics, ScheduleSolverInfo } from "@/server/api-v1/schemas";
 
 type Msg = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
@@ -95,6 +97,18 @@ export function StagesPanel({ divisionId, competitionId, orgSlug, compSlug, divS
   const [undoable, setUndoable] = useState(false);
   // PROMPT-66: stage id whose inline "Add match" form is open.
   const [addingTo, setAddingTo] = useState<string | null>(null);
+  /** Board quality + solver telemetry from the last "Auto-schedule remaining"
+   *  run, for the same result strip the board renders (Task 12).
+   *
+   *  This entry point hits the SAME endpoint the board does, so Task 9's report
+   *  arrives here too. Rendering it on one surface and discarding it on the other
+   *  is the asymmetry that made an organiser's answer depend on which page they
+   *  happened to start from. Null whenever the wire did not carry the blocks —
+   *  the strip stays away rather than reporting zeros. */
+  const [lastRun, setLastRun] = useState<{
+    metrics: ScheduleMetrics;
+    solver: ScheduleSolverInfo;
+  } | null>(null);
 
   async function undoLast() {
     setError(null);
@@ -113,11 +127,23 @@ export function StagesPanel({ divisionId, competitionId, orgSlug, compSlug, divS
   async function autoScheduleStage(stageId: string) {
     setError(null);
     setNotice(null);
+    setLastRun(null);
     setBusy(stageId);
     try {
       const out = await apiV1<{
         assignments: { fixture_id: string; scheduled_at: string; court_label: string }[];
+        // OPTIONAL even though Task 9 populates both: a cached response, or a
+        // server one deploy behind, carries neither, and a strip of zeros is a
+        // worse answer than no strip.
+        metrics?: ScheduleMetrics;
+        solver?: ScheduleSolverInfo;
       }>(`/api/v1/stages/${stageId}/schedule/auto`, { method: "POST", json: { only_unlocked: true } });
+      // BEFORE the empty-proposal return, not after. This CTA fires from the
+      // UNSCHEDULED section, so "the solver could place none of them" is the
+      // ordinary shape of a bad run here — and it is exactly the run whose report
+      // the organiser needs. Capturing after the return would hide the strip on
+      // the only board that has to explain itself.
+      if (out.metrics && out.solver) setLastRun({ metrics: out.metrics, solver: out.solver });
       if (out.assignments.length === 0) {
         setNotice(msg("schedule.notice.nothingToSchedule"));
         return;
@@ -220,6 +246,10 @@ export function StagesPanel({ divisionId, competitionId, orgSlug, compSlug, divS
           )}
         </p>
       )}
+      {/* Directly under the green "Placed N matches" line, as on the board: the
+          strip is the QUALIFICATION of that line. The notice counts what the
+          apply wrote; only this says what the solver could not do. */}
+      {lastRun && <ScheduleResultStrip metrics={lastRun.metrics} solver={lastRun.solver} />}
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
       {/* Precondition-not-met (amber, actionable) — never the green success
           banner: "Générer les matchs" did nothing because the entrants can't
@@ -412,9 +442,10 @@ export function StagesPanel({ divisionId, competitionId, orgSlug, compSlug, divS
                   {canEdit && stage.status !== "complete" && (
                     <button
                       type="button"
+                      data-testid="stage-auto-schedule"
                       disabled={busy !== null}
                       onClick={() => void autoScheduleStage(stage.id)}
-                      className="btn btn-primary px-3 py-1 text-xs"
+                      className="btn btn-primary min-h-11 px-3 py-1 text-xs sm:min-h-0"
                     >
                       {busy === stage.id ? msg("schedule.working") : msg("schedule.unscheduled.cta")}
                     </button>

@@ -3222,5 +3222,10 @@
   "board.result.dur.hm": "{h} h {m} min",
   "board.result.dur.m": "{m} min",
   "board.result.dur.s": "{s} s",
-  "board.result.dur.ms": "{ms} ms"
+  "board.result.dur.ms": "{ms} ms",
+  "board.polish": "Améliorer les horaires",
+  "board.polishTitle": "Resserre le calendrier existant — les matchs épinglés et verrouillés gardent leurs horaires",
+  "board.result.repairBudget": "Le temps a manqué avant la fin de la recherche du réagencement — rien de ce qui était déjà au calendrier n’a été déplacé.",
+  "board.result.lost.one": "Un match a perdu le créneau qu’il occupait.",
+  "board.result.lost.other": "{count} matchs ont perdu les créneaux qu’ils occupaient."
 }

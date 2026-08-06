@@ -844,12 +844,16 @@ export function ScheduleBoard({
           stages
             .filter((s) => s.status !== "complete" && visibleIds.has(s.division_id))
             .map((s) => (
+              // `min-h-11 sm:min-h-0` on all three: `py-1.5 text-xs` renders a
+              // 28px control, well under the 44px touch target, and these are the
+              // primary actions of the surface. Mobile-only, so the desktop bar
+              // is pixel-identical to what shipped.
               <span key={s.id} className="inline-flex items-center gap-1">
                 <button
                   type="button"
                   disabled={actions.busy}
                   onClick={() => void actions.autoRun(s.id, false)}
-                  className="btn btn-primary px-3 py-1.5 text-xs"
+                  className="btn btn-primary min-h-11 px-3 py-1.5 text-xs sm:min-h-0"
                 >
                   {msg("board.autoSchedule", { name: stages.length > 1 ? s.name : "" })}
                 </button>
@@ -857,10 +861,26 @@ export function ScheduleBoard({
                   type="button"
                   disabled={actions.busy}
                   onClick={() => void actions.autoRun(s.id, true)}
-                  className="btn btn-ghost px-3 py-1.5 text-xs"
+                  className="btn btn-ghost min-h-11 px-3 py-1.5 text-xs sm:min-h-0"
                   title={msg("board.reflowTitle")}
                 >
                   {msg("board.reflow")}
+                </button>
+                {/* POLISH — the tier solver over a board that is already legal.
+                    Beside its siblings rather than behind a menu: it is the same
+                    kind of action, and the three only differ by what they ask
+                    the solver for. The mode is passed EXPLICITLY because
+                    `only_unlocked` cannot express it — polish and re-flow both
+                    send `true` and run different solvers. */}
+                <button
+                  type="button"
+                  data-testid="schedule-polish"
+                  disabled={actions.busy}
+                  onClick={() => void actions.autoRun(s.id, true, "polish")}
+                  className="btn btn-ghost min-h-11 px-3 py-1.5 text-xs sm:min-h-0"
+                  title={msg("board.polishTitle")}
+                >
+                  {msg("board.polish")}
                 </button>
               </span>
             ))}
