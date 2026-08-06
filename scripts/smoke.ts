@@ -7485,11 +7485,31 @@ async function z3AutoScheduleSuite(): Promise<void> {
   // ======================================================================
   const build = await auto({ only_unlocked: false });
   check(
-    // THE assertion this suite exists for. `greedy` here means the WASM did not
-    // load in the standalone bundle; the board would still be valid and every
-    // other check in this suite would still pass.
-    "z3 build: the run was produced by the z3 solver, not the greedy fallback (WASM loaded in prod)",
-    build?.solver?.engine === "z3" || build?.solver?.engine === "z3+lns",
+    // THE assertion this suite exists for: the WASM loaded and the ladder ran
+    // inside a standalone bundle, which no unit test is in a position to see.
+    //
+    // NOT `engine === "z3"`, which is what this checked first and is WRONG.
+    // `engine` is board PROVENANCE, not proof of execution — `build.ts:1462`
+    // reads `usedLns ? "z3+lns" : incumbent === seedAssignments ? "greedy"
+    // : "z3"`, so a run where z3 loaded, solved, and found nothing better than
+    // the greedy seed reports `"greedy"` CORRECTLY. On this six-fixture,
+    // two-court board greedy is already optimal, so `"greedy"` is the honest
+    // answer every time and the old assertion failed against a healthy solver.
+    //
+    // `status` is the field that carries the real failure: a WASM that does
+    // not load returns `z3_unavailable`. `tiers_completed > 0` corroborates —
+    // the ladder cannot advance a tier without a solver behind it.
+    "z3 build: the WASM loaded and the tier ladder ran in prod (not the z3_unavailable fallback)",
+    build?.solver?.status !== "z3_unavailable" &&
+      (build?.solver?.tiers_completed ?? 0) > 0,
+  );
+  check(
+    // Provenance is still worth pinning — as a legal value, not as a liveness
+    // proof. A serialisation that drops the field renders no engine sentence.
+    "z3 build: the run names where the board came from",
+    build?.solver?.engine === "greedy" ||
+      build?.solver?.engine === "z3" ||
+      build?.solver?.engine === "z3+lns",
   );
   check(
     "z3 build: the request derived mode=build and the solver reported a solved status",
@@ -7510,7 +7530,11 @@ async function z3AutoScheduleSuite(): Promise<void> {
     "z3 build: the telemetry came back populated (elapsed, tier ladder, real makespan)",
     (build?.solver?.elapsed_ms ?? 0) > 0 &&
       (build?.solver?.tiers_total ?? 0) > 0 &&
-      (build?.solver?.tiers_completed ?? -1) >= 0 &&
+      // `>= 0` here was VACUOUS — `tiers_completed` is a non-negative int, so
+      // the clause was true for every possible payload including one the
+      // serialisation had emptied. It is the ladder's numerator; a real run
+      // moves it.
+      (build?.solver?.tiers_completed ?? 0) > 0 &&
       (build?.metrics?.makespan_minutes ?? 0) > 0,
   );
 
@@ -7585,9 +7609,18 @@ async function z3AutoScheduleSuite(): Promise<void> {
 
   const polish = await auto({ only_unlocked: true, mode: "polish" });
   check(
+    // Same correction as the BUILD check above: `engine` is provenance, so a
+    // polish run that loaded z3 and could not beat the board it was handed
+    // reports `"greedy"` and is entirely healthy. What distinguishes the TIER
+    // solver from the REPAIR solver is the ladder — `reflowExisting` pins
+    // `tiersCompleted: 0` deliberately, because the repair solver has no tier
+    // ladder and reporting a number from a ladder it never walked would make
+    // an optimality claim nothing proved. So a non-zero ladder IS the proof
+    // this run went to the tier solver.
     "z3 polish: the explicit mode reached the tier solver, not the repair solver",
     polish?.solver?.mode === "polish" &&
-      (polish.solver.engine === "z3" || polish.solver.engine === "z3+lns"),
+      polish.solver.status !== "z3_unavailable" &&
+      (polish.solver.tiers_completed ?? 0) > 0,
   );
   const lockedProposed = (polish?.assignments ?? []).find((a) => a.fixture_id === lockedId);
   check(
