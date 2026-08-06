@@ -45,6 +45,10 @@
 //   # what R22's gate admits at two rest values — seconds, no z3, no child
 //   node --experimental-strip-types packages/engine/scripts/bench-build.ts --probe=gate
 //
+//   # what the seed's lattice pins cost, at two rest values — no z3, no child,
+//   # but it runs the greedy placer per board, so minutes rather than seconds
+//   node --experimental-strip-types packages/engine/scripts/bench-build.ts --probe=pins
+//
 // Not collected by vitest: the suite's `include` is `src/**/*.test.ts` and
 // `test/**/*.test.ts`, and this file is neither. It costs minutes, so it must
 // stay out of the standard gate.
@@ -58,10 +62,12 @@ import {
   buildSchedule,
   buildTiers,
   canSolveWithin,
+  seedPinsOf,
   type BuildResult,
 } from "../src/scheduling/build.ts";
 import { encodeBuild } from "../src/scheduling/build-encode.ts";
 import { buildGrid } from "../src/scheduling/build-grid.ts";
+import { slotFixtures } from "../src/scheduling/calendar.ts";
 import type { RuleFixture, SchedulableFixture, SlotConfig, VerifyConfig } from "../src/scheduling/calendar.ts";
 import type { HardConstraint } from "../src/scheduling/constraints.ts";
 import { loadZ3, resetZ3 } from "../src/scheduling/z3-load.ts";
@@ -122,15 +128,17 @@ export interface BenchBoardOptions {
    * The typed `min_rest_minutes` rule, in minutes. Must exceed
    * `perEntrantMinRest` or the rule is inert and the board is #455 again.
    *
-   * KEEP IT A MULTIPLE OF TWICE `MATCH_MIN`. The lattice step is the gcd over
-   * every interval that can displace a start, rest included, so the old default
-   * of 45 (with its derived `perEntrantMinRest` of 22) gives `gcd(40, 0, 22,
-   * 45) = 1`, floored to five minutes — an EIGHT-fold lattice on a board whose
-   * header claims the step is the pitch. That is a property of the config, not a
-   * defect: a real competition with incommensurate rest really does get that
-   * lattice, and running `--hard-rest=45` to measure it is a legitimate use.
-   * The default just must not do it silently, so the derived step is printed in
-   * the run header.
+   * IT IS THE COMMENSURABILITY LEVER, AND BOTH VALUES ARE WORTH RUNNING. The
+   * step is `gcd(match, gap)` and does not read a rest, so `--hard-rest` no
+   * longer changes the LATTICE — 80 and 45 both derive a 40-minute step. What
+   * it changes is the SEED: 80 chains an entrant's next start on `40 + 80`,
+   * which the lattice holds, while 45 (deriving `perEntrantMinRest` 22) chains
+   * on `40 + 22 = 62` and lands between slots, so every one of those rows is
+   * carried by a `seedPinsOf` pin instead. Run `--probe=pins` to price that.
+   *
+   * A briefly-shipped step that folded the rest made 45 an EIGHT-fold lattice
+   * instead, which is the regression the pins replaced; the derived step is
+   * printed in the run header so a change of that kind cannot be silent again.
    */
   hardRestMin: number;
   /**
@@ -846,6 +854,59 @@ async function main(): Promise<void> {
     console.log(
       `\nadmitted at ${rests[0]} but refused at ${rests[rests.length - 1]}: ${flipped} of ${rows} boards.`,
     );
+    return;
+  }
+  if (probe === "pins") {
+    // WHAT THE SEED'S PINS COST, on the same boards the knee sweep runs and at
+    // both rest values, because "O(n)" is a claim and this is the measurement.
+    // `seedPinsOf` offers one pin per distinct (court, start) the seed uses and
+    // `buildGrid` adds only the ones the bare lattice does not already carry, so
+    // the column that matters is `delta` — and the result that would refute the
+    // approach is a delta growing with the LATTICE rather than with n.
+    //
+    // NO z3 AND NO CHILD, but not free: it runs the greedy placer once per
+    // board, which is tens of seconds at n>=120. Run it after a sweep, never
+    // beside one.
+    const rests = nums("hard-rests", "80,45");
+    const gateWall = Number(arg("gate-wall", "8000"));
+    console.log(
+      `# seed pins — wall ${gateWall} ms, gate ${MAX_SOLVE_ENCODING} fixture-slots, slack ${slack}\n`,
+    );
+    console.log(
+      `| n | per-entrant | ${rests
+        .map((r) => `step@${r} | bare@${r} | pins@${r} | pinned@${r} | delta@${r} | admitted@${r}`)
+        .join(" | ")} |`,
+    );
+    console.log(`|---|---|${rests.map(() => "---|---|---|---|---|---|").join("")}`);
+    for (const n of nums("sizes", "10,20,40,60,80,120,140,160,200")) {
+      for (const pe of nums("per-entrant", "2,4")) {
+        const cells: string[] = [];
+        for (const hardRestMin of rests) {
+          const b = benchBoard({
+            n,
+            perEntrant: pe,
+            slack,
+            hardRestMin,
+            dayCap,
+            offGridMin,
+            notAfterEntrants,
+          });
+          const bare = buildGrid({ config: b.config });
+          const seed = slotFixtures({ fixtures: b.fixtures, config: b.config });
+          const pins = seedPinsOf(seed.assignments, b.config.courts);
+          const pinned = buildGrid({ config: b.config, seedPins: pins }).slots.length;
+          cells.push(
+            String(bare.stepMinutes),
+            String(bare.slots.length),
+            String(pins.length),
+            String(pinned),
+            String(pinned - bare.slots.length),
+            canSolveWithin(b.fixtures, b.config, gateWall) ? "yes" : "NO",
+          );
+        }
+        console.log(`| ${n} | ${pe} | ${cells.join(" | ")} |`);
+      }
+    }
     return;
   }
   if (probe === "boot") {
