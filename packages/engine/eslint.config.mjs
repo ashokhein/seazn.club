@@ -46,23 +46,21 @@ export default defineConfig([
     languageOptions: {
       parserOptions: {
         projectService: {
-          // tsconfig.json covers src/**, test/** and vitest.config.ts. The
-          // three scripts/ benchmarks are deliberately outside it (they are
-          // run by hand with --experimental-strip-types, never type-checked
-          // by `npm run typecheck`), and this config file is .mjs. Both still
-          // get linted, just against the default compiler options.
-          // Deliberately shallower than the `scripts/**/*.ts` override below,
-          // and NOT by preference: typescript-eslint rejects `**` in
-          // allowDefaultProject outright ("contains a disallowed '**'") as a
-          // performance guard, so this is the only legal form.
+          // Only this config file is outside tsconfig.json now. `scripts/**`
+          // USED to live here too, and must not come back: tsconfig.json's
+          // include gained `scripts/**/*.ts` (cfa5da61) so the benchmarks are
+          // type-checked, and a file listed in BOTH places is a hard parse
+          // error — "was included by allowDefaultProject but also was found in
+          // the project service", one per script, which fails `npm run lint`
+          // outright since the root script chains the two workspaces with &&.
           //
-          // The asymmetry has one consequence worth knowing: add a nested
-          // script such as scripts/bench/x.ts and it will fail to lint with
-          // "was not found by the project service". The fix is to add its
-          // directory here explicitly (e.g. "scripts/bench/*.ts") — or, if
-          // scripts/ ever grows enough to want real type-checking, to give it
-          // a tsconfig and drop it from allowDefaultProject entirely.
-          allowDefaultProject: ["*.mjs", "scripts/*.ts"],
+          // That is the resolution the previous comment here predicted: once
+          // scripts/ wants real type-checking, it gets a tsconfig entry and
+          // leaves allowDefaultProject entirely. Nested scripts now need no
+          // special handling — `scripts/**/*.ts` in tsconfig covers any depth,
+          // where allowDefaultProject could not express one (typescript-eslint
+          // rejects `**` there as a performance guard).
+          allowDefaultProject: ["*.mjs"],
         },
         tsconfigRootDir: import.meta.dirname,
       },
