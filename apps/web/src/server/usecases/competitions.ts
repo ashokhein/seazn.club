@@ -186,14 +186,28 @@ export async function createCompetition(
   return row;
 }
 
+// Two phases on purpose, and the boundary is load-bearing (see
+// pool-nesting-tripwire.test.ts). `withTenant` is `getClient().begin()`, so it
+// PINS one of the pool's five connections (lib/db.ts `max: 5`) for the whole
+// callback. `frozenCompetitionIds` opens with `getLimit`, which on a cache miss
+// queries the pooled `sql` proxy — i.e. asks the same pool for a SECOND
+// connection while the first is still held. Five concurrent renders reaching
+// that await pin all five slots and queue for a sixth that can never exist;
+// postgres.js has no queue-wait timeout, so the process hangs permanently at
+// ~0% CPU with every DB-touching route (including /api/health) stalled.
+// Reading the row, closing the transaction, and only then computing `frozen`
+// costs one extra round trip and cannot self-deadlock. Same phase boundary
+// autoSchedule documents: transaction for the read, no pooled connection held
+// for the unbounded work.
 export async function getCompetition(auth: AuthCtx, id: string): Promise<CompetitionRow> {
-  return withTenant(auth.orgId, async (tx) => {
-    const [row] = await tx<CompetitionRow[]>`
+  const row = await withTenant(auth.orgId, async (tx) => {
+    const [found] = await tx<CompetitionRow[]>`
       select ${tx(COLS)} from competitions where id = ${id}`;
-    if (!row) throw new HttpError(404, "competition not found");
-    const frozen = await frozenCompetitionIds(auth.orgId, tx);
-    return { ...row, frozen: frozen.has(row.id) };
+    return found;
   });
+  if (!row) throw new HttpError(404, "competition not found");
+  const frozen = await frozenCompetitionIds(auth.orgId);
+  return { ...row, frozen: frozen.has(row.id) };
 }
 
 // Activation funnel (feature 1): `competition_made_public` fires exactly once
