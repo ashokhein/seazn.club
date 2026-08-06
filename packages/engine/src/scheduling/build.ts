@@ -404,24 +404,41 @@ export type BuildStatus =
    * THE SOLVER NEVER SEARCHED THIS BOARD, so nothing is claimed about it.
    *
    * The greedy board is returned and it is a perfectly good board; what is
-   * missing is any statement about whether a better one exists. Two causes, and
-   * both are "the lattice cannot hold the board already in hand":
+   * missing is any statement about whether a better one exists. Four causes, in
+   * two families.
    *
+   * NOTHING WAS EVER ASKED — no `check()` ran and `rlimitSpent` is 0:
+   *
+   *   * the competition window ends at or before the run's own `startAt`, so
+   *     there is no universe to search over;
    *   * the lattice would exceed `MAX_SLOTS` and comes back EMPTY, so there is
-   *     nothing to search over at all;
-   *   * the greedy seed sits BETWEEN slots. `gridStepMinutes` folds every
-   *     interval that can displace a start, but it is floored at
-   *     `REPAIR_GRID_MINUTES` and no gcd over durations can reach an ABSOLUTE
-   *     anchor — a `startWindows.notBefore` at 09:07, a blackout edge, an
-   *     existing booking's `endAt + gap`. On such a board the first tier bound
-   *     is the incumbent's own metric, which the lattice cannot achieve, so the
-   *     model goes unsat and every later walk is unsat on its first ask: all
-   *     four tiers "complete" having looked at nothing.
+   *     nothing to search over either;
+   *   * the wall was already gone at the encode, so the run bailed to the seed
+   *     before the model existed. Not a rare path — at a five-minute lattice the
+   *     greedy seed alone outlasts an 8 s wall from ~40 fixtures up.
    *
-   * IT EXISTS TO STOP THAT READING AS `already_optimal`, which is the damaging
-   * outcome — an organiser told their schedule is optimal when it was never
-   * searched has no reason to look again and no way to find out. `ok` is barely
-   * better: it reads as a board the solver produced and accepted.
+   * OR EVERY QUESTION WAS VACUOUS — the ladder ran and established nothing:
+   *
+   *   * the greedy seed sits BETWEEN slots AND the lattice cannot carry a board
+   *     as good as it. `gridStepMinutes` folds every interval that can displace
+   *     a start, but it is floored at `REPAIR_GRID_MINUTES` and no gcd over
+   *     durations can reach an ABSOLUTE anchor — a `startWindows.notBefore` at
+   *     09:07, a blackout edge, an existing booking's `endAt + gap`. Where that
+   *     leaves the incumbent's own metrics out of reach, the first tier bound is
+   *     unachievable, the model goes unsat, and every later walk is unsat on its
+   *     first ask: all four tiers "complete" having looked at nothing.
+   *
+   * BOTH HALVES OF THAT LAST ONE ARE REQUIRED, and the second is a `check()`
+   * (`latticeHoldsIncumbent`), not an inference. An off-grid ROW is not a
+   * vacuous LADDER: one card parked against an existing booking's edge, on a
+   * board whose others are all on-grid, is searched perfectly well, and flagging
+   * it here would tell an organiser their schedule was never looked at when it
+   * was.
+   *
+   * IT EXISTS TO STOP A VACUOUS LADDER READING AS `already_optimal`, which is
+   * the damaging outcome — an organiser told their schedule is optimal when it
+   * was never searched has no reason to look again and no way to find out. `ok`
+   * is barely better: it reads as a board the solver produced and accepted.
    */
   | "not_searched"
   /** This build declined to QUEUE behind `withZ3Lock` rather than wait it out:
@@ -1114,8 +1131,15 @@ async function solveBuild(
   //    slots in 1970. Refused for the same reason `buildGrid` refuses a
   //    truncated lattice over `MAX_SLOTS`: a lattice the encoder cannot tell
   //    apart from a legal one is worse than none at all.
+  //
+  //    `not_searched`, NOT `ok`. This exit is taken before the lattice, before
+  //    the WASM boot and before the gate, so `ok` — "a board was produced and
+  //    the gate accepted it" — is false on both halves, and `budgetExpired`
+  //    stays FALSE because nothing was spent, which leaves nothing at all in the
+  //    result saying a solver was never consulted. The organiser reaching it is
+  //    one who edited the competition window to end before the run's own start.
   const universe = repairUniverse({ proposal: [], existing, config });
-  if (config.startAt >= universe.to) return greedy("ok");
+  if (config.startAt >= universe.to) return greedy("not_searched");
 
   /**
    * Where a card the caller says may not move actually IS.
@@ -1224,12 +1248,22 @@ async function solveBuild(
    *     divide, because the lattice is anchored at the day and the anchor is
    *     not.
    *
-   * When the seed is off the lattice the tier ladder degenerates: the first
+   * When the seed is off the lattice the tier ladder CAN degenerate: the first
    * bound it is handed is the incumbent's own metric, the lattice cannot achieve
    * it, the model goes unsat, and every subsequent walk is unsat on its first
    * ask. All four tiers then "complete" having searched nothing, which is
-   * indistinguishable — from the outside — from a genuine optimality proof. This
-   * is the one bit that tells them apart.
+   * indistinguishable — from the outside — from a genuine optimality proof.
+   *
+   * CAN, not DOES, and that distinction is the whole of why this flag is only
+   * HALF the test. An off-grid ROW is not a vacuous LADDER. One `existing`
+   * booking ending at :37 against a ten-minute gap parks a single card at :47,
+   * off any 5/10/15/20-minute lattice anchored at local midnight, on a board
+   * whose other twenty cards are all on-grid — and the lattice carries a board
+   * every bit as good, so z3 searches properly and proves nothing better.
+   * Reporting `not_searched` off `seedOffLattice` alone flags that run, telling
+   * an organiser their schedule was never looked at when it was: the same class
+   * of lie as the `already_optimal` the status was introduced to refuse, pointed
+   * the other way. What separates the two is asked below, once, of z3.
    *
    * Measured on the whole seed and not just its first row: a board can be half
    * on the grid, and half a proof is not a proof.
@@ -1317,7 +1351,15 @@ async function solveBuild(
   // R23. The greedy seed, the lattice and the WASM boot are already behind us
   // and they are not free at scale; encoding on top of a wall that has already
   // gone buys a board nobody will be allowed to search.
-  if (outOfTime()) return greedy("ok", true);
+  //
+  // `not_searched` ON BOTH THIS GUARD AND THE ONE BELOW, for the same reason the
+  // universe exit carries it: neither has run a `check()`, so `rlimitSpent` is 0
+  // and no solver has looked at the board. `budgetExpired` does not carry that
+  // on its own — it is set on every partially-searched run too, so it says the
+  // run was cut short and nothing about whether a search happened at all. This
+  // is not a rare path: at the fine lattice the greedy seed alone outlasts the
+  // 8 s wall from ~40 fixtures up (Task 13 bench, `--hard-rest=45`).
+  if (outOfTime()) return greedy("not_searched", true);
 
   const model = encodeBuild({
     Z3,
@@ -1333,7 +1375,7 @@ async function solveBuild(
   // R23. THE SINGLE MOST IMPORTANT ONE. `encodeBuild` is the largest
   // uninterruptible step in the run — 3_706 ms at 200 fixtures / 216 slots —
   // and at the sizes where it matters it alone can outlast the whole wall.
-  if (outOfTime()) return greedy("ok", true);
+  if (outOfTime()) return greedy("not_searched", true);
 
   /** `AtLeast` takes a NON-EMPTY tuple, not varargs. `Z3.AtLeast(...lits, k)`
    *  compiles and then fails at runtime with a spread TypeError out of z3's own
@@ -1694,6 +1736,46 @@ async function solveBuild(
     }
   }
 
+  /**
+   * Is the region every tier walk was asked over NON-EMPTY?
+   *
+   * THE OTHER HALF OF `seedOffLattice`, and the question that actually decides
+   * `not_searched`. By this point the solver carries, at base scope, exactly the
+   * bounds the ladder froze: `atLeastPlaced(incumbentMetrics.placed)` and one
+   * `tier.atMost(tier.of(incumbentMetrics))` per completed tier — all four read
+   * off the incumbent's OWN metrics, which is what each walk asked to beat. So a
+   * bare `check()` answers it outright:
+   *
+   *   * SAT — the lattice carries a board matching the incumbent on every
+   *     metric, so each walk's UNSAT refuted a real region and the ladder is a
+   *     proof. `already_optimal`.
+   *   * UNSAT — the region was empty from the first bound, every walk was unsat
+   *     for that reason alone, and all four tiers "completed" having established
+   *     nothing. `not_searched`.
+   *
+   * ASKING IS THE ONLY WAY. Nothing already recorded separates the two: in this
+   * branch `!improved` means the incumbent IS the seed and no walk ever returned
+   * sat, so check counts, tier counts and per-tier verdicts are IDENTICAL on
+   * both paths — a genuinely optimal board also ends every walk on a first-ask
+   * unsat. (That rules out the cheaper narrowing of requiring one first-ask
+   * unsat: it is true of both.)
+   *
+   * ONE CHECK, AND ONLY ON THE OFF-LATTICE PATH. A seed that is on the lattice
+   * satisfies its own metrics by construction, so the question is already
+   * answered for every ordinary run and none of them pays for it.
+   *
+   * CANNOT ASK => CANNOT CLAIM. Out of wall or out of budget answers `false`,
+   * which is the conservative direction: it declines to state a proof rather
+   * than stating one nothing backs. `unknown` lands there too, for the reason
+   * the tier walks give it — the absence of a proof is not a proof.
+   */
+  const latticeHoldsIncumbent = async (): Promise<boolean> => {
+    if (outOfTime() || !arm()) return false;
+    const verdict = await solver.check();
+    settle();
+    return verdict === "sat";
+  };
+
   // 7. The gate. Encoder and verifier disagreeing is the exact bug class this
   //    design exists to prevent, so it is never silent — but it is also never
   //    an exception, because the organiser still needs a board, and it is a
@@ -1727,11 +1809,11 @@ async function solveBuild(
   // card" is not a statement about the makespan, and a board that could still
   // be made shorter is not optimal in any sense an organiser would accept.
   //
-  // AND IT NEEDS A THIRD THING: a lattice the incumbent is actually ON. A
-  // completed ladder over a lattice that cannot express the board being called
-  // optimal is not a weaker proof, it is no proof at all — every walk was unsat
-  // on its first ask because the tier freeze itself is unachievable there. That
-  // case reports `not_searched`, which says the true thing.
+  // AND IT NEEDS A THIRD THING: a ladder that was asked over a NON-EMPTY region.
+  // A completed ladder whose every bound was unachievable on the lattice is not
+  // a weaker proof, it is no proof at all — each walk was unsat on its first ask
+  // because the tier freeze itself is out of reach, not because nothing better
+  // exists. That case reports `not_searched`, which says the true thing.
   //
   // `infeasible` is unaffected and deliberately tested first: it needs
   // `placed === 0`, and a seed that placed nothing has no row to be off the
@@ -1741,9 +1823,9 @@ async function solveBuild(
     status =
       incumbentMetrics.placed === 0 && fixtures.length > 0
         ? "infeasible"
-        : seedOffLattice
-          ? "not_searched"
-          : "already_optimal";
+        : !seedOffLattice || (await latticeHoldsIncumbent())
+          ? "already_optimal"
+          : "not_searched";
   }
 
   return {

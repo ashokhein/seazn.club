@@ -185,12 +185,26 @@ describe("R23 — the wall bounds the encode path, not just the search loops", (
     // It bails rather than throwing, and it bails to the SEED — D6 ("never
     // worse than greedy") has to survive an encode-time bail, and the greedy
     // board is what every other expired path returns too.
+    //
+    // `not_searched`, NOT `ok`. This exit runs no `check()` at all — the
+    // assertion below pins `rlimitSpent: 0` — so the board it hands back has
+    // never been looked at by a solver, and `ok` is documented as "a board was
+    // produced and the gate accepted it". `budgetExpired` alone does not carry
+    // that: it is set on every partially-searched run too, so it says the run
+    // was cut short and nothing about whether a search happened at all.
     expect({
       engine: out.engine,
+      status: out.status,
       budgetExpired: out.budgetExpired,
       tiers: out.tiersCompleted,
       placed: out.metrics.placed,
-    }).toEqual({ engine: "greedy", budgetExpired: true, tiers: 0, placed: 20 });
+    }).toEqual({
+      engine: "greedy",
+      status: "not_searched",
+      budgetExpired: true,
+      tiers: 0,
+      placed: 20,
+    });
 
     // z3's own counter never moved, so no `check()` ran either.
     expect(out.rlimitSpent).toBe(0);

@@ -339,7 +339,13 @@ describe("buildSchedule", () => {
       wallMs: 0,
     });
     expect(built.budgetExpired).toBe(true);
-    expect(built.status).toBe("ok");
+    // `not_searched`, and this case is the clearest statement of what that
+    // status means: at `wallMs: 0` the run bails before `encodeBuild`, so no
+    // model ever exists and no `check()` runs. It used to answer `ok` — "a board
+    // was produced and the gate accepted it" — which is exactly the invented
+    // verdict the test's own name refuses. `budgetExpired` cannot carry it
+    // alone: it is set on every partially-searched run too.
+    expect(built.status).toBe("not_searched");
     expect(built.assignments).toHaveLength(1);
   }, 180_000);
 
