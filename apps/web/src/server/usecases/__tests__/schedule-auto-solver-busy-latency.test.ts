@@ -31,6 +31,21 @@ import { randomUUID } from "node:crypto";
  *  call so the engine's own synchronous `queued++` has certainly happened. */
 const solver = vi.hoisted(() => ({ entered: 0 }));
 
+/** A LIVE per-org cooldown counter.
+ *
+ *  The claim this file makes is about the fast-refusal path, and a limiter is
+ *  exactly the kind of thing that quietly destroys it — the deleted
+ *  `withZ3Teardown` wrapper did, by putting an `await` on the z3 lock in front
+ *  of an answer that was computed without taking it. `AUTO_SCHEDULE_COOLDOWN`
+ *  now sits ahead of every auto run, so the assertion below has to hold WITH it
+ *  running or it is no longer a proof about production.
+ *
+ *  It has to be forced. `rateLimit` is Upstash-only and `incrWindow` returns
+ *  null with no REDIS_URL, so on an unmocked local run the limiter is inert and
+ *  this file would go on passing with the cooldown parked on the critical path.
+ *  `calls` is asserted non-empty for that reason. */
+const limiter = vi.hoisted(() => ({ calls: [] as string[] }));
+
 vi.mock("@seazn/engine/scheduling", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@seazn/engine/scheduling")>();
   return {
@@ -39,6 +54,17 @@ vi.mock("@seazn/engine/scheduling", async (importOriginal) => {
       const run = actual.buildSchedule(input);
       solver.entered++;
       return run;
+    },
+  };
+});
+
+vi.mock("@/lib/cache", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/cache")>();
+  return {
+    ...actual,
+    incrWindow: (key: string) => {
+      limiter.calls.push(key);
+      return Promise.resolve(limiter.calls.filter((k) => k === key).length);
     },
   };
 });
@@ -142,6 +168,7 @@ describe.skipIf(!HAS_DB)("a queue-refused build is answered without queuing", ()
   it("returns solver_busy while the z3 lock is still held by someone else", async () => {
     const { auth, stageId } = await seedStage();
     solver.entered = 0;
+    limiter.calls.length = 0;
 
     // Hold the z3 lock for the whole window. Everything that touches the queue
     // — a solve, and a `resetZ3()` — is pending behind this until it opens.
@@ -188,6 +215,12 @@ describe.skipIf(!HAS_DB)("a queue-refused build is answered without queuing", ()
       // A greedy board is still a board: the organiser gets a timetable, which
       // is the whole reason the cap answers rather than refusing.
       expect(outcome.result.assignments.length).toBeGreaterThan(0);
+      // …and the cooldown was LIVE for all of it. Without this the mock could be
+      // wired to nothing and the paragraph above would be a claim about a
+      // limiter that never ran — the same inert-limiter trap that makes an
+      // unmocked `rateLimit` test vacuous. Three runs, three INCRs, all on the
+      // org's own key.
+      expect(limiter.calls).toEqual(Array(3).fill(`rl:auto-schedule:${auth.orgId}`));
     } finally {
       if (timer) clearTimeout(timer);
       open();

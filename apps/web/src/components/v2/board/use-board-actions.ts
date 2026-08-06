@@ -241,6 +241,19 @@ export function useBoardActions(
         setNotice(msg("board.stale"));
         router.refresh();
         return true;
+      } else if (err instanceof ApiV1Error && err.code === "RATE_LIMITED") {
+        // The per-org solver cooldown (AUTO_SCHEDULE_COOLDOWN, usecases/
+        // schedule.ts). A NOTICE, not an error, and the register is deliberate:
+        // this is the same class of outcome as `solver_busy` — ordinary,
+        // transient, entirely outside the organiser's hands, and the same click
+        // a few minutes later works. Red styling would suggest their board is
+        // wrong, and nothing about it is.
+        //
+        // Keyed on the CODE, not on the message: /api/v1 maps every 429 to
+        // RATE_LIMITED (server/api-v1/http.ts), and the limiter's own message is
+        // hardcoded English. The board is the only surface that calls a limited
+        // endpoint, so the code is unambiguous here.
+        setNotice(msg("board.action.cooldown"));
       } else if (err instanceof ApiV1Error && err.code === "SCHEDULE_CONFLICT") {
         const list = (err.extra.conflicts as BoardConflict[] | undefined) ?? [];
         const titleOf = (id: string) => {

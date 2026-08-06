@@ -1990,6 +1990,7 @@
   "board.action.withMatch": " (with {title})",
   "board.action.cantSchedule": "Can't schedule here. {reasons}",
   "board.action.cantScheduleClash": "Can't schedule here — it clashes with another match.",
+  "board.action.cooldown": "The scheduler needs a moment — that's a lot of runs in a short time. Try again in a few minutes.",
   "board.action.nothingStage": "Nothing to schedule for this stage.",
   "board.action.placed": "Placed {n} fixture(s).",
   "board.action.placedWarn": "Placed {n} fixture(s) — {w} warning(s).",

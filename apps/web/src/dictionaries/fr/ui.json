@@ -1990,6 +1990,7 @@
   "board.action.withMatch": " (avec {title})",
   "board.action.cantSchedule": "Impossible de programmer ici. {reasons}",
   "board.action.cantScheduleClash": "Impossible de programmer ici — cela entre en conflit avec un autre match.",
+  "board.action.cooldown": "Le planificateur a besoin d'un instant : cela fait beaucoup d'exécutions en peu de temps. Réessayez dans quelques minutes.",
   "board.action.nothingStage": "Rien à programmer pour cette phase.",
   "board.action.placed": "{n} rencontre(s) placée(s).",
   "board.action.placedWarn": "{n} rencontre(s) placée(s) — {w} avertissement(s).",

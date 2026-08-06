@@ -161,13 +161,37 @@ export function renderIsland<P>(
   const cells: Cell[] = [];
   let cursor = 0;
   let output: ReactNode = null;
+  // A RENDER-PHASE update: `setX(...)` called while the component's own body is
+  // still running. React supports this deliberately — it is the sanctioned
+  // "adjust state when a prop changes" pattern (`useBoardActions` clears its
+  // optimistic overrides that way, and the schedule board re-derives its day
+  // tab) — and it does NOT re-enter: it throws away the in-progress output and
+  // runs the body again from the top, repeating until no set fires.
+  //
+  // Calling `run()` re-entrantly instead, which is what this harness used to
+  // do, resets the hook cursors underneath the render that is still executing.
+  // Every hook the caller reads AFTER the set then lands on the wrong cell, so
+  // the component renders garbage — a board whose `useState<Density>("board")`
+  // came back as neither "board" nor "agenda" nor "lanes" — while the harness
+  // reports no error at all. Hence the flag and the loop in `run()`.
+  let rendering = false;
+  let renderPhaseUpdate = false;
   // Effects are keyed by call order like every other hook. `deps` is the
   // PREVIOUS render's array, so an effect re-runs only when its dependencies
   // change — `[]` runs once. Re-running everything on every render would put a
   // component that sets state from an effect into an infinite loop.
   const effects: { deps: Deps; cleanup: void | (() => void) }[] = [];
   let effectCursor = 0;
-  let pending: { index: number; create: () => void | (() => void) }[] = [];
+  // What THIS pass declared, held back until the pass survives. A render-phase
+  // update throws its pass away, and the effect bookkeeping has to go with it:
+  // recording `deps` from a discarded pass would make the surviving pass look
+  // unchanged, so the effect would never run at all.
+  let pending: {
+    index: number;
+    deps: Deps;
+    changed: boolean;
+    create: () => void | (() => void);
+  }[] = [];
   // Memo cells, keyed by call order like every other hook — see `useMemo` on
   // HookDispatcher for why this is not a straight-through call.
   const memos: { deps: Deps; value: Cell }[] = [];
@@ -199,17 +223,17 @@ export function renderIsland<P>(
       const set = (next: Cell) => {
         cells[index] =
           typeof next === "function" ? (next as (previous: Cell) => Cell)(cells[index]) : next;
+        if (rendering) {
+          renderPhaseUpdate = true;
+          return;
+        }
         run();
       };
       return [cells[index], set];
     },
     useEffect(create, deps) {
       const index = effectCursor++;
-      const before = effects[index];
-      const changed = depsChanged(before, deps);
-      if (!before) effects[index] = { deps, cleanup: undefined };
-      else effects[index] = { deps, cleanup: before.cleanup };
-      if (changed) pending.push({ index, create });
+      pending.push({ index, deps, changed: depsChanged(effects[index], deps), create });
     },
     useMemo(create, deps) {
       const index = memoCursor++;
@@ -241,6 +265,10 @@ export function renderIsland<P>(
           dispatch: (action?: Cell) => {
             const cell = reducers[index]!;
             cell.state = cell.reduce(cell.state, action);
+            if (rendering) {
+              renderPhaseUpdate = true;
+              return;
+            }
             run();
           },
         });
@@ -255,25 +283,49 @@ export function renderIsland<P>(
   };
 
   function run() {
-    cursor = 0;
-    effectCursor = 0;
-    memoCursor = 0;
-    callbackCursor = 0;
-    refCursor = 0;
-    reducerCursor = 0;
-    pending = [];
-    const previous = slot.H;
-    slot.H = dispatcher;
-    try {
-      output = Component(props);
-    } finally {
-      slot.H = previous;
-    }
+    // React's render-phase-update loop: a set fired from the component body
+    // discards the output and runs the body again, never commits the
+    // half-finished pass, and never runs effects for it. The bound is React's
+    // own (25, then "Too many re-renders"), so an adjustment that fails to
+    // converge fails LOUDLY here instead of hanging the suite.
+    let passes = 0;
+    do {
+      renderPhaseUpdate = false;
+      cursor = 0;
+      effectCursor = 0;
+      memoCursor = 0;
+      callbackCursor = 0;
+      refCursor = 0;
+      reducerCursor = 0;
+      pending = [];
+      const previous = slot.H;
+      slot.H = dispatcher;
+      rendering = true;
+      try {
+        output = Component(props);
+      } finally {
+        rendering = false;
+        slot.H = previous;
+      }
+      if (++passes > 25) {
+        throw new Error(
+          "Too many re-renders. The component set state during render without converging " +
+            "(see the render-phase-update note in _hook-harness.tsx).",
+        );
+      }
+    } while (renderPhaseUpdate);
     // After the render, like React's commit phase — and OUTSIDE the dispatcher,
     // so an effect that calls setState re-renders through the normal path.
     const queued = pending;
     pending = [];
-    for (const { index, create } of queued) {
+    // Commit the surviving pass's dependency arrays first, keeping whatever
+    // cleanup the previous render left — then run only the effects whose deps
+    // actually moved.
+    for (const { index, deps } of queued) {
+      effects[index] = { deps, cleanup: effects[index]?.cleanup };
+    }
+    for (const { index, changed, create } of queued) {
+      if (!changed) continue;
       effects[index]?.cleanup?.();
       const cleanup = create();
       const slotEntry = effects[index];

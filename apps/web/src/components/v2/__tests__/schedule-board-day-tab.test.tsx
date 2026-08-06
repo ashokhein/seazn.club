@@ -175,13 +175,7 @@ vi.stubGlobal("window", {
 
 const gridOf = (tree: ReactElement[]): ReactElement => {
   const el = tree.find((node) => node.type === BoardGrid);
-  if (!el)
-    throw new Error(
-      "the board rendered no BoardGrid — saw " +
-        tree
-          .map((n) => (typeof n.type === "string" ? n.type : ((n.type as { name?: string }).name ?? "?")))
-          .join(","),
-    );
+  if (!el) throw new Error("the board rendered no BoardGrid");
   return el;
 };
 const trayOf = (tree: ReactElement[]): ReactElement => {

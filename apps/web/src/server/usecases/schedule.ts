@@ -9,6 +9,7 @@ import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
 import { cacheDelPattern } from "@/lib/cache";
+import { rateLimit, type RateLimitConfig } from "@/lib/rate-limit";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { publishDivisionUpdate } from "@/lib/realtime";
 import { PUBLISH_BLOCKED, PUBLISH_UNACKNOWLEDGED, REASON_CODE } from "@/lib/schedule-board";
@@ -754,6 +755,10 @@ export async function autoSchedule(
   stageId: string,
   body: AutoScheduleRequest,
 ): Promise<AutoScheduleOut> {
+  // ---- Phase 0: the cooldown. Before the read, before the solver, before
+  // anything that costs more than a Redis INCR.
+  await rateLimit(`auto-schedule:${auth.orgId}`, AUTO_SCHEDULE_COOLDOWN);
+
   // ---- Phase 1: read. The connection goes back to the pool at the `}` below.
   const plan = await withTenant(auth.orgId, async (tx): Promise<AutoSchedulePlan> => {
     const [stage] = await tx<{ division_id: string; competition_id: string }[]>`
@@ -1057,6 +1062,45 @@ const SOLVER_SLACK_MS = 24 * 60 * MS_PER_MIN;
  * outer safety cap, and should be revisited once that lands.
  */
 export const AUTO_SOLVER_WALL_MS = 8_000;
+
+/**
+ * The per-ORG cooldown on the auto pass. Ten runs per five minutes.
+ *
+ * WHY PER-ORG AND NOT GLOBAL. The resource being protected is a SERIALISED one:
+ * `withZ3Lock` is a correctness device, not a throughput knob (`resetZ3` kills
+ * pthreads process-wide), so every solve on an instance runs one at a time, for
+ * up to `AUTO_SOLVER_WALL_MS`. The failure mode is therefore one org
+ * monopolising a queue everybody shares, not aggregate load — and a global
+ * limiter would punish precisely the tenants being starved. The key is the org.
+ *
+ * WHERE THE NUMBERS COME FROM. Ten runs x 8s is 80s of solver inside a 300s
+ * window, so one org can never take more than ~27% of an instance's solver
+ * capacity however hard it is driven — while a human organiser iterating on a
+ * board is never blocked, because ten is enough to try all three buttons
+ * (Auto / Re-flow / Polish) three times over with a settings change between
+ * each. Anyone clicking faster than one run per 30 seconds sustained is not
+ * reading the results.
+ *
+ * BOTH NUMBERS ARE POLICY, not a derived constant — they are here to be moved.
+ *
+ * FAIL-OPEN, deliberately, and matching every other limiter on this surface
+ * (`ai-plan` 5/hr, `ai-plan-competition` 3/hr, `ai-officials` 5/hr). A Redis
+ * outage must not delete the feature for every tenant at once, and the queue cap
+ * (`MAX_SOLVER_QUEUE`) still bounds what a burst can occupy while it is down.
+ * Note this also makes the limiter INERT with no REDIS_URL — local dev, e2e and
+ * the test suite — so it is a production control, and any test of it has to mock
+ * `incrWindow` to make it real (`schedule-auto-cooldown.test.ts` does).
+ *
+ * IT MUST NOT SLOW THE FAST REFUSAL. `buildSchedule` answers `solver_busy` with
+ * a greedy board WITHOUT taking the z3 lock once two solves are in flight,
+ * precisely so the third caller need not wait out two full budgets — a
+ * `withZ3Teardown` wrapper destroyed that property earlier in this wave and was
+ * deleted for it. This limiter is one Redis INCR ahead of everything, on no
+ * lock and no queue, so the refusal path is unchanged; pinned by
+ * `schedule-auto-solver-busy-latency.test.ts`, which now runs with the limiter
+ * live for exactly that reason.
+ */
+export const AUTO_SCHEDULE_COOLDOWN: RateLimitConfig = { max: 10, windowSeconds: 300 };
 
 /**
  * A FINITE search window, replacing an open-ended one.

@@ -1945,6 +1945,7 @@
   "board.action.withMatch": " (con {title})",
   "board.action.cantSchedule": "No se puede programar aquí. {reasons}",
   "board.action.cantScheduleClash": "No se puede programar aquí: coincide con otro partido.",
+  "board.action.cooldown": "El planificador necesita un momento: son muchas ejecuciones en poco tiempo. Inténtalo de nuevo en unos minutos.",
   "board.action.nothingStage": "No hay nada que programar en esta fase.",
   "board.action.placed": "Se colocaron {n} partido(s).",
   "board.action.placedWarn": "Se colocaron {n} partido(s) — {w} advertencia(s).",

@@ -1945,6 +1945,7 @@
   "board.action.withMatch": " (met {title})",
   "board.action.cantSchedule": "Kan hier niet inplannen. {reasons}",
   "board.action.cantScheduleClash": "Kan hier niet inplannen — het botst met een andere wedstrijd.",
+  "board.action.cooldown": "De planner heeft even nodig — dat zijn veel runs in korte tijd. Probeer het over een paar minuten opnieuw.",
   "board.action.nothingStage": "Niets in te plannen voor deze fase.",
   "board.action.placed": "{n} wedstrijd(en) geplaatst.",
   "board.action.placedWarn": "{n} wedstrijd(en) geplaatst — {w} waarschuwing(en).",

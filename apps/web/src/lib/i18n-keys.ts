@@ -380,6 +380,7 @@ export type DictionaryKey =
   | "board.action.anotherMatch"
   | "board.action.cantSchedule"
   | "board.action.cantScheduleClash"
+  | "board.action.cooldown"
   | "board.action.nothingStage"
   | "board.action.placed"
   | "board.action.placedWarn"
