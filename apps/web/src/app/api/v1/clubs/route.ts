@@ -12,8 +12,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   return v1(async () => {
-    const body = await parseBody(req, CreateClub);
     const auth = await requireAuth(req, "write");
+    const body = await parseBody(req, CreateClub);
     return reply(201, await createClub(auth, body));
   });
 }

@@ -12,8 +12,8 @@ const Body = z.object({ confirm: z.literal(true) });
 export async function POST(req: Request, { params }: Ctx) {
   return v1(async () => {
     const { id } = await params;
-    const body = await parseBody(req, Body);
     const auth = await requireAuth(req, "write");
+    const body = await parseBody(req, Body);
     return clearPoolEntrants(auth, id, body.confirm);
   });
 }
