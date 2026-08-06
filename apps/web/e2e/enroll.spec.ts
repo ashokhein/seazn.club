@@ -13,7 +13,7 @@ test("enroll an existing team into a division via the UI", async ({ page }) => {
   await page.request.post(`/api/v1/imports/${importId}/commit`, { data: {} });
 
   // A competition + division to enroll into.
-  const comp = (await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
+  const comp = (await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Enroll ${TAG}`,
     visibility: "public",
   })).data!;
@@ -68,7 +68,7 @@ test("empty-squad enroll warns, then Sync from team squad pulls late players", a
     name: teamName,
   })).data!;
 
-  const comp = (await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
+  const comp = (await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Sync ${TAG}`,
     visibility: "private",
   })).data!;

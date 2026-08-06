@@ -133,7 +133,7 @@ test.describe.serial("community lifecycle", () => {
         visibility: "private",
       });
     }
-    const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `Limits ${TAG}`,
       visibility: "private",
     });
@@ -221,7 +221,7 @@ test.describe.serial("community lifecycle", () => {
     const fillIds: string[] = [];
     let ceiling: Awaited<ReturnType<typeof apiJson>> | null = null;
     for (let i = 0; i <= maxActive; i++) {
-      const r = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+      const r = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
         name: `Ceiling ${i} ${TAG}`,
         visibility: "private",
       });

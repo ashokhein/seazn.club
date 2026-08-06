@@ -80,7 +80,7 @@ test("officials (#448): maxPerDay caps on the org day across a UTC midnight", as
   });
   expect(tzSet.status).toBeLessThan(300);
 
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `TZ448 ${TAG}-${Math.random().toString(36).slice(2, 6)}`,
     visibility: "private",
   });

@@ -9,7 +9,7 @@ test("card grid: competition card renders match-day anatomy and navigates", asyn
   page,
   request,
 }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Card Nav ${TAG}`,
     visibility: "private",
   });
@@ -60,7 +60,7 @@ test("visibility picker: Link only surfaces a copyable URL; public page stays no
   page,
   request,
 }) => {
-  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Vis Flip ${TAG}`,
     visibility: "private",
   });

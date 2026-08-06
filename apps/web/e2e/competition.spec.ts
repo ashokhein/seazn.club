@@ -20,7 +20,7 @@ test("create a competition via the wizard", async ({ page }) => {
 // tab. Showcase stays inline on General (under visibility, which gates it);
 // Archived only appears once something is archived.
 test("competition settings tabs share one form", async ({ page, request }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Tabs ${TAG}`,
     visibility: "public",
   });

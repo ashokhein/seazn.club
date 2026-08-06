@@ -140,7 +140,7 @@ async function seedOfficials(orgId: string, n: number): Promise<string[]> {
 async function seedDivision(
   request: import("@playwright/test").APIRequestContext,
 ): Promise<{ compId: string; divisionId: string }> {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `PP ${TAG} ${hex()}`,
     visibility: "private",
   });

@@ -876,7 +876,7 @@ async function communityGateSuite(): Promise<void> {
   const s = newSession();
   await signIn(s, `community_${tag}@example.com`);
 
-  const comp = await must(s, "/api/v1/competitions", "POST", {
+  const comp = await must(s, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Community Gate ${tag}`,
   });
   const compId = data<{ id: string }>(comp).id;
@@ -946,7 +946,7 @@ async function main() {
   // race the 5-min entitlement cache.
   await setPlan(ver.org_id, "pro");
 
-  const comp = await must(s, "/api/v1/competitions", "POST", {
+  const comp = await must(s, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Sports Smoke ${tag}`,
   });
   const compId = data<{ id: string }>(comp).id;

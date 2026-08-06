@@ -370,7 +370,7 @@ test.describe("T1 · competition delete is blocked while money is on file", () =
     const org = await activeOrg(page); // the shared Pro org (unlimited comps)
 
     // (a) Event Pass.
-    const passComp = await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
+    const passComp = await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `T1 pass ${TAG} ${randomBytes(3).toString("hex")}`,
       visibility: "private",
     });
@@ -380,7 +380,7 @@ test.describe("T1 · competition delete is blocked while money is on file", () =
     expect(passDel.error?.message ?? "").toContain("Event Pass");
 
     // (b) Unrefunded card registration.
-    const cardComp = await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
+    const cardComp = await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `T1 card ${TAG} ${randomBytes(3).toString("hex")}`,
       visibility: "private",
     });
@@ -402,7 +402,7 @@ test.describe("T1 · competition delete is blocked while money is on file", () =
     expect(cardDel.error?.message ?? "").toContain("card payments");
 
     // (c) Paid sponsorship.
-    const sponsorComp = await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
+    const sponsorComp = await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `T1 sponsor ${TAG} ${randomBytes(3).toString("hex")}`,
       visibility: "private",
     });
@@ -424,7 +424,7 @@ test.describe("T1 · competition delete is blocked while money is on file", () =
 test.describe("T2 · API keys cannot delete a competition", () => {
   test("a live key is barred from DELETE /competitions/:id", async ({ page, playwright }) => {
     const org = await activeOrg(page);
-    const comp = await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
+    const comp = await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
       name: `T2 ${TAG} ${randomBytes(3).toString("hex")}`,
       visibility: "private",
     });

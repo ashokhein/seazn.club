@@ -36,7 +36,7 @@ const GENERIC = {
 };
 
 test("deleting a setup division lifts the free-plan divisions gate", async ({ page, request }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Del Gate ${TAG}`,
     visibility: "private",
   });
@@ -107,7 +107,7 @@ test("deleting a setup division lifts the free-plan divisions gate", async ({ pa
 // quotas are shared state and this file is already in the SERIAL project;
 // division-archive runs in parallel on the Pro org, where no limit bites.
 test("a played division keeps its slot, and both surfaces say so", async ({ page, request }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Slot Truth ${TAG}`,
     visibility: "private",
   });

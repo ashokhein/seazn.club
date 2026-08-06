@@ -4,7 +4,7 @@ import { apiJson, TAG } from "./helpers";
 // PROMPT-28 formats: the new stage presets are reachable from the division
 // builder, and a ladder division renders its challenge panel.
 test("division builder exposes the Jul3/08 format presets", async ({ page, request }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Formats ${TAG}`,
     visibility: "private",
   });
@@ -23,7 +23,7 @@ test("division builder exposes the Jul3/08 format presets", async ({ page, reque
 });
 
 test("ladder division renders the challenge panel", async ({ page, request }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Ladder ${TAG}`,
     visibility: "private",
   });
@@ -63,7 +63,7 @@ test("ladder division renders the challenge panel", async ({ page, request }) =>
 });
 
 test("americano renders the rotation grid", async ({ page, request }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Americano ${TAG}`,
     visibility: "private",
   });

@@ -21,7 +21,7 @@ test("every fixture row has a Score entry point", async ({ page, request }) => {
 });
 
 test("forfeit dropdown closes when clicking outside", async ({ page, request }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Badminton ${TAG}`,
     visibility: "private",
   });
@@ -52,7 +52,7 @@ test("badminton pad shows the current game number, not always game 1", async ({
   page,
   request,
 }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Badminton games ${TAG}`,
     visibility: "private",
   });
@@ -94,7 +94,7 @@ test("badminton: an entered game score lands in the header summary live (v3/09 ย
   page,
   request,
 }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Badminton header ${TAG}`,
     visibility: "private",
   });
@@ -139,7 +139,7 @@ test("cricket: undo mid-over keeps the scoring panel usable (v3/09 ยง2)", async 
   page,
   request,
 }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Cricket undo ${TAG}`,
     visibility: "private",
   });
@@ -219,7 +219,7 @@ test("cricket scores over-by-over: add an over grows the total, then close innin
   request,
 }) => {
   // a minimal cricket fixture
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Cricket ${TAG}`,
     visibility: "private",
   });
@@ -306,7 +306,7 @@ test("cricket DLS scales a five-ball-over format onto the published table", asyn
   page,
   request,
 }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Cricket DLS ${TAG}`,
     visibility: "private",
   });

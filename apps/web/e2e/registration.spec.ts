@@ -11,7 +11,7 @@ test("public registration: open → register → confirm to entrant", async ({
   browser,
 }) => {
   // Organiser side: public competition + division with registration enabled.
-  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string; slug: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Open Day ${TAG}`,
     visibility: "public",
   });

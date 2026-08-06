@@ -10,7 +10,10 @@ A **competition** is the event itself: "Summer League 2026", "Spring Smash". It 
 
 1. From your dashboard press **New competition**.
 2. Give it a name — the web address is derived from it automatically.
-3. Add dates and a description. The description supports headings, images, links and a call-to-action button, and shows on your public page exactly as the Preview tab shows it.
+3. Set the dates. An **end date is required**; a start date is optional. If you give both, the end date cannot fall before the start.
+4. Add a description. It supports headings, images, links and a call-to-action button, and shows on your public page exactly as the Preview tab shows it.
+
+The end date is the one field you cannot leave blank, because it is what tells us when the event is over: it drives the wrap-up prompt below, and the [Event Pass](/help/billing/event-pass) window. You can change it whenever the schedule moves — in the competition's settings — but you cannot clear it back to nothing.
 
 ## Visibility
 

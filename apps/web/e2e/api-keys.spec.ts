@@ -45,7 +45,12 @@ test.describe.serial("api keys", () => {
       extraHTTPHeaders: { Authorization: `Bearer ${secret}` },
     });
     try {
-      const res = await keyApi.post("/api/v1/competitions", { data: { name: `Nope ${TAG}` } });
+      // #376: POST /competitions parses the BODY before it checks the scope,
+      // so an incomplete body 400s and the 403 this test exists for is never
+      // reached. Send one the schema accepts.
+      const res = await keyApi.post("/api/v1/competitions", {
+        data: { name: `Nope ${TAG}`, ends_on: "2030-12-31" },
+      });
       expect(res.status()).toBe(403);
       const body = (await res.json()) as { error?: { message?: string } };
       expect(body.error?.message ?? "").toContain("manage");

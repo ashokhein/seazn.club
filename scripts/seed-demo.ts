@@ -912,7 +912,7 @@ async function main() {
     // any division that already exists.
     let c: { id: string };
     try {
-      c = await call("/api/v1/competitions", "POST", { name: comp.name });
+      c = await call("/api/v1/competitions", "POST", { ends_on: "2030-12-31", name: comp.name });
     } catch (e) {
       // Accounts seeded before a PLAN change may sit at their plan caps —
       // skip the competition rather than aborting the resume run.

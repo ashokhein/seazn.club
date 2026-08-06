@@ -12,7 +12,7 @@ import {
 // parallel-safe on the Pro org.
 
 test("resulted division: 409 → archive → restore round-trip", async ({ page, request }) => {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `Arch Cycle ${TAG}`,
     visibility: "private",
   });

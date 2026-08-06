@@ -211,7 +211,7 @@ test.describe.serial("pro lifecycle", () => {
       request,
       "/api/v1/competitions",
       "POST",
-      { name: `Secret ${TAG}`, visibility: "private" },
+      { ends_on: "2030-12-31", name: `Secret ${TAG}`, visibility: "private" },
     );
     const res = await page.request.get(`/shared/${orgSlug}/${comp.data!.slug}`);
     expect(res.status()).toBe(404);
@@ -225,7 +225,7 @@ test.describe.serial("pro lifecycle", () => {
       request,
       "/api/v1/competitions",
       "POST",
-      { name: `Backdoor ${TAG}`, visibility: "unlisted" },
+      { ends_on: "2030-12-31", name: `Backdoor ${TAG}`, visibility: "unlisted" },
     );
     await page.goto(`/shared/${orgSlug}/${comp.data!.slug}`);
     await expect(page.getByRole("heading", { name: `Backdoor ${TAG}` })).toBeVisible({

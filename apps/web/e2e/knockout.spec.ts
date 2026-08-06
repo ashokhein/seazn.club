@@ -15,7 +15,7 @@ interface FixtureRow {
 }
 
 async function seedKnockoutDivision(request: Parameters<typeof apiJson>[0]) {
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `KO ${TAG}-${Math.random().toString(36).slice(2, 6)}`,
     visibility: "private",
   });
@@ -109,7 +109,7 @@ test("double-elim division renders the two-lane bracket on the fixtures tab (con
 }) => {
   // Same rig as the knockout seed, but a double_elim stage — the page gate
   // regressed once by only admitting kind === "knockout".
-  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", { ends_on: "2030-12-31",
     name: `DE ${TAG}-${Math.random().toString(36).slice(2, 6)}`,
     visibility: "private",
   });
