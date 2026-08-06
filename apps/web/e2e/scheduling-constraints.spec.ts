@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
-import { TAG, apiJson, addEntrantsViaApi } from "./helpers";
+import { TAG, apiJson, addEntrantsViaApi, divisionPath } from "./helpers";
 
 /**
  * The scheduling rules an organiser STORES, proven on the board (#452).
@@ -198,7 +198,7 @@ const panel = (page: Page) => page.getByRole("region", { name: "Schedule conflic
  * copy could change, `Ada` cannot.
  */
 async function openBoard(page: Page, divisionId: string, anchorEntrant: string): Promise<void> {
-  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
   await expect(page.getByText(anchorEntrant).first()).toBeVisible({ timeout: 20_000 });
 }
 

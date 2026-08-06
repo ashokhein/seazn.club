@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { TAG, apiJson } from "./helpers";
+import { TAG, apiJson, competitionPath } from "./helpers";
 
 // Core organiser journey: create a competition through the wizard.
 test("create a competition via the wizard", async ({ page }) => {
@@ -30,7 +30,7 @@ test("competition settings tabs share one form", async ({ page, request }) => {
     name: `Tabs ${TAG}`,
     visibility: "public",
   });
-  await page.goto(`/competitions/${comp.data!.id}/settings`);
+  await page.goto(await competitionPath(page.request, comp.data!.id, "/settings"));
 
   const tablist = page.getByRole("tablist", { name: "Competition settings" });
   await expect(tablist.getByRole("tab", { name: "General" })).toBeVisible({ timeout: 20_000 });

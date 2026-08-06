@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { apiJson, TAG, grantCompetitionPassSql } from "./helpers";
+import { apiJson, TAG, grantCompetitionPassSql, competitionPath } from "./helpers";
 
 // PROMPT-36 (v3/07): pricing page renders three offers from plan_entitlements
 // with a working currency switcher and zero "Business"; the in-competition
@@ -140,7 +140,7 @@ test.describe.serial("event pass gate (community org)", () => {
     // The gate renders where the limit bites: submitting a 3rd division in
     // the builder 402s and the paywall offers BOTH paths (v3/07 §3) — the
     // one-time pass CTA links to this competition's upgrade page.
-    await page.goto(`/competitions/${compId}`);
+    await page.goto(await competitionPath(page.request, compId));
     await page.waitForURL(/\/o\/[^/]+\/c\/[^/]+/, { timeout: 20_000 });
     await page.goto(`${new URL(page.url()).pathname}/d/new`);
     await page.getByPlaceholder("U16 Boys T20").fill("Gate Trigger");

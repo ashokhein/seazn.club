@@ -1,5 +1,12 @@
 import { test, expect } from "@playwright/test";
-import { TAG, apiJson, addEntrantsViaApi, createStageAndGenerate } from "./helpers";
+import {
+  TAG,
+  apiJson,
+  addEntrantsViaApi,
+  createStageAndGenerate,
+  competitionPath,
+  divisionPath,
+} from "./helpers";
 
 // The scheduling board's write paths (schedule-panels.spec covers officials /
 // history-tab / constraints-tab): settings → auto-propose → apply → validate →
@@ -99,7 +106,7 @@ test.describe.serial("schedule board", () => {
     expect(validated.data!.conflicts.filter((c) => c.blocking)).toHaveLength(0);
 
     // The board tab renders the timetabled fixtures.
-    await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+    await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
     await expect(page.getByText("Bolt").first()).toBeVisible({ timeout: 20_000 });
   });
 
@@ -123,7 +130,7 @@ test.describe.serial("schedule board", () => {
       return route.continue();
     });
 
-    await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+    await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
     // The board itself still works — validation is advisory and always was.
     await expect(page.getByText("Bolt").first()).toBeVisible({ timeout: 20_000 });
 
@@ -521,7 +528,7 @@ test("the publish gate offers a way through for warnings, and none for a blocker
     court_label: "Court B",
   });
 
-  await page.goto(`/competitions/${comp.data!.id}/schedule`);
+  await page.goto(await competitionPath(page.request, comp.data!.id, "/schedule"));
   await page.getByTestId("board-publish-schedule").click();
 
   // The refusal became a question, and it names what is being acknowledged.
@@ -579,7 +586,7 @@ test("competition schedule shows an empty state when there are no divisions", as
     name: `Board empty ${TAG}`,
     visibility: "private",
   });
-  await page.goto(`/competitions/${comp.data!.id}/schedule`);
+  await page.goto(await competitionPath(page.request, comp.data!.id, "/schedule"));
   await expect(
     page.getByRole("heading", { name: /competition schedule/i }),
   ).toBeVisible();

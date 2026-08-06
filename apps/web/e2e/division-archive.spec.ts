@@ -4,6 +4,8 @@ import {
   apiJson,
   createStageAndGenerate,
   TAG,
+  competitionPath,
+  divisionPath,
 } from "./helpers";
 
 // Resulted-division lifecycle (v3/09 §4, PROMPT-38): delete 409s with the
@@ -54,7 +56,7 @@ test("resulted division: 409 → archive → restore round-trip", async ({ page,
 
   // Archive from the division's danger zone (plain danger confirm, no typing).
   // v8: archive lives in Settings → Danger zone.
-  await page.goto(`/divisions/${divisionId}?tab=settings`);
+  await page.goto(await divisionPath(page.request, divisionId, "?tab=settings"));
   await page.getByRole("button", { name: /Danger zone/ }).click({ timeout: 20_000 });
   await page.getByRole("button", { name: "Archive division" }).click({ timeout: 20_000 });
   await page.getByRole("dialog").getByRole("button", { name: "Archive division" }).click();
@@ -68,7 +70,7 @@ test("resulted division: 409 → archive → restore round-trip", async ({ page,
   expect(listed.data!.every((d) => d.id !== divisionId)).toBe(true);
 
   // Restore from competition settings → Archived tab.
-  await page.goto(`/competitions/${compId}/settings`);
+  await page.goto(await competitionPath(page.request, compId, "/settings"));
   await page.getByRole("tab", { name: /Archived/ }).click({ timeout: 20_000 });
   const archivedSection = page.getByTestId("archived-divisions");
   await expect(archivedSection.getByText("Resulted")).toBeVisible({ timeout: 20_000 });

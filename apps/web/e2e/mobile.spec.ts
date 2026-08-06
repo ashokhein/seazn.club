@@ -7,6 +7,7 @@ import {
   expectNoHorizontalScroll,
   addEntrantsViaApi,
   createStageAndGenerate,
+  divisionPath,
 } from "./helpers";
 
 // v3/02 §4 viewport gate — runs ONLY in the mobile-se / mobile-14 projects
@@ -211,7 +212,7 @@ test("the publish gate's confirm sheet holds at phone width", async ({ page, req
     court_label: "Court B",
   });
 
-  await page.goto(`/divisions/${gateDivisionId}/schedule?tab=board`, { waitUntil: "load" });
+  await page.goto(await divisionPath(page.request, gateDivisionId, "/schedule?tab=board"), { waitUntil: "load" });
   const publish = page.getByTestId("board-publish-schedule");
   await expect(publish).toBeVisible({ timeout: 30_000 });
   await publish.click();
@@ -457,7 +458,7 @@ test("z3 schedule actions + result strip hold at phone width", async ({ page, re
   );
   expect(settings.status).toBe(200);
 
-  await page.goto(`/divisions/${solverDivisionId}/schedule?tab=board`, { waitUntil: "load" });
+  await page.goto(await divisionPath(page.request, solverDivisionId, "/schedule?tab=board"), { waitUntil: "load" });
 
   // Ids, not labels (#465): "Auto-schedule {name}" interpolates the division
   // name and "Improve times" is not the word "Polish".

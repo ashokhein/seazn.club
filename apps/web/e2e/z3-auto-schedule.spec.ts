@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
-import { TAG, apiJson, addEntrantsViaApi, createStageAndGenerate } from "./helpers";
+import { TAG, apiJson, addEntrantsViaApi, createStageAndGenerate, divisionPath } from "./helpers";
 
 // T15 — the three z3 solver actions on the schedule board, driven through the
 // UI against the real engine.
@@ -154,7 +154,7 @@ async function seedBoard(
  * clears `lastRun` before it posts, and a locator resolves at read time.
  */
 async function runSolver(page: Page, divisionId: string, testid: string): Promise<Locator> {
-  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await page.goto(await divisionPath(page.request, divisionId, "/schedule?tab=board"));
   const button = page.getByTestId(testid);
   await expect(button).toBeVisible({ timeout: 30_000 });
   const strip = page.getByTestId("schedule-result-strip");

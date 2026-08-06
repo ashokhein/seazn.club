@@ -9942,18 +9942,14 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   );
   const fixtures = v1data<{ fixtures: { id: string }[] }>(gen1).fixtures;
 
-  // --- PROMPT-30: slug console routes + legacy 301s ---
+  // --- PROMPT-30: slug console routes ---
+  // The "legacy /divisions/[id] 301s to the slug chain" check went with the
+  // route it tested (deleted 2026-08-06). It is deliberately NOT replaced by a
+  // 404 probe: that would pin a URL we have decided not to serve.
   const consolePage = await html(admin, `/o/${orgSlug}/c/${compSlug}/d/${divSlug}`);
   check("console division page serves on slug URL", consolePage.status === 200);
   const fixturePage = await html(admin, `/o/${orgSlug}/c/${compSlug}/d/${divSlug}/f/1`);
   check("fixture ordinal page serves (/f/1)", fixturePage.status === 200);
-  const legacy = await pageRedirect(admin, `/divisions/${divId}`);
-  check(
-    "legacy /divisions/[id] 301s to the slug chain",
-    legacy.status >= 301 &&
-      legacy.status <= 308 &&
-      (legacy.location ?? "").includes(`/o/${orgSlug}/c/${compSlug}/d/${divSlug}`),
-  );
 
   // Scheduling console (doc 12, PROMPT-17): scoring is closed until the
   // explicit start; auto pass proposes without persisting; start opens scoring.

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { TAG, apiJson } from "./helpers";
+import { TAG, apiJson, divisionPath } from "./helpers";
 
 // Unified Add-Entrant: enroll an EXISTING team into a division from the UI
 // (the "Existing team" mode), instead of re-running the CSV import.
@@ -38,7 +38,7 @@ test("enroll an existing team into a division via the UI", async ({ page }) => {
     logo_path: "orgs/e2e/clubs/enroll-crest.png",
   });
 
-  await page.goto(`/divisions/${div.id}?tab=entrants`);
+  await page.goto(await divisionPath(page.request, div.id, "?tab=entrants"));
   await page.getByRole("button", { name: "Existing team" }).click();
   await page.getByRole("textbox", { name: "Search teams" }).fill(`Riverside U12 ${TAG}`);
   await page.getByText(`Riverside U12 ${TAG}`, { exact: true }).first().click();
@@ -86,7 +86,7 @@ test("empty-squad enroll warns, then Sync from team squad pulls late players", a
   )).data!;
 
   // Enroll form: picking the squad-less team surfaces the empty-squad warning.
-  await page.goto(`/divisions/${div.id}?tab=entrants`);
+  await page.goto(await divisionPath(page.request, div.id, "?tab=entrants"));
   await page.getByRole("button", { name: "Existing team" }).click();
   await page.getByRole("textbox", { name: "Search teams" }).fill(teamName);
   await page.getByText(teamName, { exact: true }).first().click();

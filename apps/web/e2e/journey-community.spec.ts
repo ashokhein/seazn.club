@@ -8,6 +8,7 @@ import {
   createCompetitionViaUi,
   createStageAndGenerate,
   scoreRemainingFixtures,
+  divisionPath,
 } from "./helpers";
 
 // The free tier runs a real (small) tournament end-to-end, and every plan
@@ -78,7 +79,7 @@ test.describe.serial("community lifecycle", () => {
     // Start from the console (same UI moment the pro journey exercises).
     // Fixtures are pre-generated → quick-start refreshes without redirecting;
     // poll the API for the status flip (the button label churns meanwhile).
-    await page.goto(`/divisions/${divisionId}`);
+    await page.goto(await divisionPath(page.request, divisionId));
     await page.getByRole("button", { name: "Start tournament" }).click();
     await expect
       .poll(
@@ -92,7 +93,7 @@ test.describe.serial("community lifecycle", () => {
     await scoreRemainingFixtures(request, fixtureIds);
 
     // Standings render for the free org (names render as rowheaders).
-    await page.goto(`/divisions/${divisionId}?tab=standings`);
+    await page.goto(await divisionPath(page.request, divisionId, "?tab=standings"));
     for (const name of PLAYERS) {
       await expect(page.getByRole("row", { name: new RegExp(`\\b${name}\\b`) }).first()).toBeVisible(
         { timeout: 20_000 },
@@ -176,7 +177,7 @@ test.describe.serial("community lifecycle", () => {
     expect(overflow.error?.code).toBe("PAYMENT_REQUIRED");
 
     // …and the same attempt through the panel renders the UpgradeGate.
-    await page.goto(`/divisions/${crowdedDivisionId}?tab=entrants`);
+    await page.goto(await divisionPath(page.request, crowdedDivisionId, "?tab=entrants"));
     await page.getByRole("textbox", { name: "Name", exact: true }).fill("Gate Trigger");
     await page.getByRole("button", { name: "Add entrant", exact: true }).click();
     await expect(page.locator('[data-feature="entrants.per_division.max"]')).toBeVisible({

@@ -912,7 +912,7 @@ export async function createDivisionViaUi(
   competitionId: string,
   name: string,
 ): Promise<string> {
-  await page.goto(`/competitions/${competitionId}/divisions/new`);
+  await page.goto(await competitionPath(page.request, competitionId, "/d/new"));
   // The name field is the first textbox on the Basics tab (see formats.spec.ts).
   await page.getByRole("textbox").first().fill(name);
   // Creation is guarded to the last tab.

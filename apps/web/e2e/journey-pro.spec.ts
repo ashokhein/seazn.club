@@ -9,6 +9,7 @@ import {
   createStageAndGenerate,
   scoreFixture,
   scoreRemainingFixtures,
+  divisionPath,
 } from "./helpers";
 
 // Full Pro lifecycle as one ordered story: create a competition through the
@@ -60,7 +61,7 @@ test.describe.serial("pro lifecycle", () => {
   });
 
   test("add entrants — one through the panel, the rest via API", async ({ page, request }) => {
-    await page.goto(`/divisions/${divisionId}?tab=entrants`);
+    await page.goto(await divisionPath(page.request, divisionId, "?tab=entrants"));
     // If other specs left teams in the shared org, the Add-entrant form
     // defaults to "Existing team" (and flips async once teams load, detaching
     // the fields) — pin it to the ad-hoc "New entrant" mode first.
@@ -87,7 +88,7 @@ test.describe.serial("pro lifecycle", () => {
   });
 
   test("start the tournament from the division console", async ({ page, request }) => {
-    await page.goto(`/divisions/${divisionId}`);
+    await page.goto(await divisionPath(page.request, divisionId));
     await page.getByRole("button", { name: "Start tournament" }).click();
     // Fixtures were pre-generated, so quick-start generates 0 and only
     // refreshes (no redirect). The button label flips to "Starting…" while the
@@ -105,14 +106,14 @@ test.describe.serial("pro lifecycle", () => {
         { timeout: 20_000 },
       )
       .toBe("active");
-    await page.goto(`/divisions/${divisionId}?tab=fixtures`);
+    await page.goto(await divisionPath(page.request, divisionId, "?tab=fixtures"));
     await expect(page.getByRole("link", { name: /^Score/ }).first()).toBeVisible({
       timeout: 20_000,
     });
   });
 
   test("score one fixture on the pad, the rest via API", async ({ page, request }) => {
-    await page.goto(`/divisions/${divisionId}?tab=fixtures`);
+    await page.goto(await divisionPath(page.request, divisionId, "?tab=fixtures"));
     await page.getByRole("link", { name: /^Score/ }).first().click();
     await page.waitForURL(/\/f\/\d+/, { timeout: 20_000 });
     // PROMPT-30: the URL carries the per-division ordinal — map back to the id.
@@ -153,7 +154,7 @@ test.describe.serial("pro lifecycle", () => {
     const done = await apiJson(request, `/api/v1/stages/${stageId}/complete`, "POST");
     expect(done.status).toBeLessThan(300);
 
-    await page.goto(`/divisions/${divisionId}?tab=standings`);
+    await page.goto(await divisionPath(page.request, divisionId, "?tab=standings"));
     // A ranked table with every entrant present (names render as rowheaders).
     for (const name of PLAYERS) {
       await expect(page.getByRole("row", { name: new RegExp(`\\b${name}\\b`) }).first()).toBeVisible(
@@ -177,7 +178,7 @@ test.describe.serial("pro lifecycle", () => {
     orgSlug = (await activeOrg(page)).slug;
 
     // G9: the console division header deep-links to this public page.
-    await page.goto(`/divisions/${divisionId}`);
+    await page.goto(await divisionPath(page.request, divisionId));
     await expect(
       page.locator(`a[href="/shared/${orgSlug}/${competitionSlug}/${divisionSlug}"]`),
     ).toBeVisible({ timeout: 20_000 });

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { TAG, apiJson, activeOrg, failOnNativeDialog } from "./helpers";
+import { TAG, apiJson, activeOrg, failOnNativeDialog, competitionPath } from "./helpers";
 
 // PROMPT-32 acceptance: match-day cards navigate, ConfirmDialog replaced
 // window.confirm everywhere, and the visibility picker surfaces the share
@@ -67,7 +67,7 @@ test("visibility picker: Link only surfaces a copyable URL; public page stays no
   expect(comp.status).toBeLessThan(300);
   const orgSlug = (await activeOrg(page)).slug;
 
-  await page.goto(`/competitions/${comp.data!.id}/settings`);
+  await page.goto(await competitionPath(page.request, comp.data!.id, "/settings"));
   // Radio cards speak plain language (v3/03 §7).
   await expect(page.getByText("Only your team can see it.")).toBeVisible();
   await page.getByRole("radio", { name: /link only/i }).check();

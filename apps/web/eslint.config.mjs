@@ -46,15 +46,12 @@ const eslintConfig = defineConfig([
   {
     // v3/01 §6 (PROMPT-30): console URLs come from routes.* — string-built
     // paths break when the URL scheme changes. Excluded: the builder itself,
-    // legacy redirect resolution + stub pages, API path docs, robots.
+    // API path docs, robots. The legacy id-route resolver and its eight stub
+    // pages were excluded here too until they were deleted (2026-08-06).
     files: ["src/**/*.{ts,tsx}"],
     ignores: [
       "src/lib/routes.ts",
-      "src/server/legacy-routes.ts",
       "src/server/api-v1/**",
-      "src/app/competitions/**",
-      "src/app/divisions/**",
-      "src/app/fixtures/**",
       "src/app/robots.ts",
     ],
     rules: {

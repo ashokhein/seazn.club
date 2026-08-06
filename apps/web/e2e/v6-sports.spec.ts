@@ -1,6 +1,13 @@
 import { test, expect, type APIRequestContext } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { activeOrg, addEntrantsViaApi, apiJson, createStageAndGenerate, TAG } from "./helpers";
+import {
+  activeOrg,
+  addEntrantsViaApi,
+  apiJson,
+  createStageAndGenerate,
+  TAG,
+  fixturePath,
+} from "./helpers";
 
 // design/v6 (PROMPT-48..50): tennis on the nested kernel, ice/field hockey on
 // the period kernel — pads, phase machine, suspensions/strength, shootouts,
@@ -68,7 +75,7 @@ test("tennis: device-width pad speaks the score, banks a tie-break set, undo res
   await sendEvent(request, fixtureId, "core.start", {});
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(`/fixtures/${fixtureId}`);
+  await page.goto(await fixturePath(page.request, fixtureId));
 
   // One tap per point; the pad speaks 15 then 30.
   await page.getByRole("button", { name: /Rune/ }).click({ timeout: 20_000 });
@@ -111,7 +118,7 @@ test("tennis: console set-totals entry needs tie-break points for a 7–6 set", 
     entrants: ["Mira", "Tess"],
   });
   await sendEvent(request, fixtureId, "core.start", {});
-  await page.goto(`/fixtures/${fixtureId}`);
+  await page.goto(await fixturePath(page.request, fixtureId));
   await page.getByRole("button", { name: /Set totals/ }).click({ timeout: 20_000 });
   await expect(async () => {
     await page.getByLabel(/Mira games/).fill("7");
@@ -137,7 +144,7 @@ test("icehockey: penalties drive the strength chip (5v4 → 5v3 → release), OT
   });
   const [bears, kings] = entrantIds as [string, string];
   await sendEvent(request, fixtureId, "core.start", {});
-  await page.goto(`/fixtures/${fixtureId}`);
+  await page.goto(await fixturePath(page.request, fixtureId));
 
   // Penalty flow on the pad: Kings minor → 5v4.
   const kingsPad = page.locator("div.rounded-xl", { hasText: "Kings" }).last();
@@ -200,7 +207,7 @@ test("icehockey: GWS recorder alternates attempts and decides", async ({ page, r
   for (const to of ["P2", "P3", "FT", "FT"]) {
     await sendEvent(request, fixtureId, "icehockey.period.advance", { to });
   }
-  await page.goto(`/fixtures/${fixtureId}`);
+  await page.goto(await fixturePath(page.request, fixtureId));
   await expect(page.getByText(/Shootout — record each attempt/)).toBeVisible({ timeout: 20_000 });
 
   // First attempt by Aces; the recorder then expects Blades (Aces disabled).
@@ -275,7 +282,7 @@ test("hockey (FIH): quarters, team-short chip, escalation hint, draw stands in s
     person: p1.data!.id,
     class: "green",
   });
-  await page.goto(`/fixtures/${fixtureId}`);
+  await page.goto(await fixturePath(page.request, fixtureId));
   await expect(page.getByText("11v10").first()).toBeVisible({ timeout: 20_000 });
 
   // Picking the same player for the next card surfaces the escalation hint.
