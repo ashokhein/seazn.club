@@ -155,3 +155,45 @@ distinct failure across them verified green in isolation. tsc 0, lint 0.
    inbound `BuildInput.seed`, which would be dead engine surface until the web adopts
    it and would put the "never worse than greedy" floor and the delta gate's baseline
    at the mercy of the caller's config. Not worth 0.26%. No engine change.
+
+## Task 7 fix round 2 — RULING R20 + three latent `current` bugs
+
+**R20: POLISH freezes against the PUBLISHED board.** `publishedSlotOf` now reads
+`locked` → `current` → greedy seed. The old fall-through anchored a frozen card to a
+slot greedy INVENTED during that run, so POLISH silently moved published cards — the
+opposite of the mode's purpose. Only reachable for a frozen id with no `locked` anchor.
+
+Three bugs in `current`, all fixed engine-side and all mutation-proved:
+
+1. `current: []` counted every placed card as moved. One `currentBoard` binding now
+   treats empty as "no baseline", read by BOTH `publishedSlotOf` and `movedFrom` so a
+   freeze and its `moved` count can never disagree about whether a caller board exists.
+2. A LOST card read as `moved: 0` — `movedFrom` only walked the board, so a run that
+   dropped a match reported the most alarming outcome as the most reassuring one.
+   Baseline rows absent from the answer are now counted.
+3. The determinism case pinned `status === "repaired"` under a budget. Now
+   `status !== "clean"`, with the `z3LoadCount()` witness moved AHEAD of it so the
+   mutant fails on the thing the case is about rather than on machine speed.
+
+## OWED BY THE WEB LANE — `BuildInput.current` has NO caller (→ Task 12)
+
+`git grep buildSchedule` under `apps/web` is **0 hits**, so nothing supplies `current`
+and the user-visible wrong number is unchanged end to end. The engine side is done; the
+wiring is not, and **R20 does not take effect until it lands.**
+
+Pass the board for the cards the run may touch — the web already computes exactly this
+as `placedNow` + `pinnedNow` in `schedule.ts`. Two traps, both handled in the engine and
+both easy to reintroduce at the seam:
+
+1. **Do not synthesise a baseline on a first-ever build.** The engine reads `[]` as "no
+   baseline" and falls back to the seed, which is right. A caller that instead passes a
+   placeholder row gets every placed card counted as moved — "12 matches moved" for a
+   board nobody had ever scheduled.
+2. **Do not filter out cards the run may fail to place.** A baseline row absent from the
+   answer is counted as MOVED on purpose: that is a lost match, and it is the one
+   outcome that must never render as "nothing moved". Filtering to "cards we expect
+   back" silently re-hides it.
+
+Three things `current` is NOT: it is not `existing` (the immovable board — conflating
+them puts the organiser's own cards in their own way); it does not constrain the solve;
+and it does not replace `locked` for a card that must not move at all.

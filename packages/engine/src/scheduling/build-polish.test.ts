@@ -51,6 +51,49 @@ const optimal: SchedulableFixture[] = [
   { id: "b", roundNo: 1, home: "E3", away: "E4", locked: { court: "C2", startAt: T0 } },
 ];
 
+/**
+ * THE measured corner from `build.test.ts`: one court, two slots, and a start
+ * window only `b` can use.
+ *
+ * Greedy walks fixtures in (roundNo, id) order, takes 09:00 for `a` because
+ * nothing stops it, and is then left with nowhere legal for `b` — so it hands
+ * back a one-card board. The solver looks at both at once and places both:
+ * greedy `[a@C1+0]`, z3 `[b@C1+0, a@C1+30]`.
+ *
+ * Used by every `current` case below because it is the one corner where the
+ * caller's board, the greedy seed and the solver's answer can all be made to
+ * disagree — which is what it takes to prove WHICH of them a number was read
+ * from.
+ */
+const cornerConfig: SlotConfig & { courts: string[] } = {
+  ...config,
+  courts: ["C1"],
+  sessionWindows: [{ from: T0, to: T0 + 60 * MIN }],
+  constraints: {
+    noBackToBack: false,
+    fieldFairness: "off",
+    parallelism: "mixed",
+    crossPersonClash: "warn",
+    startWindows: [{ target: { kind: "entrant", id: "E3" }, notAfter: T0 }],
+  },
+};
+const cornerFixtures: SchedulableFixture[] = [
+  { id: "a", roundNo: 1, home: "E1", away: "E2" },
+  { id: "b", roundNo: 1, home: "E3", away: "E4" },
+];
+
+const row = (fixtureId: string, court: string, startAt: number): Assignment => ({
+  fixtureId,
+  court,
+  startAt,
+  endAt: startAt + 30 * MIN,
+  entrants: [],
+  people: [],
+});
+
+/** The organiser's board: just `a`, wherever they published it. */
+const currentWithAAt = (startAt: number): Assignment[] => [row("a", "C1", startAt)];
+
 describe("buildSchedule — polish", () => {
   it("returns already_optimal and moves nothing on an optimal board", async () => {
     const out = await buildSchedule({ fixtures: optimal, config, mode: "polish", frozen: ["a", "b"] });
@@ -96,72 +139,118 @@ describe("buildSchedule — polish", () => {
   // published slot is OFF the lattice"). Deleting `input.frozen` reds both.
   // Nothing is added here rather than duplicating them one file over.
 
-  it("counts a frozen card greedy re-placed as MOVED, against the caller's board", async () => {
-    // THE SHAPE NEITHER CASE ABOVE CAN SEE, because both of them `lock`
-    // everything: a fixture that is frozen but carries NO `locked` anchor.
+  it("freezes a card to where it was PUBLISHED, not to where greedy re-placed it", async () => {
+    // RULING R20, and the shape neither case above can see because both of them
+    // `lock` everything: a fixture that is frozen but carries NO `locked`
+    // anchor.
     //
-    // `publishedSlotOf` falls back to greedy for such a card, so greedy
-    // re-places it and the freeze then holds it at GREEDY's slot — not the one
-    // the organiser published. Diffed against the seed that reads as zero, and
-    // the board strip renders `moved` verbatim as "nothing moved" about a board
-    // whose published times changed. A wrong number on a screen, not merely an
-    // internal accounting quirk.
+    // `publishedSlotOf` used to fall straight through to greedy for such a
+    // card. Greedy re-places it — that is what greedy does — so the freeze held
+    // it at a slot INVENTED during this very run, and POLISH silently moved a
+    // card an entrant had already been told about. The exact opposite of what
+    // the mode is for.
     //
-    // The measured corner from `build.test.ts`: one court, two slots, and a
-    // start window that makes greedy take the early one for the wrong card.
-    // Greedy places `[a@C1+0]`; the organiser's board had `a` at 09:30.
-    const cornerConfig: SlotConfig & { courts: string[] } = {
+    // Measured corner (`build.test.ts`): one court, two slots, and a start
+    // window only `b` can use. Greedy walks in (roundNo, id) order, takes 09:00
+    // for `a`, and then has nowhere legal for `b`. The organiser's board has `a`
+    // at 09:30 — so honouring the PUBLISHED slot also happens to free 09:00 and
+    // let both cards fit, which is why `placed` is asserted too.
+    const out = await buildSchedule({
+      fixtures: cornerFixtures,
+      config: cornerConfig,
+      mode: "polish",
+      frozen: ["a"],
+      current: currentWithAAt(T0 + 30 * MIN),
+    });
+    const a = out.assignments.find((x) => x.fixtureId === "a")!;
+    expect({ court: a.court, startAt: a.startAt }).toEqual({ court: "C1", startAt: T0 + 30 * MIN });
+    // NOT greedy's slot, stated as its own assertion so the case cannot pass by
+    // the two happening to coincide.
+    expect(a.startAt).not.toBe(T0);
+    expect(out.metrics.placed).toBe(2);
+    await resetZ3();
+  }, 120_000);
+
+  it("measures `moved` from the caller's board, not from the greedy seed", async () => {
+    // Same corner, no freeze: the solver is free to rearrange, and it does —
+    // measured, greedy gives `[a@C1+0]` and z3 gives `[b@C1+0, a@C1+30]`.
+    //
+    // The organiser's board had `a` at 09:30, which is where the solver puts it,
+    // so against THEIR board `a` did not move and only `b` is new: 1. Against
+    // the greedy seed both look changed: 2. The two baselines disagree by
+    // construction here, which is the only way to prove which one is being read.
+    const out = await buildSchedule({
+      fixtures: cornerFixtures,
+      config: cornerConfig,
+      current: currentWithAAt(T0 + 30 * MIN),
+    });
+    expect(out.metrics.placed).toBe(2);
+    expect(out.assignments.find((x) => x.fixtureId === "a")?.startAt).toBe(T0 + 30 * MIN);
+    expect(out.moved).toBe(1);
+
+    // The control: the identical run with no `current` falls back to the seed
+    // and counts both.
+    const seedBaseline = await buildSchedule({ fixtures: cornerFixtures, config: cornerConfig });
+    expect(seedBaseline.moved).toBe(2);
+    await resetZ3();
+  }, 120_000);
+
+  it("treats an EMPTY current as no board at all", async () => {
+    // `[]` is the natural shape of a first-ever build on a division nobody has
+    // scheduled. Read as a baseline it makes every card the run places differ
+    // from it, and the strip announces "2 matches moved" about a board that
+    // never existed. It has to mean the same as omitting the field.
+    //
+    // THE BOARD HERE IS THE ALREADY-OPTIMAL ONE, and that choice is the test.
+    // On the corner both baselines happen to answer 2 — the empty one because
+    // every row is unknown to it, the seed one because the solver rearranges
+    // both cards — so the case passed under the mutant and proved nothing.
+    // Measured, and rewritten. On a board the solver does not touch the seed
+    // baseline answers 0 and an empty-array baseline answers 2, so the two are
+    // finally distinguishable.
+    const empty = await buildSchedule({ fixtures: optimal, config, current: [] });
+    const omitted = await buildSchedule({ fixtures: optimal, config });
+    expect(empty.moved).toBe(omitted.moved);
+    // Pinned absolutely as well as relatively: equality alone would hold if both
+    // arms drifted to the same wrong number.
+    expect(empty.moved).toBe(0);
+    await resetZ3();
+  }, 120_000);
+
+  it("counts a card the run could not place as moved, not as nothing", async () => {
+    // ONE slot, two fixtures: whatever happens, one card comes off the board.
+    // Greedy takes 09:00 for `a` and the solver can do no better, so the
+    // SURVIVOR keeps its slot — and counting only the board's own rows then
+    // reports `moved: 0` for a run that lost a match. The most alarming outcome
+    // there is, described as the most reassuring one.
+    //
+    // Unreachable while the baseline was the seed (T0 maximises `placed`, so the
+    // answer never drops below it) and reachable the moment it can be the
+    // caller's board instead.
+    const oneSlot: SlotConfig & { courts: string[] } = {
       ...config,
       courts: ["C1"],
-      sessionWindows: [{ from: T0, to: T0 + 60 * MIN }],
-      constraints: {
-        noBackToBack: false,
-        fieldFairness: "off",
-        parallelism: "mixed",
-        crossPersonClash: "warn",
-        startWindows: [{ target: { kind: "entrant", id: "E3" }, notAfter: T0 }],
-      },
+      sessionWindows: [{ from: T0, to: T0 + 30 * MIN }],
     };
     const fixtures: SchedulableFixture[] = [
       { id: "a", roundNo: 1, home: "E1", away: "E2" },
       { id: "b", roundNo: 1, home: "E3", away: "E4" },
     ];
-    const current: Assignment[] = [
-      {
-        fixtureId: "a",
-        court: "C1",
-        startAt: T0 + 30 * MIN,
-        endAt: T0 + 60 * MIN,
-        entrants: ["E1", "E2"],
-        people: [],
-      },
-    ];
-
     const out = await buildSchedule({
       fixtures,
-      config: cornerConfig,
-      mode: "polish",
-      frozen: ["a"],
-      current,
+      config: oneSlot,
+      current: [
+        row("a", "C1", T0),
+        // Where the organiser had `b` — a slot the session window no longer
+        // reaches, which is exactly how a card gets lost in practice.
+        row("b", "C1", T0 + 30 * MIN),
+      ],
     });
-    // The freeze held — `a` is where greedy put it, NOT where it was published.
-    // Asserted so the case cannot pass by the card happening not to move at all.
-    const a = out.assignments.find((x) => x.fixtureId === "a")!;
-    expect(a.startAt).toBe(T0);
-    expect(a.startAt).not.toBe(current[0]!.startAt);
-    // ...so against the organiser's board it moved, and the number now says so.
+    expect(out.metrics.placed).toBe(1);
+    // The survivor really did keep its slot, so the only thing left to count is
+    // the card that vanished.
+    expect(out.assignments.find((x) => x.fixtureId === "a")?.startAt).toBe(T0);
     expect(out.moved).toBe(1);
-
-    // The control, and the half that makes this a measurement rather than an
-    // assertion about one run: the SAME run with no `current` diffs against the
-    // greedy seed and reports the old, wrong answer.
-    const seedBaseline = await buildSchedule({
-      fixtures,
-      config: cornerConfig,
-      mode: "polish",
-      frozen: ["a"],
-    });
-    expect(seedBaseline.moved).toBe(0);
     await resetZ3();
   }, 120_000);
 

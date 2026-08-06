@@ -209,11 +209,19 @@ describe("buildSchedule — z3 teardown (R17)", () => {
         },
         budgetMs: 60_000,
       });
-      // The repair really solved, so the WASM really booted.
-      expect(r.status).toBe("repaired");
-      // THE DIRECT ASSERTION. Unwrapped, `repairSchedule` leaves its context
-      // loaded and the next solve starts warm; this is that state, named.
+      // THE DIRECT ASSERTION, and it goes FIRST on purpose. Unwrapped,
+      // `repairSchedule` leaves its context loaded and the next solve starts
+      // warm; this is that state, named. Ordering it ahead of the status check
+      // means the mutant fails HERE — on the thing this case is about — rather
+      // than on an outcome assertion a slow machine could also trip.
       expect(z3.z3LoadCount()).toBe(0);
+      // The solver really ran, which is all this needs — a CLEAN board is
+      // answered from a verifier precheck before the WASM ever loads, and would
+      // make the assertion above vacuous. Deliberately `not "clean"` rather than
+      // `=== "repaired"`: pinning the OUTCOME of a solve to a budget is how
+      // `repair-scale:102` became a standing flake, and one of those in this
+      // repo is enough.
+      expect(r.status).not.toBe("clean");
       return shape((await build.buildSchedule({ fixtures, config })).assignments);
     });
     expect(afterRepair).toEqual(cold);
