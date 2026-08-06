@@ -864,6 +864,7 @@ export type DictionaryKey =
   | "board.result.moved.one"
   | "board.result.moved.other"
   | "board.result.movedNone"
+  | "board.result.notSearched"
   | "board.result.ok"
   | "board.result.partial.one"
   | "board.result.partial.other"

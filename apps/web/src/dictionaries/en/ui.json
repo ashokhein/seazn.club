@@ -3203,6 +3203,7 @@
   "board.result.alreadyOptimal": "Already the best arrangement — there was nothing left to improve.",
   "board.result.busy": "Scheduled quickly — the optimiser was busy. Try again for a better board.",
   "board.result.unavailable": "Scheduled quickly — the optimiser was not available. The board is valid, just not optimised.",
+  "board.result.notSearched": "Scheduled quickly — the optimiser could not search this board. The match, gap and rest times you have set do not line up on a shared step, so there is nothing to say about whether a better board exists. Adjust them to share a step and run it again.",
   "board.result.verifierRejected": "Scheduled with the standard scheduler. The board is valid.",
   "board.result.infeasibleAllPlaced": "Not every pinned match could be honoured, but everything still found a slot.",
   "board.result.partial.one": "{placed} of {total} scheduled — one match could not be placed.",

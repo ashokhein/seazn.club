@@ -707,10 +707,10 @@ describe("AutoScheduleResult metrics + solver contract", () => {
     expect(() => AutoScheduleResult.parse({ assignments: [], conflicts: [] })).toThrow();
   });
 
-  /** These six must stay one-for-one with the engine's BuildStatus union.
+  /** These seven must stay one-for-one with the engine's BuildStatus union.
    *  Pinned as literals rather than imported: packages/engine is under
    *  concurrent edit in sibling lanes, and this is the API-side contract. */
-  it("accepts exactly the six BuildStatus values", () => {
+  it("accepts exactly the seven BuildStatus values", () => {
     for (const status of [
       "ok",
       "already_optimal",
@@ -718,10 +718,38 @@ describe("AutoScheduleResult metrics + solver contract", () => {
       "verifier_rejected",
       "z3_unavailable",
       "solver_busy",
+      "not_searched",
     ]) {
       expect(ScheduleSolverInfo.parse({ ...solver, status }).status).toBe(status);
     }
     expect(() => ScheduleSolverInfo.parse({ ...solver, status: "partial" })).toThrow();
+  });
+
+  /**
+   * The whole envelope, with `not_searched` on it.
+   *
+   * Separate from the enum loop above because the enum loop parses the solver
+   * block alone, and the shape that actually leaves `autoSchedule` is the
+   * envelope. `schedule.ts` assigns the engine's `BuildStatus` straight into
+   * this object, so a member the enum does not list is a board the API cannot
+   * describe: the assignment does not compile, and in a build that skipped the
+   * typecheck the value reaches the wire as a status no reader has a sentence
+   * for.
+   *
+   * `not_searched` is the one status whose whole purpose is to REFUSE a claim —
+   * the solver could not put this board on its lattice, so it never searched it
+   * — and the previous behaviour it replaces was telling the organiser
+   * `already_optimal` about a board nothing had looked at. Dropping it on the
+   * wire would reinstate exactly that silence.
+   */
+  it("carries a not_searched run through the full result envelope", () => {
+    const result = {
+      assignments: [],
+      conflicts: [],
+      metrics,
+      solver: { ...solver, status: "not_searched" as const, engine: "greedy" as const },
+    };
+    expect(AutoScheduleResult.parse(result)).toEqual(result);
   });
 
   it("accepts exactly the three solver engines", () => {

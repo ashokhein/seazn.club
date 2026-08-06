@@ -243,6 +243,66 @@ describe("ScheduleResultStrip — the anytime contract", () => {
     expect(html).not.toContain('data-tone="flag"');
     expect(html).not.toMatch(/your (setup|settings|data)|check your/i);
   });
+
+  /**
+   * `not_searched` — the one status whose job is to REFUSE a claim.
+   *
+   * The solver could not put this board on its lattice, so it never searched
+   * it. The board it arrives with is a valid greedy one; what the run cannot
+   * say is whether a better one exists. The behaviour this replaces reported
+   * `already_optimal` — a proof — about a board nothing had looked at, so the
+   * one thing this copy may never do is imply the board was checked and found
+   * good.
+   *
+   * `statusKey`'s switch has no `default`, so a member with no case returns
+   * `undefined` — and MEASURED, that does not render a blank headline, it
+   * THROWS out of `lookup` in i18n-runtime and takes the whole strip (a client
+   * island on the board) down with it. The first assertion below is still
+   * "the strip says something at all", because the render error is what a
+   * missing case actually produces and the assertion has to survive being made
+   * about a component that rendered.
+   */
+  it("not_searched says the board was not searched, and never implies it was found good", () => {
+    const html = render(metrics(), solver({ status: "not_searched", engine: "greedy" }));
+    // Non-blank headline. A missing switch case renders `<p ...></p>` here.
+    expect(html).toMatch(/data-testid="schedule-result-headline"[^>]*>[^<]/);
+    expect(html).toContain("could not search this board");
+    // WHY, and WHAT TO CHANGE. The cause is the organiser's own durations, and
+    // unlike `solver_busy` a retry on the same settings reproduces it exactly.
+    expect(html).toContain("do not line up on a shared step");
+    expect(html).toContain("run it again");
+    // Never a quality claim. `already_optimal`'s sentence is the specific thing
+    // this member exists to stop being said.
+    expect(html).not.toMatch(/nothing left to improve|best arrangement/i);
+    expect(html).not.toContain("Optimised.");
+  });
+
+  /**
+   * AMBER, and the departure from `solver_busy` / `z3_unavailable` is the point.
+   *
+   * Those two are plain because they are transient and the organiser cannot act
+   * on them — the same click a minute later can produce a better board.
+   * `not_searched` is neither. It is deterministic (re-running on the same
+   * settings reproduces it exactly) and it is caused by a setting the organiser
+   * owns, so it is the one case on this strip where "try again" is useless and
+   * changing something is the only route to an optimised board. That is the
+   * definition of "something here you need to know about your board", which is
+   * what amber is reserved for. Filing it beside `verifier_rejected` would
+   * leave an organiser believing their board had been optimised as far as it
+   * goes, which is the belief this whole status exists to prevent.
+   */
+  it("not_searched is flagged, unlike the other two 'quick pass' statuses", () => {
+    const html = render(metrics(), solver({ status: "not_searched", engine: "greedy" }));
+    expect(html).toContain('data-tone="flag"');
+    expect(html).not.toContain('data-tone="plain"');
+    // The falsifier: a component that flagged every non-`ok` status would pass
+    // the line above. These two must stay plain on the SAME complete board.
+    for (const status of ["solver_busy", "z3_unavailable"] as const) {
+      expect(render(metrics(), solver({ status, engine: "greedy" }))).toContain(
+        'data-tone="plain"',
+      );
+    }
+  });
 });
 
 describe("ScheduleResultStrip — infeasible is a statement about the PINS", () => {

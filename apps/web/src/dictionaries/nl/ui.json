@@ -3203,6 +3203,7 @@
   "board.result.alreadyOptimal": "Dit was al de beste indeling — er viel niets meer te verbeteren.",
   "board.result.busy": "Snel ingepland — de optimalisatie was bezet. Probeer het opnieuw voor een beter schema.",
   "board.result.unavailable": "Snel ingepland — de optimalisatie was niet beschikbaar. Het schema is geldig, alleen niet geoptimaliseerd.",
+  "board.result.notSearched": "Snel ingepland — de optimalisatie kon dit schema niet doorzoeken. De wedstrijd-, pauze- en rusttijden die je hebt ingesteld sluiten niet aan op een gedeelde stap, dus er valt niets te zeggen over de vraag of er een beter schema bestaat. Stem ze op een gedeelde stap af en start opnieuw.",
   "board.result.verifierRejected": "Ingepland met de standaardplanner. Het schema is geldig.",
   "board.result.infeasibleAllPlaced": "Niet elke vastgezette wedstrijd kon worden gerespecteerd, maar alles heeft toch een plek gekregen.",
   "board.result.partial.one": "{placed} van {total} ingepland — één wedstrijd kon niet worden geplaatst.",

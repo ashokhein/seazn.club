@@ -936,11 +936,21 @@ export async function autoSchedule(
           : {}),
       }));
 
-  /** REFLOW's first-time-placement count, absent on the two modes that cannot
-   *  distinguish one. Read out here rather than through an `in` narrowing at the
-   *  spread below, where `ReflowResult` being assignable to `BuildResult` makes
-   *  the narrowed property `unknown`. */
-  const seeded = "seeded" in out ? out.seeded : undefined;
+  /**
+   * REFLOW's first-time-placement count, absent on the two modes that cannot
+   * distinguish one. Read out here rather than through an `in` narrowing at the
+   * spread below, where `ReflowResult` being assignable to `BuildResult` makes
+   * the narrowed property `unknown`.
+   *
+   * ANNOTATED, and the `typeof` guard is not decoration: hoisting the `in` out
+   * of the spread moved the problem rather than solving it. `in` on a type
+   * that does not declare the key narrows the property to `{} | null`, which is
+   * not assignable to `ScheduleSolverInfo["seeded"]` — and the object literal
+   * below reports only its FIRST incompatible property, so for as long as
+   * `status` was also wrong this error was invisible.
+   */
+  const seeded: number | undefined =
+    "seeded" in out && typeof out.seeded === "number" ? out.seeded : undefined;
 
   // ---- Phase 3: map. Pure.
   return {

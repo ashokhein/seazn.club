@@ -3203,6 +3203,7 @@
   "board.result.alreadyOptimal": "C’était déjà la meilleure disposition : il n’y avait plus rien à améliorer.",
   "board.result.busy": "Planifié rapidement : l’optimiseur était occupé. Relancez pour obtenir un meilleur planning.",
   "board.result.unavailable": "Planifié rapidement : l’optimiseur n’était pas disponible. Le planning est valide, simplement pas optimisé.",
+  "board.result.notSearched": "Planifié rapidement : l’optimiseur n’a pas pu explorer ce planning. Les durées de match, d’intervalle et de repos que vous avez définies ne partagent pas un pas commun ; impossible donc de dire s’il existe un meilleur planning. Ajustez-les pour qu’elles partagent un pas, puis relancez.",
   "board.result.verifierRejected": "Planifié avec le planificateur standard. Le planning est valide.",
   "board.result.infeasibleAllPlaced": "Tous les matchs épinglés n’ont pas pu être respectés, mais chacun a trouvé un créneau.",
   "board.result.partial.one": "{placed} sur {total} programmés : un match n’a pas pu être placé.",

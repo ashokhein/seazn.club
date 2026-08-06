@@ -958,6 +958,22 @@ export const ScheduleSolverInfo = z.object({
     "verifier_rejected",
     "z3_unavailable",
     "solver_busy",
+    /**
+     * The solver could not represent this board on its lattice, so it never
+     * searched it.
+     *
+     * NOT a failure, and not a quality claim — the deliberate ABSENCE of one.
+     * The greedy board it arrives with is valid. What it refuses to say is
+     * whether a better one exists, and that refusal is the whole reason the
+     * member exists: the behaviour it replaces reported `already_optimal` —
+     * which is a PROOF — about a board no tier had ever been in a position to
+     * ask a question about.
+     *
+     * Listed here rather than left off because `schedule.ts` assigns the
+     * engine's `BuildStatus` into this object one-for-one, so a member missing
+     * from this enum is a board the API has no shape for.
+     */
+    "not_searched",
   ]),
   tiers_completed: z.number().int(),
   /** How many improvement targets the ladder HAS — the denominator

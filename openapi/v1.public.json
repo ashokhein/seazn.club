@@ -17108,7 +17108,8 @@
                                 "infeasible",
                                 "verifier_rejected",
                                 "z3_unavailable",
-                                "solver_busy"
+                                "solver_busy",
+                                "not_searched"
                               ]
                             },
                             "tiers_completed": {

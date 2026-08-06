@@ -53,6 +53,12 @@ function statusKey(solver: ScheduleSolverInfo) {
       return "board.result.verifierRejected";
     case "infeasible":
       return "board.result.infeasibleAllPlaced";
+    // The solver could not put this board on its lattice, so it never searched
+    // it. Its own sentence rather than a fallback onto `quick`: "scheduled
+    // quickly, without the optimiser" is true of the how and silent on the WHY,
+    // and the why is the only part the organiser can do anything about.
+    case "not_searched":
+      return "board.result.notSearched";
   }
 }
 
@@ -149,11 +155,22 @@ export function ScheduleResultStrip({
   // fine, but a card the organiser pinned has been moved off the time they
   // pinned it to, and they may already have told somebody about it.
   //
+  // `not_searched` ALSO qualifies, and the split from the two statuses named
+  // above is the whole judgement. `solver_busy` and `z3_unavailable` are
+  // transient and outside the organiser's hands — the same click a minute later
+  // can return an optimised board, so a plain band plus "try again" is the
+  // complete and honest answer. `not_searched` is neither transient nor ours:
+  // the run could not put this board on its lattice because of the durations
+  // the organiser configured, re-running reproduces it exactly, and no amount
+  // of waiting turns it into an optimised board. It is the one status here
+  // where something has to CHANGE, and a change to their settings is a thing
+  // they need to know about their board.
+  //
   // `lost` is NOT a third term here, and its absence is deliberate rather than
   // an oversight: a lost card is by construction a card with no slot, so
   // `placed < total` and `partial` is already true. A term that cannot change
   // the answer would read as a guard and be tested as one.
-  const flagged = partial || solver.status === "infeasible";
+  const flagged = partial || solver.status === "infeasible" || solver.status === "not_searched";
 
   // The headline is the single most honest thing we can say. An incomplete board
   // outranks the status sentence for that slot; a complete one lets the status
