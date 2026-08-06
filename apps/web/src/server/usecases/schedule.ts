@@ -1191,6 +1191,13 @@ async function reflowExisting(args: {
       elapsedMs: Date.now() - startedAt,
       moved,
       seeded: seeded.size,
+      // REFLOW runs the repair solver, which is bounded by its own budget and
+      // never opens an LNS window, so neither of the build solver's two rlimit
+      // audit fields has a value to report here. Zero and empty are the honest
+      // readings, not placeholders: `rlimitSpent` is what THIS run drew from
+      // the build budget, and it drew nothing.
+      rlimitSpent: 0,
+      lnsWindowRlimits: [],
     };
   };
 
