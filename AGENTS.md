@@ -100,4 +100,20 @@ before diagnosing a real bug:
   horizontal page scroll. `/admin` is staff-only — functional bar, skip
   design polish; every other surface keeps full polish.
 - New branches go in a worktree; never check out in the main repo dir.
+
+## Live programmes — read the index before touching their code
+
+Some areas carry rulings that are NOT derivable from the code and that
+a fresh session will otherwise re-derive wrongly. If your task touches
+one, read its index first.
+
+- **Scoring / sport modules / the scoring pad / fidelity tiers** →
+  `docs/superpowers/specs/2026-08-06-scoringpad-v2-prompts/_INDEX.md`
+  (decision log, false premises found, session status), then
+  `_RULES.md` beside it. Design of record:
+  `docs/superpowers/specs/2026-08-03-scoringpad-v2-design.md`.
+  Two rulings that bite immediately: the fidelity band scale is
+  **closed at 0–3** (no tier 4, ever), and engine comments citing
+  **"doc 14" point at a document that does not exist** — the scale's
+  semantics live in `packages/engine/src/sport/module.ts`, nowhere else.
 <!-- END:orchestration -->

@@ -14,7 +14,7 @@ interleaved or in parallel, but `L2` waits on `L1` (shared `schemas.ts`).
 | Session | Issue | Prompt file | Depends on | Status |
 |---|---|---|---|---|
 | S1 | #429 | `S01-429-golden-corpus-policy.md` | — | **DONE** |
-| S2 | #430 | `S02-430-fidelity-tier-4-decision.md` | — | TODO (decision only, no code) |
+| S2 | #430 | `S02-430-fidelity-tier-4-decision.md` | — | **DONE** — no code. Fidelity ladder closed at 0–3; tier 4 will never exist |
 | S3 | #426 | `S03-426-w4b-mutable-squads.md` | S1 | TODO |
 | S4 | #428 | `S04-428-offence-taxonomies.md` | S3 (person-role decision) | TODO |
 | S5 | #431 | `S05-431-decisions-register.md` | S3, S4 | TODO |
@@ -33,6 +33,24 @@ interleaved or in parallel, but `L2` waits on `L1` (shared `schemas.ts`).
 Deferred e2e/smoke debt from the engine-only sessions (S1, S3–S8) is discharged
 in **S12** (both entry points, offline) and **S13** (smoke through v2, help tree).
 Any session that defers a test type must say so in its PR body.
+
+### The T lane — PARKED, after S13
+
+Fidelity band 3 for the sports that never got one. Ruled shelf-ready in S2/#430:
+specced and committed, **nothing runs until a real customer ask**. Design:
+`../2026-08-06-fidelity-tier3-extension-design.md`.
+
+| | scope | entitlement | status |
+|---|---|---|---|
+| T1 | shared machinery — coverage primitive, `derive` returning absent, declared-band state | — | PARKED |
+| T2 | period family — hockey, icehockey (shots, saves, save %, faceoffs, circle penetrations) | new key, unnamed | PARKED |
+| T3 | setbased + nested — additive fields on the existing `*.rally` / `tennis.point` | `scoring.rally_by_rally` | PARKED |
+| T4 | carrom — wire the already-typed `CarromStrike` in | `scoring.strike_by_strike` | PARKED |
+
+T1 first; T2–T4 are independent of each other and pull in any order. Seven of
+#430's rows; the excluded set (plus/minus, boardgame PGN, hockey possession)
+stays on #430 under a structural rule — *not an independently voidable discrete
+fact*. **The fidelity model redesign this lane assumes lands in S6, not here.**
 
 ## Done before this index existed
 
@@ -245,6 +263,222 @@ Append one line per ruling: date, session, decision, reason. Never delete.
   identical and which of `states` / `summary` / `outcome` / `deltas` moved. A
   policy defeated by a wrapper printing a reassuring number is the same failure
   class as the two entries above.
+- 2026-08-06 — **label note** — the six entries above stamped `S2` are S1 pass-4
+  work (powerplay conversion, the `resolved` set-piece counter, `unslimCorpus`),
+  not S2/#430. S2/#430 is the fidelity-tier-4 decision and its entries are
+  stamped `S2/#430`. Recorded rather than rewritten so shas keep matching.
+- 2026-08-06 — S2/#430 — **the tier fidelity ladder already exists, is already four
+  values, and its entitlement seam is already open. Three of the brief's
+  premises are false.** Measured against `main`:
+  (a) `FidelityTier` at `sport/module.ts:63-67` is `{tier, eventTypes,
+  entitlement?}` and `tier` is `z.union([z.literal(0..3)])` — a **numeric 0–3
+  fidelity ladder**, comment `:61` "the four-tier granularity ladder". Not the
+  `quick|standard|full` triple S6's brief §1 names. `fidelityTiers` is already
+  an **array**, ordered by that number — the brief's "is the ordering a list
+  rather than a triple" is already answered yes.
+  (b) the entitlement hook already exists and is already generic:
+  `FidelityTier.entitlement` (`:66`) is an optional FeatureKey, and
+  `apps/web/src/server/usecases/fidelity.ts:17-29` `requiredFeatureForEvent`
+  derives the gate from the module's own declaration by numeric compare
+  (`t.tier < lowest.tier`, free floor `tier <= 1`). A row declaring `tier: 4`
+  flows through it **unchanged**.
+  (c) #430's "`CarromStrike` … with `apply()` rejecting it" is false in detail,
+  and so is the code comment asserting it (`carrom.ts:114-116`). There is **no
+  rejecting arm**: `CarromStrike` (`:117-123`) is simply absent from `CarromEv`
+  (`:125`), so `eventSchema` 422s `carrom.strike` structurally. Consequence that
+  matters: it is not an `eventSchema` union branch, so S6 acceptance (a) "every
+  branch reachable from some action" never sees it — the pattern costs
+  conformance nothing and needs no exemption list.
+- 2026-08-06 — S2/#430 — **cost of the open seam, quantified.** Adding a fifth
+  band today is **one line in one file**: `z.literal(4)` at `module.ts:64`.
+  Nothing else is code — `fidelity.ts` is numeric, `entitlement-domains.ts:29-37`
+  is a data row owed whenever the feature ships, per-sport `fidelityTiers` are
+  data rows. Further: **not every deferred row needs a fifth band.** The fidelity ladder's
+  cross-sport meaning is the paywall boundary (0/1 free, 2/3 paid), granularity
+  is per-sport, and `carrom.ts:707-712` declares only tiers 0/1 with **2/3
+  already reserved for strike-by-strike**. Only sports whose tier 3 is already
+  spent on attributed timeline (icehockey, football) would need a 4.
+  The expensive path is created by S6, not by today's code: if S6 mints a second
+  `quick|standard|full` string vocabulary alongside the numeric fidelity ladder, tier 4
+  then costs the new member **plus** the mapping between two fidelity ladders, 11
+  `padSpec` declarations, S6's hardcoded two-pair nesting assertion, S10's
+  renderer and S11's skins. **Ruling asked for: S6 reuses `FidelityTier.tier`
+  (0–3) and mints no second vocabulary.** Cost now 0 files; cost of not doing it
+  is paid three sessions later.
+  Also asked: **leave the union sealed.** An open enum would let a module
+  declare tier 7 and silently create a paid band nothing gates — the sealed
+  union is the only check that a tier number means something to the paywall.
+- 2026-08-06 — S2/#430 — **the plus/minus trap is a fold rule, and it is the
+  same defect class this programme has now hit twice**: `metricOf` returning a
+  silent 0 at the ranking layer (S1), and optional `PeriodSetPiece.outcome`
+  folding to exactly what a recorded miss folds to (S1 pass 4). Plus/minus is
+  worse than both — a half-entered on-ice set can flip the **sign**, not just
+  shrink the magnitude. Proposed standing invariant, independent of the tier
+  verdict: *a derived statistic whose denominator depends on data the scorer may
+  omit carries its own coverage counter, and is not emitted at all for a match
+  whose coverage is partial.* Enforced at **match** granularity, because S9's
+  career rollup summing complete and incomplete matches together is silently
+  wrong in a way no per-event check can see.
+- 2026-08-06 — S2/#430 — **OWNER RULING (verbatim): "Keep the one, replicate for
+  none."** `CarromStrike` stays. It costs conformance nothing — it is not an
+  `eventSchema` union branch, so S6 acceptance (a) never sees it and no
+  exemption list is needed. The other nine deferred rows get **no typed
+  placeholder and no reserved entitlement key**; their reasoning already lives
+  in the `DOMAIN.md` dossiers in the sports' own words. S6 corrects the stale
+  comment at `carrom.ts:114-116`, which claims `apply()` rejects `carrom.strike`
+  — it does not; the type is simply absent from `CarromEv` (`:125`). That stale
+  comment is itself the argument against nine more of them.
+- 2026-08-06 — S2/#430 — **OWNER RULING (verbatim): "Yes, standing invariant,
+  match granularity."** Standing engine invariant, in force now and not
+  contingent on any tier-4 verdict: *a derived statistic whose denominator
+  depends on data the scorer may omit carries its own coverage counter, and is
+  **not emitted at all** for a match whose coverage is partial.* Enforced at
+  **match** granularity, because S9's career rollup summing complete and
+  incomplete matches together is wrong in a way no per-event check can see.
+  Third instance of this defect class in the programme — `metricOf` silent-0 at
+  the ranking layer, optional `PeriodSetPiece.outcome` folding to exactly what a
+  recorded miss folds to, and now plus/minus, which is worse than both because a
+  half-entered on-ice set can flip the **sign**. S6 carries it as a constraint;
+  S8 and S9 inherit it.
+- 2026-08-06 — S2/#430 — **S6 reuses the numeric fidelity ladder; no second vocabulary.**
+  Taken in-session as a routine call, not escalated — the owner's answer was
+  that the question was not clear, and it is not a tier-4 question at all. The
+  engine already names granularity `0..3` (`module.ts:64`) and the paywall reads
+  that number (`fidelity.ts:17-29`). S6's brief §1 would have minted
+  `quick|standard|full` as a second name for the same idea, requiring a
+  permanent translation table whose drift means a free org pressing a paid
+  button or a paying org locked out of one. `padSpec` tiers ARE
+  `FidelityTier.tier`; the nesting assertion iterates adjacent members of the
+  declared array rather than asserting two hardcoded pairs. Reversible in S6's
+  diff if the owner disagrees on sight.
+- 2026-08-06 — S2/#430 — **THE FIFTH FALSE PREMISE, and it dissolves the whole
+  question: tier 3 is not spent, it is an EMPTY DUPLICATE of tier 2 in 7 of 8
+  module files.** Measured on `main` @ `6eaea4fa`:
+  `football.ts:2372…` declares tier 2 and tier 3 with byte-identical
+  `eventTypes` and the same `scoring.match_timeline`; `setbased/kernel.ts:912`,
+  `nested/kernel.ts:1202` and `period/kernel.ts:1310` each declare 2 and 3 as
+  the same array with the same entitlement; `carrom.ts:709`, `generic.ts:362`
+  and `boardgame.ts:503` stop at tier 1 entirely. **Cricket alone is a real
+  four-band fidelity ladder** — `cricket.ts:2392-2401`, tier 2 `cricket.player.line` →
+  `stats.player`, tier 3 `cricket.ball`/`cricket.retire` →
+  `scoring.ball_by_ball`. So #430's "tier 3 tops out at attributed timeline
+  scoring" is true only because tier 3 was left as a copy; tier 3 is not full,
+  it is unoccupied.
+  Consequence: **we already shipped the "statistician terminal" — for cricket.**
+  Ball-by-ball is ~250 deliveries a match with runs, extras, wicket type and
+  fielder attribution, entered by a dedicated scorer sitting through the
+  innings. Same operator profile, same data volume and the same paid band as an
+  ice-hockey shot stream. `apps/web/src/components/v2/pads/cricket-pad.tsx` is
+  23.8K, the largest pad in the repo, and the hash-chained `score_events`
+  substrate carries that volume today. Tier 4 was never a second product; it was
+  an unbuilt tier 3 in every sport but the one that built it.
+- 2026-08-06 — S2/#430 — **RULING (delegated to the session by the owner: "for
+  fidelity ladder close you can decide"): the fidelity ladder CLOSES at 0–3. There will be no
+  `z.literal(4)`.** `sport/module.ts:64` stays sealed exactly as it stands —
+  **zero lines change, now or later.** The deferred rows are re-classified, not
+  deferred to a fifth band:
+  - **8 of 10 are tier-3 work**, landed by SPLITTING each kernel's duplicated
+    2/3 — tier 2 keeps the attributed timeline, tier 3 becomes the per-event
+    stream. That is exactly cricket's shape, so it is a proven pattern rather
+    than a new one. Rows: shots/saves/faceoffs (icehockey), circle penetrations
+    (hockey), attack-block-dig (volleyball), 1st-vs-2nd serve + rally length
+    (tennis/badminton/tabletennis), strike-by-strike (carrom/generic).
+    Effort, **after S10 ships**, per kernel FAMILY not per sport (`period`
+    covers hockey+icehockey, `setbased` covers volleyball+badminton+tabletennis):
+    new event type = 5 edits (envelope, payload union, `apply`, `eventSchema`,
+    generator) + fold counters + the tier split + `DOMAIN.md` +
+    `EXTEND_GOLDEN=1`; one entitlement key across `entitlement-domains.ts` and
+    `feature-copy.ts` + plan map (data rows); a `padSpec` block — which is the
+    entire point of S6/S10/S11, after which a fidelity band is a DECLARATION,
+    not a hand-written pad; 4 locales. **≈4 sessions covers all eight**, each
+    about the size of a W4 dossier.
+  - **2 of 10 are genuinely different** and are NOT tiers. (i) plus/minus + the
+    on-ice set is a continuous LINEUP-STATE problem, not an event problem — you
+    cannot type 12 ids per goal, you track every line change (~60–80 more events
+    a match) and reconstruct the on-ice set at each goal. New state machine in
+    the period kernel plus an undesigned pad affordance; the coverage invariant
+    ruled above bites hardest here. Own wave if ever. (ii) boardgame PGN needs
+    the blob decision — `score_events` is hash-chained per event and movetext is
+    one growing opaque string — and validating SAN is writing a chess engine.
+  #430 stays open as the record for those two rows; **no new issue**.
+- 2026-08-06 — S2/#430 — **the duplicate 2/3 is NOT a billing bug** — checked
+  before asserting it. `requiredFeatureForEvent` (`fidelity.ts:22-28`) takes the
+  LOWEST tier accepting a type, so a duplicated pair gates identically either
+  way. Whether the fidelity picker presents a dead choice to the user is
+  UNVERIFIED; S6 checks it when it declares `padSpec`.
+- 2026-08-06 — S2/#430 — **there is NO spec and NO prompt for the tier-3
+  extension, and the fidelity ladder itself has no written spec at all.** Three findings:
+  (a) no prompt file exists for it — `carrom/DOMAIN.md:48` says "The fine tier is
+  its own prompt", and that prompt was never written. The S1–S13 / L1–L3
+  programme does not contain it: S6 is the contract, S8 is player stats, S10/S11
+  are renderer and skins — **none of them add an event type**, which is what
+  every tier-3 row needs.
+  (b) **"doc 14" does not exist.** The engine cites it as the fidelity ladder's
+  specification in three places — `sport/module.ts:61-62` ("doc 14 §1–2"),
+  `fidelity.ts:1` ("doc 14 §4, doc 10 §2 rule 2"), `carrom.ts:113-116` ("doc
+  10") — and there is no such file anywhere under `docs/`. The fidelity ladder's only
+  specification is the code. That is precisely how "tier 3 tops out at
+  attributed timeline scoring" went unchallenged into eight DOMAIN dossiers.
+  (c) the **design of record was the SOURCE of the `quick|standard|full` error**,
+  not S6's brief — `2026-08-03-scoringpad-v2-design.md:195-197`, and its
+  conformance clause (d) at `:203`. Fixing S6's prompt alone was insufficient
+  because S6 is instructed to read that design. Both corrected in place this
+  session, marked SUPERSEDED with a pointer here rather than deleted.
+  What DOES exist as the record: the ten refusal rows in the sports' own
+  `DOMAIN.md` dossiers (the real content), #430's body, and this log.
+- 2026-08-06 — S2/#430 — **terminology: never write a bare "ladder" in this
+  programme.** The word carries FIVE unrelated meanings in this repo and one of
+  them is an exact enum value: (1) `ladder` is a literal `StageKind` — a
+  competition format (`design.md:47-48`, `americano`/`ladder`/`page_playoff`,
+  and `api/v1/stages/[id]/challenges/route.ts`); (2) `stepladder` is a bracket
+  kind (`BRACKET_KINDS`, `.../[divisionSlug]/page.tsx:51`); (3) the Stripe
+  **pricing** ladder — graduated price *tiers*, ~26 uses across
+  `stripe-sync.test.ts` and `pricing/page.tsx`, and it says "tier" too, so "tier
+  ladder" in this repo usually means BILLING; (4) the IIHF discipline
+  escalation ladder (`S06-416-w5-padspec.md:98`); (5) the fidelity tier scale,
+  which is the only one this programme means. Always write **"fidelity ladder"**
+  or just **"fidelity tiers (0–3)"**. Every occurrence S2 authored across
+  `_INDEX.md`, `S06-416-w5-padspec.md` and `2026-08-03-scoringpad-v2-design.md`
+  was qualified this session; the bare ones that remain in those files are
+  pre-existing and mean (1) or (4).
+- 2026-08-06 — S2/#430 — **SIXTH false premise, and it lands ON S6: the tier
+  model is internally inconsistent, and S6's conformance criterion (d) "tiers
+  nest" WOULD FAIL on cricket today.** `fidelityTiers[].eventTypes` carries two
+  incompatible mental models. Football and all three kernels treat it as
+  **cumulative bands** — football t2 repeats every t1 type and adds card/sub/
+  penalty/sinbin. Cricket treats it as a **per-event lookup** — t1 is the
+  innings context, t2 is `["cricket.player.line"]` ALONE, t3 is
+  `["cricket.ball","cricket.superover.ball","cricket.retire"]`. So cricket's
+  tiers **do not nest**: t1 ⊄ t2. It works only because `requiredFeatureForEvent`
+  takes lowest-tier-wins. The one sport that got the ladder right is the one an
+  "assert the tiers nest" gate would red.
+  Root cause is the same absence that produced the duplicate 2/3: **what a tier
+  MEANS is declared nowhere.** "doc 14" is cited three times in engine comments
+  and does not exist in the repo, so each sport author invented a reading.
+- 2026-08-06 — S2/#430 — **OWNER RULING: redesign the fidelity model, in S6.**
+  Declared semantics cross-sport + one band per event type, replacing the
+  cumulative `eventTypes` lists:
+  ```ts
+  export const FIDELITY = { 0:"result", 1:"card", 2:"timeline", 3:"detail" } as const;
+  // per module: one band per event type, no repetition
+  fidelity: { "cricket.innings.summary":0, "cricket.toss":1,
+              "cricket.player.line":2, "cricket.ball":3 },
+  fidelityEntitlements: { 2:"stats.player", 3:"scoring.ball_by_ball" },
+  ```
+  What it buys: (a) **nesting becomes structural** — a tier-N scorer emits every
+  band ≤ N by construction, so criterion (d) stops being a test that can fail
+  and becomes a property that cannot; (b) **"no tier 3" is the absence of a
+  band-3 event**, not a duplicate row — the bug that started S2 becomes
+  unrepresentable; (c) the hardcoded free floor `tier <= 1` (`fidelity.ts:27`)
+  becomes "bands 0 and 1 declare no entitlement"; (d) the ladder's meaning is
+  written down in the one place that cannot drift from the code — the missing
+  doc 14, as code.
+  **Lands in S6** because S6 seals the tier model into `PadSpec`; doing it later
+  means S6/S8/S10/S11 build on the broken model and get rewritten. Blast radius
+  is 11 modules + `SportInfo` (`fixture-console.tsx:140`) +
+  `requiredFeatureForEvent` + `testkit/golden.ts:282` +
+  `conformance/discipline.test.ts:28`. Mechanical; no prod data; modules stay
+  `1.0.0`. Grows S6 by roughly a third.
 - _(append below)_
 
 ## Open questions for the owner

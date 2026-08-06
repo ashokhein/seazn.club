@@ -39,10 +39,35 @@ sport reality ⊇(S3/W4 audit) eventSchema/Cfg ⊇(THIS SESSION) PadSpec ⊇(S10
      the existing scoring-vocab pattern (engine declares keys + fallback labels,
      web dictionaries translate — see
      `../2026-07-16-scoring-vocab-i18n-design.md`).
-   - **fidelity tiers** — `quick` (result-only) / `standard` (structured) /
-     `full` (everything, person-attributed), formalising `fidelityTiers` already
-     on `SportInfo`. **Check `_INDEX.md` for S2's tier-4 ruling before sealing
-     the tier type.**
+   - **fidelity tiers** — **S2/#430 ruled: reuse the fidelity ladder that already exists,
+     mint no second vocabulary.** This brief previously said
+     `quick`/`standard`/`full`; that was wrong and is superseded. The engine
+     already declares `FidelityTier` at `sport/module.ts:63-67` as
+     `{tier, eventTypes, entitlement?}` with `tier: z.union([z.literal(0..3)])`
+     — a **numeric 0–3 fidelity ladder** ("the four-tier granularity ladder", `:61`), and
+     `fidelityTiers` is already an **ordered array**, per sport, with each sport
+     using the subset it needs (`carrom.ts:709-712` declares only 0 and 1).
+     `padSpec` tiers ARE that number. A second string vocabulary would need a
+     permanent translation table, and its drift means a free org pressing a paid
+     button or a paying org locked out of one — the paywall reads the number
+     (`apps/web/src/server/usecases/fidelity.ts:17-29`, free floor `tier <= 1`).
+     **The fidelity ladder is CLOSED at 0–3 — S2/#430 ruled it, there will never be a
+     `z.literal(4)`.** Do not add one, do not widen `tier` to an open `number`
+     "just in case", and do not re-ask: the sealed union is the only check that
+     a tier number means something to the paywall. The ten rows #430 parked are
+     tier-3 work, not a fifth band — see the decision log.
+     **Know this before you declare anything**: tier 3 is currently a
+     **byte-identical duplicate of tier 2** in `football.ts`,
+     `setbased/kernel.ts:912`, `nested/kernel.ts:1202` and
+     `period/kernel.ts:1310` (same `eventTypes`, same entitlement), and
+     `carrom`/`generic`/`boardgame` stop at tier 1. **Cricket
+     (`cricket.ts:2392-2401`) is the only sport with a real four-band fidelity ladder** —
+     tier 2 `cricket.player.line` → `stats.player`, tier 3 `cricket.ball` →
+     `scoring.ball_by_ball`. Model `padSpec`'s tier semantics on **cricket**,
+     which is correct, not on the duplicated majority, which is merely unfilled.
+     Do NOT split the duplicated 2/3 in this session — that ships an event type
+     and is out of scope. Do check whether the fidelity picker presents tier 3
+     as a live choice where it is a duplicate (unverified by S2), and report it.
 2. **`padSpec` on all 11 modules, per-variant correct**: cricket (over rhythm,
    extras, dismissals with fielder, reviews, super over, a DLS panel when
    `dls.enabled`), football (goals/cards/subs/period flow), the racquet + setbased
@@ -56,7 +81,11 @@ sport reality ⊇(S3/W4 audit) eventSchema/Cfg ⊇(THIS SESSION) PadSpec ⊇(S10
    (b) every action property-generates payloads that `eventSchema` accepts,
    across its parameter bounds;
    (c) label keys unique and stable;
-   (d) tiers nest `quick ⊆ standard ⊆ full`;
+   (d) tiers nest — assert it by **iterating adjacent members of the module's
+   declared `fidelityTiers` array**, never as hardcoded pairs. A module
+   declaring only tiers 0 and 1 (carrom) must exercise the same assertion as one
+   declaring 0–3, and a fifth band added later must be covered without editing
+   the test;
    (e) `DOMAIN.md` present (from W4).
    Plus: `padSpec(cfg)` is **deterministic** for a given cfg and **never throws**
    across all variant presets and generated org-override perturbations.
@@ -69,6 +98,24 @@ sport reality ⊇(S3/W4 audit) eventSchema/Cfg ⊇(THIS SESSION) PadSpec ⊇(S10
    - icehockey `recreational` must not inherit the full IIHF ladder.
    Also from #431 item 6a: the hockey **shoot-out retake** must not overstate the
    attempt count.
+
+5. **Two one-line carry-ins from S2/#430** (both rulings recorded in `_INDEX.md`,
+   do not re-litigate):
+   - **Fix the stale comment at `carrom.ts:114-116`.** It claims `apply()`
+     rejects `carrom.strike`. It does not — `CarromStrike` (`:117-123`) is
+     simply absent from the `CarromEv` union (`:125`), so `eventSchema` 422s the
+     type structurally. `CarromStrike` **stays** (it is not an `eventSchema`
+     branch, so acceptance (a) below never sees it and it needs no exemption);
+     the other nine deferred #430 rows get **no typed placeholder and no
+     reserved `scoring.*` key** — this stale comment is the argument against
+     nine more of them.
+   - **Honour the coverage invariant** in any tier-derived counter `padSpec`
+     implies: *a derived statistic whose denominator depends on data the scorer
+     may omit carries its own coverage counter, and is not emitted at all for a
+     match whose coverage is partial* — enforced at **match** granularity. Third
+     instance of this defect class (`metricOf` silent-0; optional
+     `PeriodSetPiece.outcome`), so treat any new optional field folded into a
+     tally as a defect until it has its coverage counter. S8/S9 inherit this.
 
 Engine-only: no web files, no api-v1 change, no migration.
 
@@ -83,8 +130,15 @@ Engine-only: no web files, no api-v1 change, no migration.
       construction, or caught by the property test
 - [ ] Variant reshaping proven: `t20` vs `test` produce different panels/bounds
       from the same module; `hundred` honours its ball structure
-- [ ] Tier nesting holds; `quick` alone reaches a decidable result for **every**
-      sport (a result-only scorer is never stuck)
+- [ ] Tier nesting holds, asserted by iterating adjacent declared members (not
+      hardcoded pairs); the **lowest declared tier** alone reaches a decidable
+      result for **every** sport (a result-only scorer is never stuck)
+- [ ] `padSpec` introduces **no second tier vocabulary** — `git grep -a` for
+      `quick`/`standard`/`full` as tier names returns nothing new; tiers are the
+      numeric `FidelityTier.tier`, and `module.ts:64` is **unchanged**, still
+      sealed at 0–3 (`git diff` on that line must be empty)
+- [ ] No module's `fidelityTiers` array is edited — the duplicated 2/3 split is
+      later, separately-scoped work; PR body says so
 - [ ] beach refuses `volleyball.sub`; hockey `youth` and icehockey
       `recreational` no longer inherit adult rules — one regression test each,
       failing against today's behaviour
@@ -134,9 +188,24 @@ Otherwise one sequential implementer → reviewer loop.
 
 **Scout (sonnet) brief:** (a) `sport/module.ts` — the `SportModule` interface and
 every implementer; (b) the conformance kit layout and how streams are generated;
-(c) `fidelityTiers` on `SportInfo` and every read of it; (d) how variant presets
-and org overrides resolve into cfg; (e) the scoring-vocab `labelKey` +
-`MessageKey` convention. file:line table only, under 30 lines, no file contents.
+(c) how variant presets and org overrides resolve into cfg; (d) the scoring-vocab
+`labelKey` + `MessageKey` convention. file:line table only, under 30 lines, no
+file contents. **Do not re-scout the fidelity ladder** — S2 pinned it (below).
+
+**Pinned by S2/#430 against `main` @ `6eaea4fa` — re-verify, do not re-derive:**
+
+| what | file:line |
+|---|---|
+| `FidelityTier` schema, `tier: 0\|1\|2\|3` sealed | `packages/engine/src/sport/module.ts:63-67` (`:64` is the union) |
+| "four-tier granularity ladder" comment | `packages/engine/src/sport/module.ts:61-62` |
+| the paywall that reads the number | `apps/web/src/server/usecases/fidelity.ts:17-29` (free floor `tier <= 1`, `:27`) |
+| `SportInfo.fidelityTiers` on the web side | `apps/web/src/components/v2/fixture-console.tsx:140` (**not** `:132`) |
+| web read sites | `.../f/[no]/page.tsx:148`, `score/[token]/page.tsx:139`, `v2/pads/period-pad.tsx:84`, `setbased-pad.tsx:39-40`, `tennis-pad.tsx:69-70` |
+| engine read sites | `conformance/discipline.test.ts:28`, `testkit/golden.ts:282` |
+| per-sport declarations | `carrom.ts:709`, `football.ts:1600`, `cricket.ts:2372`, `generic.ts:362`, `boardgame.ts:503`, `kernel.ts:912/1202/1310` (setbased/nested/period) |
+| live `scoring.*` entitlement keys | `apps/web/src/lib/entitlement-domains.ts:29-37` — `ball_by_ball`, `rally_by_rally`, `match_timeline`, `device_links`. `scoring.strike_by_strike` is **not** a live key, only DOMAIN.md prose |
+| `CarromStrike` + its stale comment | `packages/engine/src/sports/carrom/carrom.ts:114-116` (comment), `:117-123` (type), `:125` (`CarromEv`, which omits it), `carrom/index.ts:9` (re-export) |
+| `PadSpec` in `packages/engine` | **absent** — greenfield, prose matches in `DOMAIN.md` only |
 
 **Implementer briefs** carry: the pinned scout table, S2's tier ruling, the
 family's dir list, the explicit "do NOT touch other families' kernels" line, and
