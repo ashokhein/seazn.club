@@ -85,7 +85,7 @@
 // incumbent simply stands and `budgetExpired` says why. Both sites that can
 // see an `unknown` — the feasibility probe and the T0 walk — are pinned by
 // their own test.
-import type { Arith, Bool, Solver } from "z3-solver";
+import type { Arith, Bool, Model, Solver } from "z3-solver";
 import { boardMetrics, isStrictlyBetter, type BoardMetrics } from "./build-objectives.ts";
 import { improveByWindows, type LnsWindow } from "./build-lns.ts";
 import { buildGrid, type BuildGrid, type BuildSlot } from "./build-grid.ts";
@@ -345,6 +345,34 @@ function rlimitCount(solver: Solver<"repair">): number {
     return stats.keys().includes("rlimit count") ? stats.get("rlimit count") : 0;
   } finally {
     stats.release();
+  }
+}
+
+/**
+ * Read a satisfying model and hand the handle straight back.
+ *
+ * SAME ARGUMENT AS `rlimitCount` ABOVE, and `ModelImpl` uses the same
+ * FinalizationRegistry `StatisticsImpl` does. Every `sat` in this file allocates
+ * a `Z3_model` in the WASM heap, and a search can produce one per bound across
+ * four tier walks plus every LNS sub-solve — the exact rate at which leaving
+ * `Z3_stats` to the collector corrupted the heap and aborted a probe inside
+ * `smt::relevancy_propagator_imp::pop`.
+ *
+ * A CALLBACK RATHER THAN A RETURNED HANDLE, because the model has to outlive the
+ * read and not the caller: `model.slotOf` walks every placement literal through
+ * it, so releasing before that is a use-after-free and releasing after the
+ * caller has moved on is what this replaces. The `finally` also covers a throw
+ * out of `slotOf`, which is where an encoder-drift error surfaces.
+ *
+ * Bounded in practice by `withZ3LockAndReset`'s per-run teardown, so this is
+ * insurance rather than a fix for a reproduced abort — see the report.
+ */
+function withModel<T>(solver: Solver<"repair">, read: (model: Model<"repair">) => T): T {
+  const m = solver.model();
+  try {
+    return read(m);
+  } finally {
+    m.release();
   }
 }
 
@@ -1399,7 +1427,7 @@ async function solveBuild(
     const verdict = await solver.check();
     settle();
     if (verdict === "sat") {
-      const board = model.assignmentsFrom(model.slotOf(solver.model()));
+      const board = withModel(solver, (m) => model.assignmentsFrom(model.slotOf(m)));
       const metrics = boardMetrics(board, config.courts, fixtures.length);
       solver.pop();
       if (isStrictlyBetter(metrics, incumbentMetrics)) {
@@ -1540,7 +1568,7 @@ async function solveBuild(
           else settled = true;
           break;
         }
-        const board = model.assignmentsFrom(model.slotOf(solver.model()));
+        const board = withModel(solver, (m) => model.assignmentsFrom(model.slotOf(m)));
         const metrics = boardMetrics(board, config.courts, fixtures.length);
         solver.pop();
         const next = tier.of(metrics);

@@ -1006,6 +1006,20 @@ async function solveRepair(input: RepairInput): Promise<RepairResult> {
         });
         if (!still) moved.push(d.fixtureId);
       }
+      // Hand the `Z3_model` back now that every `intOf` above has run.
+      //
+      // `ModelImpl` uses the same FinalizationRegistry `StatisticsImpl` does,
+      // and `rlimitCount` in `build.ts` documents at length why leaving that
+      // registry to collect one WASM handle per `check()` is not safe here: it
+      // corrupted the heap and aborted a probe inside
+      // `smt::relevancy_propagator_imp::pop` — i.e. at the next `pop()`, which
+      // is the line immediately below, rather than anywhere near the leak.
+      //
+      // After the loop rather than in a `finally`: nothing between the two can
+      // throw (`intOf` parses a numeral z3 has just produced), and wrapping the
+      // block would re-indent forty lines of the reasoning that explains the
+      // millisecond/minute seam.
+      model.release();
       solver.pop();
       // Caller order out, fixtureId order for `moved` — both fixed, so the same
       // input serialises identically twice.
