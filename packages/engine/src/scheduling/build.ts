@@ -176,6 +176,100 @@ export const DEFAULT_BUILD_WALL_MS = 30_000;
 export const TIER_COUNT = 4;
 
 /**
+ * The R18 size gate, in fixture-slots (`fixtures.length x grid.slots.length`).
+ *
+ * MEASURED by `scripts/bench-build.ts` (Task 13), the R18 knee sweep:
+ *
+ *   node --experimental-strip-types packages/engine/scripts/bench-build.ts \
+ *     --sizes=10,20,40,60,80,120,200 --per-entrant=2,4 --wall=8000 --not-after=2
+ *   node --experimental-strip-types packages/engine/scripts/bench-build.ts \
+ *     --sizes=140,160,180 --per-entrant=2 --wall=8000 --not-after=2
+ *
+ * At the 8_000 ms production wall the solver improved the board at every size
+ * up to 140 fixtures on a 144-slot lattice (20_160 fixture-slots) and improved
+ * NOTHING at 160 on a 216-slot lattice (34_560) or above — `tiersCompleted: 0`,
+ * `engine: "greedy"`, and 11-15 s spent to hand back the board it started with.
+ * 20_000 is the improving side of that boundary, rounded.
+ *
+ * --- WHY FIXTURE-SLOTS AND NOT A FIXTURE COUNT ----------------------------
+ *
+ * The knee is not a property of the fixture count. It is where boot + greedy +
+ * `encodeBuild` + the first `solver.push()` crosses the wall, and all of those
+ * scale with the ENCODING — `fixtures x slots` place literals — not with
+ * fixtures alone. The bench's own lattice happens to jump 144 -> 216 slots
+ * between n=144 and n=145, which is what makes a fixture-count reading look
+ * sharp at 140/160; a board with 200 fixtures on a 144-slot lattice would very
+ * likely still improve, and one with 120 fixtures on a 400-slot lattice would
+ * not. A gate spelled `n <= 140` misfires on both.
+ *
+ * --- WHAT TO RE-MEASURE BEFORE CHANGING THIS ------------------------------
+ *
+ * This number is a ratio between the wall and this machine's speed, so it is
+ * NOT portable across a change to either. Re-run the two commands above and
+ * move it if: `AUTO_SOLVER_WALL_MS` changes; the pre-search cost changes
+ * (anything touching `encodeBuild`, `buildGrid` or the first `push()`); or the
+ * deployment target's CPU changes. The figure to read off the sweep is the
+ * largest `n x slots` whose row still reports `engine: "z3"`.
+ */
+export const MAX_SOLVE_ENCODING = 20_000;
+
+/**
+ * Whether the build solver is worth calling on this board at this wall — the
+ * R18 gate, as a predicate, so no caller has to restate the threshold.
+ *
+ * THE POINT IS THAT `MAX_SOLVE_ENCODING` LIVES IN ONE PLACE. The web layer has
+ * to decide whether to call `buildSchedule` at all, and a copy of the number
+ * there is a placer/verifier fork wearing a different hat — the defect shape
+ * this subsystem has hit three times, and the copy that drifts is always the
+ * one deciding what the organiser gets.
+ *
+ * `false` does NOT mean "no better board exists". Task 13 measured a
+ * 200-fixture board improving (placed 198 -> 199) when given 180 s instead of
+ * 8 s: above the gate the solver is not failing to find anything, it is never
+ * being asked, because the wall expires during the encode. So the honest
+ * reading is "not inside this wall", and a caller that gets `false` should fall
+ * through to the greedy board rather than tell anyone the board is optimal.
+ *
+ * It builds the real lattice rather than estimating it. `buildGrid` is cheap
+ * (it never reads the fixture list) and it is the only thing that knows how
+ * sessions, blackouts, the horizon and the configured courts turn into slots;
+ * an estimate here would be a second implementation of exactly that, which is
+ * the fork this export exists to prevent. `buildSchedule` builds the same
+ * lattice again a moment later — that duplication is deliberate and cheap, and
+ * far safer than threading a grid through the call.
+ *
+ * An over-cap or empty lattice answers `false`: `buildSchedule` returns the
+ * greedy board on both without solving, so calling it would be pure cost.
+ *
+ * @param wallMs the wall the caller will actually pass. Defaults to the
+ * engine's own, which is NOT what the web layer uses — pass
+ * `AUTO_SOLVER_WALL_MS` explicitly or the gate answers for a 30 s budget the
+ * request will not get.
+ */
+export function canSolveWithin(
+  fixtures: readonly SchedulableFixture[],
+  config: SlotConfig & { courts: string[] },
+  wallMs: number = DEFAULT_BUILD_WALL_MS,
+  existing: readonly Assignment[] = [],
+): boolean {
+  if (fixtures.length === 0) return false;
+  const grid = restrictToConfiguredCourts(buildGrid({ config, existing }), config.courts, []);
+  if (grid.overCap || grid.slots.length === 0) return false;
+  // Scaled by the wall the caller will really use. The 20_000 figure was
+  // measured against 8_000 ms, so a caller with twice the budget can afford
+  // twice the encoding — the gate is a cost-vs-budget ratio, not a fixed size.
+  const budget = MAX_SOLVE_ENCODING * (wallMs / AUTO_SOLVER_WALL_MS_AT_MEASUREMENT);
+  return fixtures.length * grid.slots.length <= budget;
+}
+
+/** The wall `MAX_SOLVE_ENCODING` was measured against — the web layer's
+ *  `AUTO_SOLVER_WALL_MS` at the time of the Task 13 bench. It exists so
+ *  `canSolveWithin` can scale the gate to whatever wall a caller passes;
+ *  changing it without re-running the sweep silently rescales every gate
+ *  decision. */
+const AUTO_SOLVER_WALL_MS_AT_MEASUREMENT = 8_000;
+
+/**
  * One run's z3 resource budget, shared by every solve the run performs
  * (ruling R11).
  *
@@ -593,6 +687,52 @@ async function solveBuild(
   const wallMs = input.wallMs ?? DEFAULT_BUILD_WALL_MS;
   const rlimit = input.rlimit ?? DEFAULT_BUILD_RLIMIT;
   const verifyConfig: BuildConfig = { ...config };
+  /**
+   * The wall, tested where the EXPENSIVE work is, not only between checks
+   * (ruling R23).
+   *
+   * Before this existed the only tests were at the top of each search loop, and
+   * everything costly happens outside them: Task 13's bench measured a
+   * 200-fixture run returning at **15_368 ms against an 8_000 ms wall** — 92 %
+   * over — because `encodeBuild` (3_706 ms) and the first `solver.push()` over
+   * the encoded model (9_837 ms) both run to completion before any loop is
+   * entered, and nothing in either reads the clock. That is a latency bug, not
+   * a measurement artefact: every caller sizing a request timeout on
+   * `AUTO_SOLVER_WALL_MS` was wrong by about a factor of two, and wrong by most
+   * on exactly the biggest boards.
+   *
+   * The bail is not a new outcome. It returns the greedy incumbent with
+   * `budgetExpired: true`, which is byte-identical to what an exhausted rlimit
+   * already produces, so D6 ("never worse than greedy") survives it by
+   * construction — `greedy()` returns `seedAssignments`/`seedMetrics` and there
+   * is no path here that can hand back anything else. It never throws.
+   *
+   * It cannot make the wall exact. `encodeBuild` and `push()` are single
+   * uninterruptible calls, so the guard catches the run at their BOUNDARIES —
+   * the overrun is bounded by one such step, not eliminated. At 200 fixtures
+   * the first tier `push()` alone is ~9_800 ms, so an 8 s wall CANNOT be held
+   * once that push has started. The fix for that case is the R22 size gate,
+   * which declines the call outright; R23 only stops a doomed run buying more.
+   *
+   * --- WHAT IS ACTUALLY COVERED, AND WHAT IS NOT ----------------------------
+   *
+   * Only the FIRST use below — the guard before `encodeBuild` — is
+   * mutation-provable, by `build-wall.test.ts`: delete it and a 200-fixture run
+   * pays a full encode it will never be allowed to search, and the test's
+   * elapsed bound reds.
+   *
+   * The other four (after `encodeBuild`, after each `solver.push()`, and before
+   * `buildTiers`) are BELT AND BRACES, and each was confirmed to survive
+   * mutation across all 131 build-suite tests. That is not an oversight waiting
+   * for a cleverer test: removing any of them changes ONLY elapsed time. Every
+   * observable field — `engine`, `status`, `tiersCompleted`, `budgetExpired`,
+   * `rlimitSpent`, the board itself — is identical either way, because each is
+   * followed by another guard that reaches the same exit a few hundred
+   * milliseconds later. They are kept because each sits in front of a real
+   * uninterruptible cost that nothing else guards at that exact point.
+   * **Do not read their presence as coverage.**
+   */
+  const outOfTime = (): boolean => elapsed() >= wallMs;
 
   // 1. The seed, and the legalisation pass that turns it into a floor worth
   //    having. See the header: `placed` has to mean LEGALLY placed or the
@@ -897,6 +1037,11 @@ async function solveBuild(
   };
   armTimeout();
 
+  // R23. The greedy seed, the lattice and the WASM boot are already behind us
+  // and they are not free at scale; encoding on top of a wall that has already
+  // gone buys a board nobody will be allowed to search.
+  if (outOfTime()) return greedy("ok", true);
+
   const model = encodeBuild({
     Z3,
     solver,
@@ -907,6 +1052,11 @@ async function solveBuild(
     existing,
     dependencies,
   });
+
+  // R23. THE SINGLE MOST IMPORTANT ONE. `encodeBuild` is the largest
+  // uninterruptible step in the run — 3_706 ms at 200 fixtures / 216 slots —
+  // and at the sizes where it matters it alone can outlast the whole wall.
+  if (outOfTime()) return greedy("ok", true);
 
   /** `AtLeast` takes a NON-EMPTY tuple, not varargs. `Z3.AtLeast(...lits, k)`
    *  compiles and then fails at runtime with a spread TypeError out of z3's own
@@ -974,11 +1124,22 @@ async function solveBuild(
   //    reach, and SAT is a board that reaches it. Descending from the full
   //    count means the FIRST satisfiable bound is the optimum, by construction.
   for (let target = fixtures.length; target > incumbentMetrics.placed; target--) {
-    if (budgetExpired || elapsed() >= wallMs) {
+    if (budgetExpired || outOfTime()) {
       budgetExpired = true;
       break;
     }
     solver.push();
+    // R23. `push()` is not the bookkeeping no-op it reads as: over the fully
+    // encoded model it costs 205 / 2_923 / 9_837 ms at 20 / 90 / 200 fixtures
+    // (Task 13 bench, `--probe=encode`). It is a ONE-TIME cost — every push
+    // after the first is sub-millisecond — but the first one alone outlasts the
+    // production wall at target scale, so the loop-top test above is stale by
+    // the time we get here and has to be retaken.
+    if (outOfTime()) {
+      solver.pop();
+      budgetExpired = true;
+      break;
+    }
     atLeastPlaced(target);
     if (!arm()) {
       solver.pop();
@@ -1045,6 +1206,24 @@ async function solveBuild(
   //     rather than a negotiation: with it, a later tier can only choose among
   //     boards an earlier tier already called optimal.
   //
+  //     WHAT THIS LOOKS LIKE TO AN ORGANISER, MEASURED (Task 13 bench, R18
+  //     sweep). At the production wall only T0 completes from 20 fixtures up,
+  //     so the ONLY metric that improves is `placed`, by +1 — and because
+  //     `placed` dominates, the solver will buy that one extra match with
+  //     everything below it. Every sweep row from n=20 to n=140 got worse on
+  //     the other three: at n=140, makespan 2_120 -> 2_160, worst idle gap
+  //     1_400 -> 2_040, court imbalance 40 -> 120.
+  //
+  //     THIS IS D3 WORKING, NOT A DEFECT. "One more match fits and the day is
+  //     longer" is the trade the owner chose when they ranked
+  //     placed > makespan > idle > balance, and it was re-affirmed against this
+  //     measurement rather than in ignorance of it. Do not "fix" it by
+  //     weighting the tiers or by refusing a board that regressed a lower one —
+  //     either change silently drops matches an organiser asked to fit, which
+  //     is the failure D3 exists to prevent. If the trade is ever revisited it
+  //     is a product decision about the ORDERING, made here, not a tweak in a
+  //     tier's walk.
+  //
   //     NO PER-TIER BUDGET SLICE, deliberately. Splitting the WALL clock (half
   //     the remainder each, say) would make which tier ran a property of the
   //     machine, which is the exact defect D9 exists to prevent — the same run
@@ -1056,9 +1235,13 @@ async function solveBuild(
   //     values, and every individual `check()` is capped by the rlimit, so a
   //     tier cannot spin. The wall clock stays what the header says it is — an
   //     outer cap that should never fire.
-  if (proved) {
+  // R23. `buildTiers` is called in the `for...of` HEADER, so its cost — 43_240
+  // assertions and 730 ms at 200 fixtures — is paid before the loop-top test
+  // below can run even once. A run whose wall has already gone must not pay it.
+  if (proved && outOfTime()) budgetExpired = true;
+  if (proved && !budgetExpired) {
     for (const tier of buildTiers({ Z3, solver, model, grid, fixtures, config })) {
-      if (budgetExpired || elapsed() >= wallMs) {
+      if (budgetExpired || outOfTime()) {
         budgetExpired = true;
         break;
       }
@@ -1076,11 +1259,20 @@ async function solveBuild(
           settled = true;
           break;
         }
-        if (elapsed() >= wallMs) {
+        if (outOfTime()) {
           budgetExpired = true;
           break;
         }
         solver.push();
+        // R23, same reason as T0's: `push()` is where the wall gets overrun.
+        // `tier.atMost` is charged here too — the idle-gap family restates
+        // 14_400 clauses per bound at 200 fixtures (358 ms), which the makespan
+        // and imbalance tiers, at one assertion each, do not.
+        if (outOfTime()) {
+          solver.pop();
+          budgetExpired = true;
+          break;
+        }
         tier.atMost(best - 1);
         if (!arm()) {
           solver.pop();
