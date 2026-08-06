@@ -201,6 +201,50 @@ Append one line per ruling: date, session, decision, reason. Never delete.
   (`4 — 4 (5–3 pens)` at `gd 0`). Gated on `PeriodPreset.shootoutWinnerGoal`,
   omitted meaning off. `hockey/DOMAIN.md:67` records the divergence as
   deliberate so a later session does not "fix" it.
+- 2026-08-06 — S2 — **powerplay conversion is DEFERRED for want of a
+  DENOMINATOR, not for want of a consumer.** Penalty-shot (IIHF) and
+  penalty-corner / stroke (FIH) conversion both ship this session, because
+  `State.setPieces[side][kind]` already records numerator and denominator.
+  Powerplay does not: the numerator is `kindCounts[side].pp`, but the
+  denominator is man-advantage OPPORTUNITIES, which is not a count of penalties.
+  Coincidental penalties cancel and overlapping ones collapse into a single
+  opportunity, so deriving it needs interval arithmetic over
+  `startedAt`/`expiresAt` — i.e. STAMPED penalties. Only **3 of 21** hockey
+  streams and **2 of 15** icehockey streams carry a stamped `suspension.start`,
+  so for the overwhelming majority of recorded fixtures the intervals do not
+  exist and any figure would be synthesised. Do NOT approximate it with a raw
+  penalty count: that reports 4-on-4 coincidentals as two powerplays and reads
+  as data rather than as a guess. Revisit when stamped penalties are the norm.
+- 2026-08-06 — S2 — **an optional field folded into a two-counter tally was a
+  silent-0 defect one level BELOW the one #429 fixed.** `PeriodSetPiece.outcome`
+  is optional, and an attempt the scorer never resolved folded to exactly the
+  numbers a recorded MISS folds to — 1 of 9 hockey and 1 of 6 icehockey recorded
+  set pieces hit it. So `scored / awarded` was dragged toward zero by missing
+  data, invisibly. Fixed ADDITIVELY with a third counter, `resolved`: `outcome`
+  stays optional (requiring it is a schema narrowing that would stop every
+  already-recorded event without one from parsing), `awarded − resolved` is the
+  visible unknown, and a rate is `scored / resolved`. The general lesson is
+  worth more than the fix: #429 taught the RANKING layer to tell "no data" from
+  a recorded zero, and that is only ever as good as the tallies feeding it.
+  Check the fold before trusting the comparator.
+- 2026-08-06 — S2 — **`unslimCorpus` must NEVER be used to compare two versions
+  of the engine.** It re-folds the stored ledger with CURRENT code, so
+  `corpusStateDiff(unslimCorpus(before), unslimCorpus(after))` compares a thing
+  with itself: it reported `changedStates: 0` for a change whose real footprint
+  was 39 full states and 51 digests across 7 streams. Same failure class as the
+  slimming defect it was written to recover from, and unguardable — a wrong `0`
+  looks exactly like a right one. Compare the RECORDED BYTES: loop
+  `verifyStream` over `readCorpus(key).streams`. Now in the docstring and in
+  `GOLDEN-POLICY.md` §2.
+- 2026-08-06 — S2 — **`rtk` swallows the `corpusStateDiff` printout, which IS
+  clause 2 of the re-baseline policy.** A `REBASELINE_GOLDEN=1` run reports
+  `11 passed` and nothing else, so the state diff a reviewer is required to read
+  never appears — and the re-baseline looks clean because it looks like nothing
+  at all. Reconstruct from the bytes: diff each written corpus against
+  `git show HEAD:<path>` per stream, checking `events` / `lineups` / `configs`
+  identical and which of `states` / `summary` / `outcome` / `deltas` moved. A
+  policy defeated by a wrapper printing a reassuring number is the same failure
+  class as the two entries above.
 - _(append below)_
 
 ## Open questions for the owner

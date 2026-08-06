@@ -1449,6 +1449,38 @@ export function makePeriodModule(
       if (kind === "fg" || kind === "og") continue;
       out[`goals_${kind}`] = zero ? 0 : (state.kindCounts[side][kind] ?? 0);
     }
+    // Set-piece conversion, DISPLAY ONLY (FIH penalty corner / stroke, IIHF
+    // penalty shot). Three INTEGER counters per kind and never a rate:
+    // `compareRatio` already cross-multiplies two ledger counters and owns the
+    // 0/0 "no data" branch, so a float here would fix the precision and the
+    // rounding for every consumer and throw away the no-attempts case that
+    // #429 taught the ranking layer to keep.
+    //
+    // GATED on `setPieces` being present at all, which is the cost control: a
+    // fixture that recorded no set piece emits none of these keys, so the seven
+    // corpus streams that DID record one are the only ones this moves. The
+    // omission is honest rather than a hidden zero — since #429 `metricOf` is
+    // partial and ranks a row that never recorded a key BELOW every row that
+    // did, instead of scoring it a genuine zero.
+    //
+    // NOT zeroed on a forfeit, unlike the goals. `zero` exists so an awarded
+    // fixture reports `cfg.awardScore` instead of the goals played; a set piece
+    // awarded on the pitch stays awarded, following `pim` and `cards_*` —
+    // records of what happened, not score.
+    //
+    // Iterates the DECLARED kinds (`cfg.setPieceKinds`), exactly as the
+    // `goals_<kind>` block above iterates `cfg.goalKinds`, so the emitted key
+    // set is a property of the competition's config rather than of which kinds
+    // this particular fixture happened to see.
+    if (state.setPieces !== undefined) {
+      const tallies = state.setPieces[side];
+      for (const kind of state.cfg.setPieceKinds) {
+        const tally = tallies[kind];
+        out[`sp_${kind}_awarded`] = tally?.awarded ?? 0;
+        out[`sp_${kind}_scored`] = tally?.scored ?? 0;
+        out[`sp_${kind}_resolved`] = tally?.resolved ?? 0;
+      }
+    }
     return out;
   };
 

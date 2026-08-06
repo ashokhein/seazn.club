@@ -1125,7 +1125,28 @@ export function rebaselineCorpus(module: AnySportModule, existing: GoldenCorpus)
  *  `changedStates=0` on a corpus that replays, and `keepRecordedConfig` puts the
  *  recorded config back regardless) — it is what keeps this callable from a test
  *  that runs over all eleven modules without paying a full re-fold per module
- *  for nothing. Cricket alone folds ~700 steps. */
+ *  for nothing. Cricket alone folds ~700 steps.
+ *
+ *  NEVER USE THIS TO COMPARE TWO VERSIONS OF THE ENGINE. It reconstructs the
+ *  missing states by RE-FOLDING the stored ledger with whatever code is loaded
+ *  now, so both sides of any before/after comparison come back as the CURRENT
+ *  behaviour. In particular
+ *
+ *      corpusStateDiff(unslimCorpus(before), unslimCorpus(after))
+ *
+ *  reports `changedStates: 0` for a fold change that moved dozens of recorded
+ *  states — measured while landing the set-piece `resolved` counter, where the
+ *  true answer was 39 full states and 51 digests across 7 streams. The failure
+ *  presents as a REASSURING NUMBER rather than an error, which is why this is a
+ *  warning and not a guard: there is no signal to trip on. It is the same
+ *  compare-a-thing-with-itself shape the slimming work existed to eliminate,
+ *  reintroduced by the function written to recover from it.
+ *
+ *  The correct comparison is against the RECORDED BYTES: loop `verifyStream`
+ *  over `readCorpus(key).streams`, which compares each stored state (or its
+ *  digest) with a fresh replay and names what moved. `corpusStateDiff` is
+ *  honest when its `after` side is a real `rebaselineCorpus` output and its
+ *  `before` side is the committed corpus as read from disk. */
 export function unslimCorpus(module: AnySportModule, corpus: GoldenCorpus): GoldenCorpus {
   return {
     ...corpus,
