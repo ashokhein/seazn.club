@@ -629,6 +629,243 @@ export function conflictsFor(input: {
   return out;
 }
 
+/**
+ * Everything the GREEDY board is made of, and everything a `BuildResult`
+ * describing it needs — all of it derived from the input alone, with no solver
+ * and no lock involved.
+ *
+ * ONE DEFINITION, deliberately. `solveBuild` hands this board back from six
+ * early exits, and `buildSchedule` hands it back without entering the lock at
+ * all when the queue is full (`MAX_SOLVER_QUEUE`). A second construction of it
+ * is the placer/verifier fork this subsystem has already hit three times, and
+ * the copy that drifts is always the one deciding what the organiser gets: the
+ * first field added to the solver's greedy exit and not to the queue-cap exit
+ * would be invisible to every test that only ever looks at one of them.
+ *
+ * The defaults live here too (`existing`, `dependencies`, `verifyConfig`) so
+ * that they are derived exactly once — the "ONE immovable board" rule below is
+ * a real invariant, not a style note.
+ */
+interface GreedySeed {
+  /**
+   * ONE immovable board, read by three consumers that must not disagree.
+   *
+   * `encodeBuild` seeds its typed-rule day tallies from this array and
+   * `validateAssignments` tallies from the array IT is handed; a filtered or
+   * omitted copy on either side puts the encoder and the verifier on different
+   * counts and reopens the placer/verifier fork. Every call passes THIS
+   * binding — never a filtered view, never `input.existing` re-defaulted.
+   */
+  existing: readonly Assignment[];
+  dependencies: readonly OrderDependency[];
+  verifyConfig: BuildConfig;
+  /** Greedy's board before legalisation, and its own conflict list. */
+  rawSeed: ReturnType<typeof slotFixtures>;
+  /** What `validateAssignments` says about the RAW seed. */
+  rawSeedConflicts: readonly Conflict[];
+  /** Seed rows disqualified by a blocking conflict, mapped to the conflicts
+   *  that disqualified them — so the result can report what ACTUALLY happened
+   *  to the card instead of inventing a reason for it. */
+  disqualified: ReadonlyMap<string, readonly Conflict[]>;
+  /** The LEGALISED greedy board: the floor the solver is held to, and the board
+   *  every greedy exit returns. */
+  assignments: readonly Assignment[];
+  metrics: BoardMetrics;
+  /**
+   * The caller's own board, or `undefined` when they gave us none.
+   *
+   * AN EMPTY ARRAY IS "NONE", not "a board on which nothing was scheduled".
+   * `[]` is the natural shape of a first-ever build on a division nobody has
+   * touched, and reading it as a baseline makes every card the run places differ
+   * from it — so the strip announces "12 matches moved" about a board that never
+   * existed. The distinction is drawn HERE rather than at the call seam, because
+   * it has to hold for every caller and not only for the one that remembered.
+   *
+   * ONE binding, read by both consumers. `publishedSlotOf` anchors a freeze to
+   * it (R20) and `movedFrom` measures against it, and those two must never
+   * disagree about whether there is a caller board at all: a freeze anchored to
+   * the organiser's slot while `moved` counted from greedy's would report a card
+   * as moved precisely when it had been held still.
+   */
+  currentBoard: readonly Assignment[] | undefined;
+  /** This run's bindings for the exported `conflictsFor`, which carries the
+   *  three-source rule and the reasoning behind it. */
+  conflictsForBoard: (board: readonly Assignment[], proved: boolean) => Conflict[];
+  /**
+   * How many of `board`'s rows sit somewhere other than where the CALLER had
+   * them — the number the UI renders verbatim as "moved N" / "nothing moved".
+   *
+   * MEASURED AGAINST `input.current` WHEN THERE IS ONE, and only otherwise
+   * against the greedy seed. The seed is the wrong baseline whenever the two
+   * differ, and they differ in exactly the shape POLISH exists for: a fixture
+   * the caller froze but did not `lock` has no anchor of its own, so greedy
+   * RE-PLACES it and the seed records greedy's slot rather than the organiser's.
+   * The run then holds the card at greedy's slot, the diff against the seed is
+   * zero, and the strip says "nothing moved" about a board whose published times
+   * changed. Falling back to the seed keeps every caller that supplies nothing
+   * exactly where it was — a self-comparison, so zero.
+   *
+   * ONE rule for both exits. The early-return greedy paths hand back the seed
+   * itself, and hard-coding `moved: 0` there tells the same lie whenever
+   * `current` disagrees with it, so they route through here too.
+   *
+   * A row missing from the baseline counts as moved, which is right in both
+   * directions: under `current` it is a card the organiser had not scheduled at
+   * all, and under the seed it is one greedy could not place.
+   *
+   * ROWS ONLY — a card this run could not place is `lostFrom`'s business, not
+   * this one's (R21). Folding the two together made a single substitution read
+   * as 2 (the card swapped in counted as moved, the card dropped counted again)
+   * and let `moved` exceed the size of the board it describes. A strip printing
+   * "moved N" cannot honestly print an N larger than the board.
+   */
+  movedFrom: (board: readonly Assignment[]) => number;
+  /**
+   * Baseline rows this run could not place — matches that were on the caller's
+   * board and are not on the answer.
+   *
+   * SCOPED TO `currentBoard`, and zero without one (R21). Against the greedy
+   * seed the question is not meaningful: the seed is this run's own first guess,
+   * not a board anybody was shown, and the solver dropping a greedy card to fit
+   * two better ones is ordinary progress rather than a loss. Measured on the
+   * shape that proves it — one slot per court, `a=(E1,E2) b=(E1,E3) c=(E2,E4)`:
+   * greedy places only `a`, z3 places `b` and `c`, and counting the seed's `a`
+   * as lost took `moved` to 3 on a two-row board.
+   *
+   * That case is also why the previous justification here was wrong. It claimed
+   * a seed baseline could never lose a row because T0 maximises `placed` — but
+   * `isStrictlyBetter` only requires `placed >=`, so the solver may drop one
+   * card while adding two, and the set can change even when the count does not.
+   *
+   * Its own field rather than folded into `moved`, because the two are different
+   * events and only one of them is alarming: cards moving is what the organiser
+   * asked for, a card falling off the board is not.
+   */
+  lostFrom: (board: readonly Assignment[]) => number;
+}
+
+/**
+ * The seed, and the legalisation pass that turns it into a floor worth having.
+ *
+ * See the file header: `placed` has to mean LEGALLY placed or the solver can
+ * never beat greedy on a window-overrunning board.
+ */
+function greedySeed(input: BuildInput): GreedySeed {
+  const { fixtures, config } = input;
+  const existing = input.existing ?? [];
+  const dependencies = input.dependencies ?? [];
+  const verifyConfig: BuildConfig = { ...config };
+
+  const rawSeed = slotFixtures({ fixtures, config, existing });
+  const rawSeedConflicts = validateAssignments(
+    rawSeed.assignments,
+    verifyConfig,
+    existing,
+    dependencies,
+  );
+  const disqualified = new Map<string, Conflict[]>();
+  const seedIds = new Set(rawSeed.assignments.map((a) => a.fixtureId));
+  for (const c of rawSeedConflicts) {
+    if (!isBlockingConflict(c) || !seedIds.has(c.fixtureId)) continue;
+    const rows = disqualified.get(c.fixtureId);
+    if (rows === undefined) disqualified.set(c.fixtureId, [c]);
+    else rows.push(c);
+  }
+  const assignments = rawSeed.assignments.filter((a) => !disqualified.has(a.fixtureId));
+  const metrics = boardMetrics(assignments, config.courts, fixtures.length);
+
+  const currentBoard =
+    input.current !== undefined && input.current.length > 0 ? input.current : undefined;
+
+  return {
+    existing,
+    dependencies,
+    verifyConfig,
+    rawSeed,
+    rawSeedConflicts,
+    disqualified,
+    assignments,
+    metrics,
+    currentBoard,
+    conflictsForBoard: (board, proved) =>
+      conflictsFor({
+        board,
+        fixtures,
+        config: verifyConfig,
+        existing,
+        dependencies,
+        greedyConflicts: rawSeed.conflicts,
+        disqualified,
+        proved,
+      }),
+    movedFrom: (board) => {
+      const was = new Map((currentBoard ?? assignments).map((a) => [a.fixtureId, a]));
+      return board.filter((a) => {
+        const before = was.get(a.fixtureId);
+        return before === undefined || before.court !== a.court || before.startAt !== a.startAt;
+      }).length;
+    },
+    lostFrom: (board) => {
+      if (currentBoard === undefined) return 0;
+      const onBoard = new Set(board.map((a) => a.fixtureId));
+      return currentBoard.filter((a) => !onBoard.has(a.fixtureId)).length;
+    },
+  };
+}
+
+/**
+ * The greedy board as a finished `BuildResult` — the ONE place that shape is
+ * written down.
+ *
+ * `spent` is the caller's because only a run that reached the solver has
+ * anything but zero to report, and `lnsWindowRlimits` is passed by reference on
+ * purpose: `solveBuild` fills it after this closure is built.
+ */
+function greedyResult(
+  seed: GreedySeed,
+  status: BuildStatus,
+  spent: {
+    budgetExpired: boolean;
+    elapsedMs: number;
+    rlimitSpent: number;
+    lnsWindowRlimits: readonly number[];
+  },
+): BuildResult {
+  return {
+    assignments: seed.assignments,
+    conflicts: seed.conflictsForBoard(seed.assignments, false),
+    metrics: seed.metrics,
+    engine: "greedy",
+    status,
+    tiersCompleted: 0,
+    budgetExpired: spent.budgetExpired,
+    elapsedMs: spent.elapsedMs,
+    // NOT a hard 0. This board IS the seed, so it is zero whenever the caller
+    // supplied no `current` — but when they did, a card greedy re-placed has
+    // genuinely moved from where the organiser had it, and saying otherwise is
+    // the same false "nothing moved" the solver paths were fixed for.
+    moved: seed.movedFrom(seed.assignments),
+    lost: seed.lostFrom(seed.assignments),
+    rlimitSpent: spent.rlimitSpent,
+    lnsWindowRlimits: spent.lnsWindowRlimits,
+  };
+}
+
+/**
+ * The greedy board and nothing else — for a caller that never reaches the
+ * solver at all, so nothing has been spent and the result says so honestly.
+ */
+function greedyOnly(input: BuildInput, status: BuildStatus): BuildResult {
+  const t0 = performance.now();
+  const seed = greedySeed(input);
+  return greedyResult(seed, status, {
+    budgetExpired: false,
+    elapsedMs: performance.now() - t0,
+    rlimitSpent: 0,
+    lnsWindowRlimits: [],
+  });
+}
+
 export function buildSchedule(input: BuildInput): Promise<BuildResult> {
   // `withZ3Lock` is NOT reentrant. It is taken exactly here, and nothing below
   // may take it again — `loadZ3` deliberately does not, neither does anything
@@ -667,22 +904,8 @@ async function solveBuild(
   const t0 = performance.now();
   const elapsed = (): number => performance.now() - t0;
   const { fixtures, config } = input;
-  /**
-   * ONE immovable board, read by three consumers that must not disagree.
-   *
-   * `encodeBuild` seeds its typed-rule day tallies from this array and
-   * `validateAssignments` tallies from the array IT is handed; a filtered or
-   * omitted copy on either side puts the encoder and the verifier on different
-   * counts and reopens the placer/verifier fork. Every call below passes THIS
-   * binding — never a filtered view, never `input.existing` re-defaulted — and
-   * the two call sites are deliberately far apart, so this is the note that
-   * connects them.
-   */
-  const existing = input.existing ?? [];
-  const dependencies = input.dependencies ?? [];
   const wallMs = input.wallMs ?? DEFAULT_BUILD_WALL_MS;
   const rlimit = input.rlimit ?? DEFAULT_BUILD_RLIMIT;
-  const verifyConfig: BuildConfig = { ...config };
   /**
    * The wall, tested where the EXPENSIVE work is, not only between checks
    * (ruling R23).
@@ -730,62 +953,15 @@ async function solveBuild(
    */
   const outOfTime = (): boolean => elapsed() >= wallMs;
 
-  // 1. The seed, and the legalisation pass that turns it into a floor worth
-  //    having. See the header: `placed` has to mean LEGALLY placed or the
-  //    solver can never beat greedy on a window-overrunning board.
-  const rawSeed = slotFixtures({ fixtures, config, existing });
-  const rawSeedConflicts = validateAssignments(
-    rawSeed.assignments,
-    verifyConfig,
-    existing,
-    dependencies,
-  );
-  /** Seed rows disqualified by a blocking conflict, mapped to the conflicts
-   *  that disqualified them — so the result can report what ACTUALLY happened
-   *  to the card instead of inventing a reason for it. */
-  const disqualified = new Map<string, Conflict[]>();
-  const seedIds = new Set(rawSeed.assignments.map((a) => a.fixtureId));
-  for (const c of rawSeedConflicts) {
-    if (!isBlockingConflict(c) || !seedIds.has(c.fixtureId)) continue;
-    const rows = disqualified.get(c.fixtureId);
-    if (rows === undefined) disqualified.set(c.fixtureId, [c]);
-    else rows.push(c);
-  }
-  const seedAssignments = rawSeed.assignments.filter((a) => !disqualified.has(a.fixtureId));
-  const seedMetrics = boardMetrics(seedAssignments, config.courts, fixtures.length);
-
-  /**
-   * The caller's own board, or `undefined` when they gave us none.
-   *
-   * AN EMPTY ARRAY IS "NONE", not "a board on which nothing was scheduled".
-   * `[]` is the natural shape of a first-ever build on a division nobody has
-   * touched, and reading it as a baseline makes every card the run places differ
-   * from it — so the strip announces "12 matches moved" about a board that never
-   * existed. The distinction is drawn HERE rather than at the call seam, because
-   * it has to hold for every caller and not only for the one that remembered.
-   *
-   * ONE binding, read by both consumers. `publishedSlotOf` anchors a freeze to
-   * it (R20) and `movedFrom` measures against it, and those two must never
-   * disagree about whether there is a caller board at all: a freeze anchored to
-   * the organiser's slot while `moved` counted from greedy's would report a card
-   * as moved precisely when it had been held still.
-   */
-  const currentBoard =
-    input.current !== undefined && input.current.length > 0 ? input.current : undefined;
-
-  /** This run's bindings for the exported `conflictsFor`, which carries the
-   *  three-source rule and the reasoning behind it. */
-  const conflictsForBoard = (board: readonly Assignment[], proved: boolean): Conflict[] =>
-    conflictsFor({
-      board,
-      fixtures,
-      config: verifyConfig,
-      existing,
-      dependencies,
-      greedyConflicts: rawSeed.conflicts,
-      disqualified,
-      proved,
-    });
+  // 1. The seed, the legalisation pass that turns it into a floor worth having,
+  //    and every derived binding the run needs — all of it in `greedySeed`, so
+  //    the queue-cap exit in `buildSchedule` returns the SAME board this
+  //    function's early exits do rather than a second construction of it.
+  const seed = greedySeed(input);
+  const { existing, dependencies, verifyConfig, rawSeed, rawSeedConflicts } = seed;
+  const { currentBoard, conflictsForBoard, movedFrom, lostFrom } = seed;
+  const seedAssignments = seed.assignments;
+  const seedMetrics = seed.metrics;
 
   /** Filled once the solver exists — `greedy(...)` is defined before that and
    *  can return from an early exit, where nothing has been spent and the result
@@ -796,87 +972,13 @@ async function solveBuild(
   /** Filled by the LNS pass below; empty on every path that never reaches it. */
   const lnsWindowRlimits: number[] = [];
 
-  /**
-   * How many of `board`'s rows sit somewhere other than where the CALLER had
-   * them — the number the UI renders verbatim as "moved N" / "nothing moved".
-   *
-   * MEASURED AGAINST `input.current` WHEN THERE IS ONE, and only otherwise
-   * against the greedy seed. The seed is the wrong baseline whenever the two
-   * differ, and they differ in exactly the shape POLISH exists for: a fixture
-   * the caller froze but did not `lock` has no anchor of its own, so greedy
-   * RE-PLACES it and the seed records greedy's slot rather than the organiser's.
-   * The run then holds the card at greedy's slot, the diff against the seed is
-   * zero, and the strip says "nothing moved" about a board whose published times
-   * changed. Falling back to the seed keeps every caller that supplies nothing
-   * exactly where it was — a self-comparison, so zero.
-   *
-   * ONE rule for both exits. The early-return greedy paths hand back the seed
-   * itself, and hard-coding `moved: 0` there tells the same lie whenever
-   * `current` disagrees with it, so they route through here too.
-   *
-   * A row missing from the baseline counts as moved, which is right in both
-   * directions: under `current` it is a card the organiser had not scheduled at
-   * all, and under the seed it is one greedy could not place.
-   *
-   * ROWS ONLY — a card this run could not place is `lostFrom`'s business, not
-   * this one's (R21). Folding the two together made a single substitution read
-   * as 2 (the card swapped in counted as moved, the card dropped counted again)
-   * and let `moved` exceed the size of the board it describes. A strip printing
-   * "moved N" cannot honestly print an N larger than the board.
-   */
-  const movedFrom = (board: readonly Assignment[]): number => {
-    const was = new Map((currentBoard ?? seedAssignments).map((a) => [a.fixtureId, a]));
-    return board.filter((a) => {
-      const before = was.get(a.fixtureId);
-      return before === undefined || before.court !== a.court || before.startAt !== a.startAt;
-    }).length;
-  };
-
-  /**
-   * Baseline rows this run could not place — matches that were on the caller's
-   * board and are not on the answer.
-   *
-   * SCOPED TO `currentBoard`, and zero without one (R21). Against the greedy
-   * seed the question is not meaningful: the seed is this run's own first guess,
-   * not a board anybody was shown, and the solver dropping a greedy card to fit
-   * two better ones is ordinary progress rather than a loss. Measured on the
-   * shape that proves it — one slot per court, `a=(E1,E2) b=(E1,E3) c=(E2,E4)`:
-   * greedy places only `a`, z3 places `b` and `c`, and counting the seed's `a`
-   * as lost took `moved` to 3 on a two-row board.
-   *
-   * That case is also why the previous justification here was wrong. It claimed
-   * a seed baseline could never lose a row because T0 maximises `placed` — but
-   * `isStrictlyBetter` only requires `placed >=`, so the solver may drop one
-   * card while adding two, and the set can change even when the count does not.
-   *
-   * Its own field rather than folded into `moved`, because the two are different
-   * events and only one of them is alarming: cards moving is what the organiser
-   * asked for, a card falling off the board is not.
-   */
-  const lostFrom = (board: readonly Assignment[]): number => {
-    if (currentBoard === undefined) return 0;
-    const onBoard = new Set(board.map((a) => a.fixtureId));
-    return currentBoard.filter((a) => !onBoard.has(a.fixtureId)).length;
-  };
-
-  const greedy = (status: BuildStatus, budgetExpired = false): BuildResult => ({
-    assignments: seedAssignments,
-    conflicts: conflictsForBoard(seedAssignments, false),
-    metrics: seedMetrics,
-    engine: "greedy",
-    status,
-    tiersCompleted: 0,
-    budgetExpired,
-    elapsedMs: elapsed(),
-    // NOT a hard 0. This board IS the seed, so it is zero whenever the caller
-    // supplied no `current` — but when they did, a card greedy re-placed has
-    // genuinely moved from where the organiser had it, and saying otherwise is
-    // the same false "nothing moved" the solver paths were fixed for.
-    moved: movedFrom(seedAssignments),
-    lost: lostFrom(seedAssignments),
-    rlimitSpent: runBudget.current?.spent ?? 0,
-    lnsWindowRlimits,
-  });
+  const greedy = (status: BuildStatus, budgetExpired = false): BuildResult =>
+    greedyResult(seed, status, {
+      budgetExpired,
+      elapsedMs: elapsed(),
+      rlimitSpent: runBudget.current?.spent ?? 0,
+      lnsWindowRlimits,
+    });
 
   // 2. The lattice.
   //
