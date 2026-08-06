@@ -944,7 +944,7 @@
   "pass.entry.ended": "Event Pass beëindigd",
   "pass.entry.ended.reasonTerminal": "Er wordt niets verwijderd — deze competitie is afgerond of gearchiveerd, dus de Event Pass verhoogt de limieten niet meer.",
   "pass.entry.ended.reasonPastEnds": "Er wordt niets verwijderd — deze competitie is voorbij de einddatum, dus de Event Pass verhoogt de limieten niet meer. Pas de einddatum aan als de competitie nog loopt.",
-  "pass.entry.ended.nextEdition": "Editie van volgend jaar aanmaken",
+  "pass.entry.ended.nextEdition": "Volgende editie aanmaken",
   "pass.entry.closed.updateEndDate": "Einddatum bijwerken",
   "upgrade.closed.title": "Deze competitie is gesloten voor Event Passes",
   "upgrade.closed.reasonTerminal": "Deze competitie is afgelopen of gearchiveerd, dus er kan geen Event Pass meer voor worden gekocht.",

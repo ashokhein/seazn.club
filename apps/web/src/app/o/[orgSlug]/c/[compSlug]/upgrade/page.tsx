@@ -26,7 +26,7 @@ export const dynamic = "force-dynamic";
 //                     keeps the rung, the date and the receipt (nothing bought
 //                     is deleted) but loses the floodlight, and the page stops
 //                     claiming the pass is active. It is never re-offered, so
-//                     the two doors out are the plan and next year's edition.
+//                     the two doors out are the plan and the next edition.
 //   closed            past the same line as `ended`, but NOTHING WAS EVER
 //                     BOUGHT (#376). Its own panel rather than the ticket: the
 //                     ticket carries a rung name, a purchase date and a receipt

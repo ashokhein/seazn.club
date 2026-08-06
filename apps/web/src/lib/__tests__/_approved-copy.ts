@@ -119,7 +119,14 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   "f39d96b7fbbbfc13",
   "665584fd0671d579",
   "3f3be96ac6e6be4e",
-  "a28f1eacfd464458",
+  // Re-approved 2026-08-06 (cadence-neutral pass link). Label change only:
+  // "Create next year's edition" → "Create the next edition", quoted here
+  // because this paragraph names the two links the ended marker offers. Read
+  // against `dictionaries/*/ui.json` `pass.entry.ended.nextEdition`, which is
+  // where the rendered label comes from, and against `routes.competitionNew` —
+  // the link still points at a BLANK competition, so the surrounding claim
+  // ("never offered for sale again on that competition") is untouched.
+  "d3494f085c5710ec",
   // Approved 2026-07-29 (v17 gap #353). ONE new paragraph, inserted here: "The
   // same line decides when a pass can be BOUGHT. You can buy a pass while its
   // competition is still running, or during the 7-day grace after its end date;
@@ -182,7 +189,14 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   "4901d7ce5eea800a",
   "e83c931a71f7d62e",
   "f7d474e47cbd8920",
-  "d4512720ca211814",
+  // Re-approved 2026-08-06 (cadence-neutral pass link). Same label change, plus
+  // ONE sentence saying why the label names no interval — nothing in the schema
+  // makes a competition annual (`starts_on`/`ends_on` are two dates, there is no
+  // recurrence column), and the ladder and league formats run weekly. Read
+  // against `lib/entitlements.ts` `passLockReason`: the terminal arm and the
+  // past-ends-on arm are still the two this paragraph splits, and each still
+  // gets the step described here.
+  "69fbd1e0e9c144ec",
   "8c072be7bd782c73",
   "51f349d614c306b2",
   "38a84f5715684c23",
@@ -232,7 +246,12 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   // shipped. The help article never got it; W8 then re-approved these two
   // digests with the stale clause still inside them, which is how a positional
   // gate freezes a falsehood faithfully.
-  "e5d3c0403b1876cc",
+  // Re-approved 2026-08-06 (cadence-neutral pass link). "points you at next
+  // year's edition" → "points you at the next edition". Prose, not the label,
+  // but it asserted the same annual cadence the label used to. The stale
+  // clause the note above describes is NOT what changed here and is still
+  // present — do not read this re-approval as fixing it.
+  "c2f89b4cb48e1710",
   // Re-approved 2026-08-05 (#376), "What does the competition's upgrade page
   // show me?". That answer enumerates the page's states and was missing the one
   // #376 added, so it described a checkout on a page that no longer offers one.
@@ -241,7 +260,11 @@ export const APPROVED_EVENT_PASS_INVENTORY: string[] = [
   // precedes both offer arms — and against `ClosedPanel` in
   // `c/[compSlug]/upgrade/page.tsx`, which renders a heading, the one reason
   // sentence and at most one link: no rung, no price, no receipt stub.
-  "e0f0b80a2a5089c6",
+  // Re-approved 2026-08-06 (cadence-neutral pass link) on top of the #376
+  // approval above: "with next year's edition offered alongside Pro" → "with
+  // the next edition offered alongside Pro". The #376 clause about the `closed`
+  // state is unchanged and its reading still stands.
+  "4fd38a76c19ca08a",
 ];
 
 /**
@@ -286,7 +309,20 @@ export const APPROVED_PLANS_INVENTORY: string[] = [
   "43e1d69d597e5579",
   "b3b732cc02d27ad8",
   "9fea5a1e65adc92a",
-  "23ead2d9846fff5d",
+  // Re-approved 2026-08-06 (cadence-neutral pass link). Two clauses in the
+  // Event Pass pitch: "Right for the annual tournament that doesn't justify a
+  // year of Pro" → "the tournament that comes round rarely enough that a
+  // running subscription doesn't pay for itself", and "doesn't carry to next
+  // year's edition" → "to the next edition".
+  //
+  // The interval had to come out for the same reason as the label, but the
+  // COMPARISON had to be rewritten rather than rescaled: Pro is $19/month
+  // against a $29 pass (plans.md's own headings, `plan_entitlements`), so the
+  // obvious edit — "doesn't justify a month of Pro" — states something false.
+  // What is actually true is that the pass wins when the event does not recur
+  // often enough to keep a subscription running, which is what it now says and
+  // is the same rule `passExceedsPlan` encodes.
+  "6e856342deb34abe",
   "1d48d4377c637fbb",
   "87619eb00e3415c4",
   "88f54c8d84fe39f9",

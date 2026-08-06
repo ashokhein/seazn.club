@@ -17,7 +17,7 @@ One-time upgrade for a single competition, while that competition is still runni
 
 Both sizes carry everything else identically: branded exports, public player cards, sponsor tiers and paid packages, the realtime scoreboard and slideshow, advanced formats including double elimination, a one-time top-up of **25 AI credits**, and a **5% platform fee** on entry fees instead of 8%. Pick the size at checkout — a competition holds one pass and keeps it.
 
-Your brand **colour** is not part of either size — that stays Pro. A passed competition doesn't count against your active-competition limit. Right for the annual tournament that doesn't justify a year of Pro. It doesn't carry to next year's edition. [What the pass buys, in full](/help/billing/event-pass).
+Your brand **colour** is not part of either size — that stays Pro. A passed competition doesn't count against your active-competition limit. Right for the tournament that comes round rarely enough that a running subscription doesn't pay for itself. It doesn't carry to the next edition. [What the pass buys, in full](/help/billing/event-pass).
 
 ## Pro — $19/month, up to 5 organisations
 

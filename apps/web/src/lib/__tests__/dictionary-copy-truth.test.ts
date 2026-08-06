@@ -3152,3 +3152,47 @@ describe("the duplicate-merge tip (#404)", () => {
     expect(TIPS["persons.merge"].helpSlug).toBe("players/duplicates");
   });
 });
+
+// ── The ended pass's one remaining link names no interval ────────────────────
+//
+// `pass.entry.ended.nextEdition` is the single "yes" left once a pass stops
+// applying, and it renders on every competition that reaches that state — a
+// weekly ladder and a monthly league included. It said "Create next year's
+// edition" in all four locales, which told most of those organisers to come
+// back in twelve months for an event that runs again on Tuesday.
+//
+// Nothing in the schema makes a competition annual: `starts_on`/`ends_on` are
+// two dates, there is no recurrence field, and the ladder and league formats
+// are first-class. So the label may claim CONTINUITY ("edition") but never a
+// PERIOD. This is a copy-only invariant with no type to hold it, which is why
+// it is pinned here as well as in APPROVED_DICTIONARY_COPY: that fixture keeps
+// the four strings in step with the dictionaries, but it would happily pin a
+// year back into all four at once.
+describe("the ended-pass next-edition link (cadence-neutral)", () => {
+  // One list applied to every locale — the words are distinct enough that a
+  // per-locale split would only invite a translation to be added to the wrong
+  // bucket and silently stop being checked.
+  const PERIOD_WORDS = [
+    "year",
+    "annual",
+    "season", // en
+    "año",
+    "anual",
+    "temporada", // es
+    "année",
+    "annuel",
+    "saison", // fr
+    "jaar",
+    "seizoen", // nl
+  ];
+
+  it("names no interval in any locale", () => {
+    const faults = across("ui", "pass.entry.ended.nextEdition").flatMap(({ locale, value }) => {
+      expect(value.length, `${locale} pass.entry.ended.nextEdition is empty`).toBeGreaterThan(0);
+      return PERIOD_WORDS.filter((w) => value.toLowerCase().includes(w)).map(
+        (w) => `${locale}: "${value}" names the period "${w}"`,
+      );
+    });
+    expect(faults).toEqual([]);
+  });
+});

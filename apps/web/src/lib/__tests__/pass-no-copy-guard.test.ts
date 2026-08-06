@@ -2,7 +2,7 @@
 // OUT OF SCOPE, and nothing in the app may duplicate a `competition_passes`
 // row onto a fresh competition_id.
 //
-// Both "Create next year's edition" links this wave added point at
+// Both "Create the next edition" links this wave added point at
 // `routes.competitionNew` — a BLANK competition — never at a clone. That is
 // what keeps "$29 unlocks exactly one competition, forever" (SPEC-4 §7) true,
 // and it is an invariant nothing else enforces: the day someone ships a
