@@ -3237,5 +3237,14 @@
   "division.limit.archivedCount": "Divisies met geregistreerde resultaten tellen mee voor je limiet, ook nadat ze zijn gearchiveerd.",
   "danger.archiveBodySlotHeld": "De divisie verdwijnt van je console en de openbare site. Hij heeft geregistreerde resultaten, dus zijn divisieplek komt niet terug — er wordt niets vernietigd en je kunt hem op elk moment herstellen via competitie-instellingen → Gearchiveerde divisies. Per ongeluk gearchiveerd? Support kan de plek vrijgeven.",
   "comp.wizard.endsOn.required": "Een einddatum is verplicht.",
-  "comp.validation.endsBeforeStarts": "De einddatum kan niet vóór de startdatum liggen."
+  "comp.validation.endsBeforeStarts": "De einddatum kan niet vóór de startdatum liggen.",
+  "board.gate.warnTitlePublish": "Dit schema toch publiceren?",
+  "board.gate.warnTitleStart": "Starten met deze waarschuwingen?",
+  "board.gate.warnBodyPublish": "Deze waarschuwingen houden publicatie niet tegen, maar spelers zien het schema precies zoals het nu is.",
+  "board.gate.warnBodyStart": "Het toernooi starten publiceert dit schema en opent het scoren. Deze waarschuwingen houden dat niet tegen, maar spelers zien het tijdschema precies zoals het nu is.",
+  "board.gate.blockTitle": "Dit schema kan nog niet live",
+  "board.gate.blockBody": "Deze conflicten zijn onspeelbaar en kunnen niet worden genegeerd. Los ze op het bord op en probeer het opnieuw.",
+  "board.gate.publishAnyway": "Toch publiceren",
+  "board.gate.startAnyway": "Toch starten",
+  "board.gate.dismiss": "Sluiten"
 }

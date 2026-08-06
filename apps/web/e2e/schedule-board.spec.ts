@@ -429,6 +429,132 @@ test.describe.serial("schedule board", () => {
   });
 });
 
+/**
+ * #230 item 2 follow-up — the organiser's way through the publish gate.
+ *
+ * The gate itself is unit-tested; what only a browser can prove is the JOIN:
+ * the button POSTs, the server 422s, and the console turns that refusal into a
+ * confirm step whose button re-POSTs with `acknowledge_warnings: true`. Before
+ * this, the same 422 produced a red toast and no path forward — the button was
+ * a dead end on a live surface.
+ *
+ * Both halves in one test, deliberately. "A dialog appeared" is satisfied by a
+ * dialog that always offers to publish anyway, which would be a promise the
+ * server can never keep for a blocking board; the two states have to be seen
+ * against each other.
+ *
+ * Outside the serial chain above: its division has been moved, pinned,
+ * re-flowed and frozen, and an earlier failure there would SKIP this.
+ */
+test("the publish gate offers a way through for warnings, and none for a blocker", async ({
+  page,
+  request,
+}) => {
+  const DAY = Date.UTC(2026, 9, 12);
+  const at = (hour: number) => new Date(DAY + hour * 3_600_000).toISOString();
+
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    ends_on: "2030-12-31",
+    name: `Gate ${TAG}`,
+    visibility: "private",
+  });
+  const div = await apiJson<{ id: string }>(
+    request,
+    `/api/v1/competitions/${comp.data!.id}/divisions`,
+    "POST",
+    {
+      name: "Gate",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    },
+  );
+  const divisionId = div.data!.id;
+  await addEntrantsViaApi(request, divisionId, ["Gale", "Hail", "Iris", "Jade"]);
+  const out = await createStageAndGenerate(request, divisionId);
+
+  // A two-hour rest floor, so a 60-minute turnaround is a `warn.rest` — a
+  // warning, NOT a blocker. (`conflict.start_window` is non-blocking and
+  // `warn.window` IS blocking; the prefix decides nothing.)
+  await apiJson(request, `/api/v1/divisions/${divisionId}/schedule-settings`, "PUT", {
+    tz: "UTC",
+    config: {
+      startAt: at(9),
+      matchMinutes: 30,
+      gapMinutes: 0,
+      courts: ["Court A", "Court B"],
+      perEntrantMinRest: 120,
+    },
+  });
+
+  // Two fixtures SHARING an entrant, an hour apart on different courts. The
+  // rest of the board stays unscheduled on purpose — an incomplete board is not
+  // a conflicted one, and the gate must not confuse the two.
+  type Row = { id: string; home_entrant_id: string | null; away_entrant_id: string | null };
+  const rows = await Promise.all(
+    out.fixtureIds.map(async (id) => (await apiJson<Row>(request, `/api/v1/fixtures/${id}`)).data!),
+  );
+  const first = rows[0]!;
+  const sharer = rows.find(
+    (f) =>
+      f.id !== first.id &&
+      [f.home_entrant_id, f.away_entrant_id].some((e) =>
+        [first.home_entrant_id, first.away_entrant_id].includes(e),
+      ),
+  );
+  expect(sharer, "the generated round robin has no pair sharing an entrant").toBeTruthy();
+  await apiJson(request, `/api/v1/fixtures/${first.id}`, "PATCH", {
+    scheduled_at: at(9),
+    court_label: "Court A",
+  });
+  await apiJson(request, `/api/v1/fixtures/${sharer!.id}`, "PATCH", {
+    scheduled_at: at(10),
+    court_label: "Court B",
+  });
+
+  await page.goto(`/competitions/${comp.data!.id}/schedule`);
+  await page.getByTestId("board-publish-schedule").click();
+
+  // The refusal became a question, and it names what is being acknowledged.
+  const dialog = page.getByTestId("board-gate");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('p[data-kind="warnings"][data-action="publish"]')).toBeVisible();
+  await expect(dialog.locator('[data-testid="board-gate-conflict"][data-code="warn.rest"]')).toBeVisible();
+
+  await page.getByTestId("board-gate-confirm").click();
+  await expect(dialog).toBeHidden();
+
+  const published = await apiJson<{ status: string }>(request, `/api/v1/divisions/${divisionId}`);
+  expect(published.data!.status).toBe("scheduled");
+
+  // --- and now the half with no way through ---------------------------------
+  // Pull the timetable's last day back behind the board: every placed card is
+  // outside the competition window, which IS blocking. Done through settings
+  // because a card-level clash cannot be created through the API at all — the
+  // delta gate refuses the PATCH that would introduce one.
+  await apiJson(request, `/api/v1/divisions/${divisionId}/schedule-settings`, "PUT", {
+    tz: "UTC",
+    config: {
+      startAt: at(9),
+      endAt: new Date(DAY - 3_600_000).toISOString(),
+      matchMinutes: 30,
+      gapMinutes: 0,
+      courts: ["Court A", "Court B"],
+      perEntrantMinRest: 120,
+    },
+  });
+
+  await page.reload();
+  await page.getByTestId("board-publish-schedule").click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('p[data-kind="blocking"]')).toBeVisible();
+  await expect(dialog.locator('[data-testid="board-gate-conflict"][data-code="warn.window"]').first()).toBeVisible();
+  // THE assertion. Not "disabled" — absent. There is no override for a board
+  // that cannot be played, and offering one would be a lie the server rejects.
+  await expect(page.getByTestId("board-gate-confirm")).toHaveCount(0);
+  await expect(page.getByTestId("board-gate-cancel")).toBeVisible();
+});
+
 // Regression: with zero divisions the competition schedule page fed the
 // competition id into the settings lookup and crashed with 404
 // "division not found". It must render an empty state instead.

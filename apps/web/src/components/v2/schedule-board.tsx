@@ -31,6 +31,7 @@ import type { AiScope } from "./board/ai-console-state";
 import { computeAiDiff, ghostToneFor, type AiConsoleFixture } from "./board/ai-diff";
 import { ConflictsBadge, ConflictsPanel } from "./board/conflicts-panel";
 import { MovePanel } from "./board/move-panel";
+import { ScheduleGateDialog, type GateAction } from "./board/schedule-gate-dialog";
 import { ScheduleResultStrip } from "./board/result-strip";
 import { SettingsPanel } from "./board/settings-panel";
 import {
@@ -43,7 +44,7 @@ import {
   type Density,
   type GhostBlock,
 } from "./board/types";
-import { useBoardActions } from "./board/use-board-actions";
+import { useBoardActions, type GateRefusal } from "./board/use-board-actions";
 
 export type { BoardConfig, BoardConflict, BoardDivision, BoardFixture, BoardStage } from "./board/types";
 
@@ -779,6 +780,26 @@ export function ScheduleBoard({
     [actions.conflicts, board],
   );
   const [panelOpen, setPanelOpen] = useState(false);
+
+  // ------------------------------------------------- publish / start gate
+  // Both buttons POST an action the server may refuse (#230 item 2 follow-up):
+  // warnings are a question, blocking conflicts are a report. The refusal is
+  // held here — path and copy included — so "Publish anyway" re-sends the SAME
+  // action rather than assuming it was publish.
+  const [gate, setGate] = useState<
+    (GateRefusal & { action: GateAction; path: string; done: string }) | null
+  >(null);
+  const runGated = useCallback(
+    async (action: GateAction, path: string, done: string, acknowledge = false) => {
+      const refused = await actions.act(path, done, acknowledge);
+      // Re-opened rather than closed on a second refusal: an organiser who
+      // acknowledges warnings while another organiser drags a card into a court
+      // clash must be told THAT, not silently dropped back onto the board.
+      setGate(refused ? { ...refused, action, path, done } : null);
+    },
+    [actions],
+  );
+
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const jumpTo = useCallback(
@@ -947,9 +968,11 @@ export function ScheduleBoard({
           <>
             <button
               type="button"
+              data-testid="board-publish-schedule"
               disabled={actions.busy}
               onClick={() =>
-                void actions.act(
+                void runGated(
+                  "publish",
                   `/api/v1/divisions/${single.id}/publish-schedule`,
                   msg("board.publishNotice"),
                 )
@@ -960,9 +983,11 @@ export function ScheduleBoard({
             </button>
             <button
               type="button"
+              data-testid="board-start-division"
               disabled={actions.busy}
               onClick={() =>
-                void actions.act(
+                void runGated(
+                  "start",
                   `/api/v1/divisions/${single.id}/start`,
                   msg("board.startNotice"),
                 )
@@ -1206,6 +1231,21 @@ export function ScheduleBoard({
           onRetryCheck={() => void actions.revalidate()}
         />
       )}
+
+      {/* The way through the publish gate — and, for a blocking board, the
+          honest statement that there is none. */}
+      <ScheduleGateDialog
+        gate={gate}
+        board={board}
+        entrantNames={entrantNames}
+        feedLabels={feedLabels}
+        busy={actions.busy}
+        onConfirm={() => {
+          if (!gate) return;
+          void runGated(gate.action, gate.path, gate.done, true);
+        }}
+        onDismiss={() => setGate(null)}
+      />
 
       {/* The JOINT console (#350): every selected division planned in one run,
           applied in one transaction. Mounted only where `aiEntryPoint` says so,

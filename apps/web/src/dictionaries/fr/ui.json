@@ -3237,5 +3237,14 @@
   "division.limit.archivedCount": "Les divisions avec des résultats enregistrés comptent dans votre limite même une fois archivées.",
   "danger.archiveBodySlotHeld": "La division disparaît de votre console et du site public. Elle a des résultats enregistrés : son emplacement de division n'est pas restitué — rien n'est détruit et vous pouvez la restaurer à tout moment depuis les paramètres de la compétition → Divisions archivées. Archivée par erreur ? L'assistance peut libérer l'emplacement.",
   "comp.wizard.endsOn.required": "Une date de fin est obligatoire.",
-  "comp.validation.endsBeforeStarts": "La date de fin ne peut pas précéder la date de début."
+  "comp.validation.endsBeforeStarts": "La date de fin ne peut pas précéder la date de début.",
+  "board.gate.warnTitlePublish": "Publier quand même ce calendrier ?",
+  "board.gate.warnTitleStart": "Démarrer malgré ces avertissements ?",
+  "board.gate.warnBodyPublish": "Ces avertissements n’empêchent pas la publication, mais les joueurs verront le calendrier tel quel.",
+  "board.gate.warnBodyStart": "Démarrer le tournoi publie ce calendrier et ouvre la saisie des scores. Ces avertissements ne l’empêchent pas, mais les joueurs verront l’horaire tel quel.",
+  "board.gate.blockTitle": "Ce calendrier ne peut pas encore être publié",
+  "board.gate.blockBody": "Ces conflits sont injouables : ils ne peuvent pas être ignorés. Corrigez-les sur le tableau, puis réessayez.",
+  "board.gate.publishAnyway": "Publier quand même",
+  "board.gate.startAnyway": "Démarrer quand même",
+  "board.gate.dismiss": "Fermer"
 }

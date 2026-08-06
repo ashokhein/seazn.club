@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
-import { dayKey } from "@/lib/schedule-board";
+import { dayKey, PUBLISH_BLOCKED, PUBLISH_UNACKNOWLEDGED } from "@/lib/schedule-board";
 import type { FeedLabelPair } from "@/lib/schedule-board";
 import type {
   AutoScheduleRequest,
@@ -29,6 +29,21 @@ import {
 } from "./types";
 
 type Override = { scheduled_at: string | null; court_label: string | null; schedule_locked: boolean };
+
+/**
+ * A publish/start refusal from the server-side validation gate, carried back to
+ * the caller intact.
+ *
+ * `kind` is derived from the CODE, never from the conflict rows: the two are not
+ * interchangeable. `conflict.start_window` is non-blocking and `warn.window` IS
+ * blocking, so a client that recomputed "is anything blocking" from the list
+ * would disagree with the server that produced it — and would offer a "publish
+ * anyway" button that can only ever 422 again.
+ */
+export interface GateRefusal {
+  kind: "blocking" | "warnings";
+  conflicts: BoardConflict[];
+}
 
 export interface BoardActions {
   board: BoardFixture[];
@@ -71,7 +86,18 @@ export interface BoardActions {
    * legal.
    */
   autoRun: (stageId: string, onlyUnlocked: boolean, mode?: AutoScheduleMode) => Promise<void>;
-  act: (path: string, done: string) => Promise<void>;
+  /**
+   * Publish / start. Resolves to `null` when the action landed, and to the
+   * gate's refusal when the server would not put this board in front of players
+   * (#230 item 2 follow-up) — the caller opens the confirm dialog on that and
+   * calls back with `acknowledgeWarnings: true`.
+   *
+   * A refusal is deliberately a RETURN VALUE rather than a thrown error routed
+   * through `fail`: `fail` renders one sentence and discards `extra.conflicts`,
+   * and the whole point here is to show the organiser which conflicts and offer
+   * the way through.
+   */
+  act: (path: string, done: string, acknowledgeWarnings?: boolean) => Promise<GateRefusal | null>;
   shiftDay: (day: string, minutes: number) => Promise<void>;
   swapCourts: (day: string, a: string, b: string) => Promise<void>;
   queueValidate: () => void;
@@ -358,16 +384,39 @@ export function useBoardActions(
   );
 
   const act = useCallback(
-    async (path: string, done: string) => {
+    async (path: string, done: string, acknowledgeWarnings = false): Promise<GateRefusal | null> => {
       setError(null);
       setNotice(null);
       setBusy(true);
       try {
-        await apiV1(path, { method: "POST" });
+        // No body unless the organiser is acknowledging: publish and start both
+        // parse an ABSENT body as `{}`, and every existing API-key client POSTs
+        // them with none. Sending `{}` unconditionally would work but would make
+        // "the console always sends a body" a fact the server then has to keep
+        // true; sending nothing keeps the two paths identical to today's.
+        await apiV1(path, {
+          method: "POST",
+          json: acknowledgeWarnings ? { acknowledge_warnings: true } : undefined,
+        });
         setNotice(done);
         router.refresh();
+        return null;
       } catch (err) {
+        // The gate's two refusals are NOT errors to render as a red toast —
+        // they are a question with an answer, or a report. `fail` would flatten
+        // both into a sentence and throw the conflict list away, which is
+        // exactly the dead end this follow-up exists to remove.
+        if (
+          err instanceof ApiV1Error &&
+          (err.code === PUBLISH_BLOCKED || err.code === PUBLISH_UNACKNOWLEDGED)
+        ) {
+          return {
+            kind: err.code === PUBLISH_BLOCKED ? "blocking" : "warnings",
+            conflicts: (err.extra.conflicts as BoardConflict[] | undefined) ?? [],
+          };
+        }
         fail(err);
+        return null;
       } finally {
         setBusy(false);
       }

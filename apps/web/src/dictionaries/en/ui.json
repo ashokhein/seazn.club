@@ -3237,5 +3237,14 @@
   "division.limit.archivedCount": "Divisions with recorded results count toward your limit even after they are archived.",
   "danger.archiveBodySlotHeld": "The division disappears from your console and the public site. It has recorded results, so its division slot does not come back — nothing is destroyed, and you can restore it any time from competition settings → Archived divisions. Archived one by mistake? Support can waive the slot.",
   "comp.wizard.endsOn.required": "An end date is required.",
-  "comp.validation.endsBeforeStarts": "The end date cannot be before the start date."
+  "comp.validation.endsBeforeStarts": "The end date cannot be before the start date.",
+  "board.gate.warnTitlePublish": "Publish this schedule anyway?",
+  "board.gate.warnTitleStart": "Start with these warnings?",
+  "board.gate.warnBodyPublish": "These warnings will not stop the schedule going live, but players will see it exactly as it stands.",
+  "board.gate.warnBodyStart": "Starting the tournament publishes this schedule and opens scoring. These warnings will not stop it, but players will see the timetable exactly as it stands.",
+  "board.gate.blockTitle": "This schedule cannot go live yet",
+  "board.gate.blockBody": "These conflicts are impossible to play, so there is no way to override them. Fix them on the board, then try again.",
+  "board.gate.publishAnyway": "Publish anyway",
+  "board.gate.startAnyway": "Start anyway",
+  "board.gate.dismiss": "Close"
 }

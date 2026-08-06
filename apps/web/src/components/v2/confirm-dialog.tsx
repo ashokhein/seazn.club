@@ -11,12 +11,24 @@ interface Props {
   open: boolean;
   title: string;
   children: ReactNode; // body copy: exactly what happens, destroyed vs kept
-  confirmLabel: string;
+  /** OMIT to render no confirm button at all — a dialog that only reports
+   *  (#230: a board with blocking conflicts has nothing to confirm, and there is
+   *  no override for it). The difference has to be structural rather than a
+   *  disabled button: a disabled "Publish anyway" says "not yet", and this one
+   *  means "never on this board". */
+  confirmLabel?: string;
   /** Require typing this exact string to enable the confirm button. */
   typedName?: string;
   busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Localized dismiss label. Defaults to the English "Cancel" every existing
+   *  caller renders today; pass one when the dialog is reachable from a
+   *  translated surface. */
+  cancelLabel?: string;
+  /** Root hook. The two buttons derive `${testId}-confirm` / `${testId}-cancel`,
+   *  so a spec never has to select on copy. */
+  testId?: string;
 }
 
 export function ConfirmDialog({
@@ -28,6 +40,8 @@ export function ConfirmDialog({
   busy = false,
   onConfirm,
   onCancel,
+  cancelLabel = "Cancel",
+  testId,
 }: Props) {
   const [typed, setTyped] = useState("");
   const [lastOpen, setLastOpen] = useState(open);
@@ -55,6 +69,7 @@ export function ConfirmDialog({
 
   return (
     <div
+      data-testid={testId}
       className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
@@ -84,17 +99,26 @@ export function ConfirmDialog({
           </label>
         )}
         <div className="flex justify-end gap-2">
-          <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={busy}>
-            Cancel
-          </button>
           <button
             type="button"
-            className="btn btn-danger"
-            onClick={onConfirm}
-            disabled={busy || !armed}
+            data-testid={testId ? `${testId}-cancel` : undefined}
+            className="btn btn-ghost"
+            onClick={onCancel}
+            disabled={busy}
           >
-            {confirmLabel}
+            {cancelLabel}
           </button>
+          {confirmLabel !== undefined && (
+            <button
+              type="button"
+              data-testid={testId ? `${testId}-confirm` : undefined}
+              className="btn btn-danger"
+              onClick={onConfirm}
+              disabled={busy || !armed}
+            >
+              {confirmLabel}
+            </button>
+          )}
         </div>
       </div>
     </div>

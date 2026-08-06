@@ -3237,5 +3237,14 @@
   "division.limit.archivedCount": "Las divisiones con resultados registrados cuentan para tu límite incluso después de archivarlas.",
   "danger.archiveBodySlotHeld": "La división desaparece de tu consola y del sitio público. Tiene resultados registrados, así que su plaza de división no se recupera — nada se destruye y puedes restaurarla en cualquier momento desde la configuración de la competición → Divisiones archivadas. ¿La archivaste por error? Soporte puede liberar la plaza.",
   "comp.wizard.endsOn.required": "Se requiere una fecha de fin.",
-  "comp.validation.endsBeforeStarts": "La fecha de fin no puede ser anterior a la fecha de inicio."
+  "comp.validation.endsBeforeStarts": "La fecha de fin no puede ser anterior a la fecha de inicio.",
+  "board.gate.warnTitlePublish": "¿Publicar este calendario de todos modos?",
+  "board.gate.warnTitleStart": "¿Empezar con estas advertencias?",
+  "board.gate.warnBodyPublish": "Estas advertencias no impiden que el calendario se publique, pero los jugadores lo verán tal y como está.",
+  "board.gate.warnBodyStart": "Empezar el torneo publica este calendario y abre la anotación. Estas advertencias no lo impiden, pero los jugadores verán el horario tal y como está.",
+  "board.gate.blockTitle": "Este calendario aún no puede publicarse",
+  "board.gate.blockBody": "Estos conflictos son imposibles de jugar, así que no se pueden omitir. Corrígelos en el tablero y vuelve a intentarlo.",
+  "board.gate.publishAnyway": "Publicar de todos modos",
+  "board.gate.startAnyway": "Empezar de todos modos",
+  "board.gate.dismiss": "Cerrar"
 }
