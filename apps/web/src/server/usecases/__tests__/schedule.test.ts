@@ -180,7 +180,7 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
     const generated = await generateStageFixtures(auth, groups.id);
     expect(generated.created).toBe(12);
 
-    const proposal = await autoSchedule(auth, groups.id, false);
+    const proposal = await autoSchedule(auth, groups.id, { only_unlocked: false, mode: "build" });
     expect(proposal.assignments).toHaveLength(12);
     expect(proposal.conflicts.filter((c) => c.blocking)).toHaveLength(0);
     // Both courts in use; per-entrant rest ≥ 30 min in the proposal.
@@ -263,7 +263,7 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
     const pinB = board[3]!;
     await patchFixture(auth, pinA.id, { schedule_locked: true });
     await patchFixture(auth, pinB.id, { schedule_locked: true });
-    const reflow = await autoSchedule(auth, groups.id, true);
+    const reflow = await autoSchedule(auth, groups.id, { only_unlocked: true, mode: "reflow" });
     const pinnedOut = new Map(reflow.assignments.map((a) => [a.fixture_id, a]));
     expect(pinnedOut.get(pinA.id)?.scheduled_at).toBe(pinA.scheduled_at.toISOString());
     expect(pinnedOut.get(pinA.id)?.court_label).toBe(pinA.court_label);
@@ -379,7 +379,7 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
       tz: "UTC",
     });
     const { fixtures } = await generateStageFixtures(auth, stage.id);
-    const proposal = await autoSchedule(auth, stage.id, false);
+    const proposal = await autoSchedule(auth, stage.id, { only_unlocked: false, mode: "build" });
     expect(proposal.assignments).toHaveLength(6);
     await applySchedule(auth, stage.id, {
       assignments: proposal.assignments.map((a) => ({
@@ -680,6 +680,7 @@ describe("AutoScheduleResult metrics + solver contract", () => {
     engine: "z3" as const,
     status: "ok" as const,
     tiers_completed: 2,
+    tiers_total: 4,
     budget_expired: false,
     elapsed_ms: 1234,
     moved: 6,
@@ -726,5 +727,26 @@ describe("AutoScheduleResult metrics + solver contract", () => {
       expect(ScheduleSolverInfo.parse({ ...solver, engine }).engine).toBe(engine);
     }
     expect(() => ScheduleSolverInfo.parse({ ...solver, engine: "cpsat" })).toThrow();
+  });
+
+  /** REQUIRED, not optional. `tiers_completed` is a numerator and the strip has
+   *  to render "N of M"; an optional denominator is one the component would
+   *  have to guess at, which is the hardcoded `IMPROVEMENT_TARGETS = 4` this
+   *  field exists to retire. */
+  it("requires tiers_total — a numerator with no denominator is not telemetry", () => {
+    const withoutTotal: Record<string, unknown> = { ...solver };
+    delete withoutTotal.tiers_total;
+    expect(() => ScheduleSolverInfo.parse(withoutTotal)).toThrow();
+    expect(() => ScheduleSolverInfo.parse({ ...solver, tiers_total: 4.5 })).toThrow();
+  });
+
+  /** OPTIONAL, and its absence is meaningful: an `infeasible` without it is the
+   *  engine saying the proof is about the BOARD, not about the pinned set. A
+   *  reader that has not been taught about it falls back to `total - placed`. */
+  it("carries contradictory_pins only when the engine named them", () => {
+    expect(ScheduleSolverInfo.parse(solver).contradictory_pins).toBe(undefined);
+    const pinned = { ...solver, status: "infeasible" as const, contradictory_pins: ["f-2", "f-9"] };
+    expect(ScheduleSolverInfo.parse(pinned)).toEqual(pinned);
+    expect(() => ScheduleSolverInfo.parse({ ...solver, contradictory_pins: [7] })).toThrow();
   });
 });

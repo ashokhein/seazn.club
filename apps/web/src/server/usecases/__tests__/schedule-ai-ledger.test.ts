@@ -76,7 +76,7 @@ async function seedPlannableStage(auth: AuthCtx) {
     tz: "UTC",
   });
   await generateStageFixtures(auth, stage.id);
-  const proposal = await autoSchedule(auth, stage.id, false);
+  const proposal = await autoSchedule(auth, stage.id, { only_unlocked: false, mode: "build" });
   return { division, stage, proposal };
 }
 

@@ -3217,6 +3217,8 @@
   "board.result.moved.one": "1 partido movido",
   "board.result.moved.other": "{count} partidos movidos",
   "board.result.movedNone": "nada movido",
+  "board.result.placed.one": "1 partido programado",
+  "board.result.placed.other": "{count} partidos programados",
   "board.result.dur.hm": "{h} h {m} min",
   "board.result.dur.m": "{m} min",
   "board.result.dur.s": "{s} s",

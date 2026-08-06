@@ -856,6 +856,8 @@ export type DictionaryKey =
   | "board.result.partial.other"
   | "board.result.partialPinned.one"
   | "board.result.partialPinned.other"
+  | "board.result.placed.one"
+  | "board.result.placed.other"
   | "board.result.quick"
   | "board.result.unavailable"
   | "board.result.verifierRejected"

@@ -915,9 +915,51 @@ export const ScheduleSolverInfo = z.object({
     "solver_busy",
   ]),
   tiers_completed: z.number().int(),
+  /** How many improvement targets the ladder HAS — the denominator
+   *  `tiers_completed` is a numerator of.
+   *
+   *  Sent rather than left to the client because a bare `tiers_completed` has
+   *  no meaning without it: the result strip had to carry its own
+   *  `IMPROVEMENT_TARGETS = 4`, which is a constant in a different package from
+   *  the ladder it describes and drifts the day a tier is added or removed with
+   *  nothing to notice. A denominator on the wire moves that fact to the one
+   *  place that knows it.
+   *
+   *  Optimality is `tiers_completed === tiers_total`, NOT `!budget_expired`: a
+   *  term or metric drift exits a tier without ever setting the flag. */
+  tiers_total: z.number().int(),
   budget_expired: z.boolean(),
   elapsed_ms: z.number(),
   moved: z.number().int(),
+  /** How many of `moved` were cards this run placed for the FIRST time.
+   *
+   *  `moved` counts every card the run put somewhere, and for a REFLOW over an
+   *  unscheduled stage that is the entire board — cards that were never anywhere
+   *  to be moved FROM. Without this the best copy available is "N matches
+   *  moved", which is wrong about every one of them.
+   *
+   *  CARRIED, not inferred. A reader cannot recover it from `moved` and
+   *  `placed`: `moved === placed` happens on plenty of ordinary boards that
+   *  seeded nothing at all, so a component deriving it that way would relabel a
+   *  genuine re-flow as a first-time scheduling run.
+   *
+   *  Present only on the REFLOW path, which is the only one that distinguishes a
+   *  seed from a move. BUILD and POLISH re-place everything by definition, so
+   *  the distinction does not arise and the field is absent. */
+  seeded: z.number().int().optional(),
+  /** The PINNED fixtures an `infeasible` verdict is about, sorted.
+   *
+   *  `infeasible` has two sources and they say opposite things to an organiser.
+   *  The board source means not one card can be placed legally. The PIN source
+   *  means the rest of the board is fine and two locked placements cannot both
+   *  be kept. Present only for the second, and its ABSENCE on an `infeasible`
+   *  result is itself the signal that the proof is about the board.
+   *
+   *  Optional and additive: a reader that has not been taught about it degrades
+   *  to `total - placed`, which is the same number in the measured case and
+   *  wrong whenever an unplaced card is not a pinned one. Never synthesised
+   *  here — it is forwarded only when the engine supplied it. */
+  contradictory_pins: z.array(z.string()).optional(),
 });
 export type ScheduleSolverInfo = z.infer<typeof ScheduleSolverInfo>;
 
