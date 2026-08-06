@@ -315,6 +315,18 @@ export interface BuildResult {
    */
   rlimitSpent: number;
   /**
+   * What each LNS window was ALLOTTED, in order, in z3 resource units. Empty
+   * when the fallback did not run.
+   *
+   * Telemetry, and the only place the apportionment is visible from outside:
+   * every other symptom of a mis-apportioned budget is downstream of a solve
+   * and washes out into "the solver found nothing", which is also what a
+   * correctly-budgeted run looks like. Task 13's bench needs it to answer
+   * whether one run budget is enough at 200 fixtures and how it should be
+   * split.
+   */
+  lnsWindowRlimits: readonly number[];
+  /**
    * The pinned fixtures an `infeasible` verdict is ABOUT (R4).
    *
    * `status: "infeasible"` has two sources and they mean opposite things to an
@@ -530,6 +542,9 @@ async function solveBuild(
    *  stays `const`. */
   const runBudget: { current: RunBudget | undefined } = { current: undefined };
 
+  /** Filled by the LNS pass below; empty on every path that never reaches it. */
+  const lnsWindowRlimits: number[] = [];
+
   const greedy = (status: BuildStatus, budgetExpired = false): BuildResult => ({
     assignments: seedAssignments,
     conflicts: conflictsForBoard(seedAssignments, false),
@@ -541,6 +556,7 @@ async function solveBuild(
     elapsedMs: elapsed(),
     moved: 0,
     rlimitSpent: runBudget.current?.spent ?? 0,
+    lnsWindowRlimits,
   });
 
   // 2. The lattice.
@@ -931,16 +947,25 @@ async function solveBuild(
   //     improved, so this can never make the answer worse — the same guarantee
   //     the greedy seed gives, and the reason it needs no escape hatch either.
   let usedLns = false;
-  // Close this phase's account. It is charged its SHARE, never its overshoot —
-  // see `RunBudget.drawn`. Without this the fallback is unreachable by
-  // construction: the tiers only fall short when their last check overran, and
-  // that overrun is reliably bigger than the whole reserve.
-  budget.drawn = Math.min(budget.spent, phaseCap);
+  // Close the MAIN phase's account. It is charged its SHARE, never its
+  // overshoot — see `RunBudget.drawn`. Without that the fallback is unreachable
+  // by construction: the tiers only fall short when their last check overran,
+  // and that overrun is reliably bigger than the whole reserve.
+  //
+  // ONLY AT THE TOP LEVEL. `drawn` is a RUN-WIDE running total and `phaseCap`
+  // in an inherited solve is that one window's allotment, so an unguarded
+  // assignment lets every window reset the run's account down to its own small
+  // slice: `left` and `allot` inflate from window 1 onward and `hasBudget()`
+  // can never fire, which is exactly the equal-share re-levelling the window
+  // loop below claims to do. Measured at rlimit 200_000: window 1 allotted
+  // 83_334 against a correct share of 16_667.
+  if (inherited === undefined) budget.drawn = Math.min(budget.spent, phaseCap);
   if (allowLns && tiersCompleted < TIER_COUNT && elapsed() < wallMs && budget.drawn < budget.total) {
     const solveWindow = async (w: LnsWindow): Promise<readonly Assignment[]> => {
       const left = budget.total - budget.drawn;
       const drawnBefore = budget.spent;
       const allot = Math.max(1, Math.floor(left / (w.of - w.index)));
+      lnsWindowRlimits.push(allot);
       const sub = await solveBuild(
         {
           fixtures: w.fixtures,
@@ -990,6 +1015,14 @@ async function solveBuild(
       // an LNS improvement reported as `already_optimal` is a lie about a proof
       // — and the failure would be silent.
       improved = true;
+      // NOT ASSERTED ANYWHERE, and deliberately so rather than by oversight.
+      // `engine: "z3+lns"` needs a run where the fallback both RUNS and wins,
+      // and those two do not currently overlap: the pass only runs when the
+      // tiers fall short, and at every budget where they do, T0 has already
+      // reached a board no LEGAL board beats — so a stub that "improved" on it
+      // would be refused by the verifier gate, and asserting on one would be
+      // asserting on the stub. If Task 13's bench finds a real improving board,
+      // the assertion belongs there.
       usedLns = true;
     }
   }
@@ -1050,6 +1083,7 @@ async function solveBuild(
     elapsedMs: elapsed(),
     moved,
     rlimitSpent: budget.spent,
+    lnsWindowRlimits,
   };
 }
 

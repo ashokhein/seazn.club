@@ -55,8 +55,11 @@ const fx = (id: string, home: string, away: string): SchedulableFixture => ({
 /** The measured corner from `build.test.ts`: two slots on one court, and a
  *  start window that makes greedy take the early one for the wrong card. Greedy
  *  places `[a@C1+0]` and reports `start_window` for `b`; the full solver places
- *  both as `[b@C1+0, a@C1+30]`. With `rlimit: 1` the solver never gets there,
- *  which is exactly the state LNS exists to rescue. */
+ *  both as `[b@C1+0, a@C1+30]`. Inside the band above the tiers stop short of a
+ *  verdict while the fallback's reserve is still intact, which is the state LNS
+ *  exists to rescue. (`rlimit: 1` was the old lever and no longer reaches the
+ *  fallback at all: the main phase's allotment is floored at 1, so it takes a
+ *  check, and one check costs ~382 on this model however small the limit.) */
 const config: SlotConfig & { courts: string[] } = {
   startAt: T0,
   matchMinutes: 30,
@@ -182,6 +185,56 @@ describe("buildSchedule — the LNS seam", () => {
       rows: built.assignments.map((a) => a.fixtureId),
       engine: built.engine,
     }).toEqual({ rows: ["a", "b"], engine: "z3" });
+  }, 180_000);
+
+  it("allots each window an equal share of what the run has LEFT", async () => {
+    // The apportionment itself, asserted where it is decided rather than
+    // downstream of a solve. `drawn` is a RUN-WIDE total, so the line that
+    // closes the main phase's account must not also run inside every window's
+    // sub-solve: unguarded, each window resets `drawn` to its own small slice,
+    // `left` inflates from window 1 onward, and the equal-share re-levelling
+    // silently stops happening. Every symptom of that is downstream of a solve
+    // and washes out into "the solver found nothing", which is also what a
+    // correctly-budgeted run looks like — so the allotments are the assertion.
+    const seen: LnsInput[] = [];
+    vi.doMock("./build-lns.ts", async () => {
+      const actual = await vi.importActual<typeof import("./build-lns.ts")>("./build-lns.ts");
+      return {
+        ...actual,
+        improveByWindows: async (input: LnsInput): Promise<LnsOutput> => {
+          seen.push(input);
+          // A fixed three-window plan, driven by hand so the arithmetic is the
+          // only thing under test. `hasBudget` is deliberately ignored: we want
+          // all three allotments on the record, not the loop's stopping rule.
+          for (let i = 0; i < 3; i++) {
+            await input.solveWindow({
+              fixtures: input.fixtures,
+              existing: input.existing ?? [],
+              movable: new Set(input.fixtures.map((f) => f.id)),
+              index: i,
+              of: 3,
+            });
+          }
+          return {
+            board: input.board,
+            metrics: boardMetrics(input.board, input.courts, input.total),
+            windows: 3,
+          };
+        },
+      };
+    });
+    const mod = await import("./build.ts");
+    const built = await mod.buildSchedule({ fixtures, config, rlimit: LNS_LEVER_RLIMIT });
+
+    expect(seen).toHaveLength(1);
+    // MEASURED, and every number is the same arithmetic: the run keeps 100 of
+    // its 400 back from the main phase, and each window takes an equal share of
+    // what is left over the windows still to come. Window 2 gets 67 rather than
+    // 34 because window 1's sub-solve drew nothing — which is the re-levelling
+    // working, not a rounding artefact. Without the `inherited` guard the
+    // sub-solves reset the run's account and this reads [33, 167, 233] —
+    // measured, and window 1 alone is then allotted five times its share.
+    expect(built.lnsWindowRlimits).toEqual([33, 33, 67]);
   }, 180_000);
 
   it("does not run the pass on a run that proved every tier", async () => {
