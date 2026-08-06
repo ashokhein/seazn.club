@@ -1111,9 +1111,25 @@ async function solveBuild(
   //
   // Carried WITH the fixture id, not as a bare slot list, because an
   // `infeasible` proved off these pins has to be able to name them (R4).
+  //
+  // A FROZEN ID THAT NAMES NO FIXTURE IN THIS RUN IS NOT A PIN. `publishedSlotOf`
+  // falls back to `current`, so a stale id — a filtered `schedulable` list,
+  // another division's card, a board read before a deletion — resolves to a slot
+  // this run has no card for, and a pin is admitted into the lattice
+  // UNCONDITIONALLY, court filter included. The result is a free slot on a court
+  // the organiser never configured: measured, `courts: ["C1"]` plus a ghost pin
+  // on `C9` placed a real fixture on C9 and reported `status: "ok"`.
+  //
+  // The same guard the force loop below already applies (`i < 0 -> continue`),
+  // and it belongs on BOTH: skipping the card there while still buying it a
+  // lattice slot here is what let the slot go to somebody else. It also keeps
+  // `contradictoryPins` — which is `pinnedIds` — naming only cards the caller
+  // can act on.
+  const ownFixture = (id: string): boolean => fixtures.some((f) => f.id === id);
   const pins: { id: string; at: BuildSlot }[] = [
     ...fixtures.flatMap((f) => (f.locked !== undefined ? [{ id: f.id, at: f.locked }] : [])),
     ...frozenIds.flatMap((id) => {
+      if (!ownFixture(id)) return [];
       const at = publishedSlotOf(id);
       return at === undefined ? [] : [{ id, at }];
     }),
@@ -1852,6 +1868,14 @@ export function buildTiers(input: TierInput): Tier[] {
   // for it. An earlier draft guarded this with `Implies(load >= 1, ...)`; that
   // guard was not merely untested but DEAD, since its antecedent holds for
   // every reachable input, and a dead guard reads as a case somebody once saw.
+  //
+  // THAT ARGUMENT WAS BRIEFLY UNSOUND, which is worth recording: the pin builder
+  // resolved a `frozen` id through `current` without checking it named a fixture
+  // in this run, while the force loop skipped exactly those ids. Such a pin
+  // bought a lattice slot nothing could be forced onto — an unconfigured court
+  // carrying no load — and this line then pulled the minimum to zero and had T3
+  // chase an imbalance the board did not have. `ownFixture` above restores the
+  // premise: every pin names a card of this run's, so every pin is forced.
   //
   // (If an unforced pin source is ever added — a pin the solver may decline —
   // this is the line that has to come back, because a court in the lattice with
