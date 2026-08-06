@@ -931,6 +931,22 @@ export const ScheduleSolverInfo = z.object({
   budget_expired: z.boolean(),
   elapsed_ms: z.number(),
   moved: z.number().int(),
+  /** How many of `moved` were cards this run placed for the FIRST time.
+   *
+   *  `moved` counts every card the run put somewhere, and for a REFLOW over an
+   *  unscheduled stage that is the entire board — cards that were never anywhere
+   *  to be moved FROM. Without this the best copy available is "N matches
+   *  moved", which is wrong about every one of them.
+   *
+   *  CARRIED, not inferred. A reader cannot recover it from `moved` and
+   *  `placed`: `moved === placed` happens on plenty of ordinary boards that
+   *  seeded nothing at all, so a component deriving it that way would relabel a
+   *  genuine re-flow as a first-time scheduling run.
+   *
+   *  Present only on the REFLOW path, which is the only one that distinguishes a
+   *  seed from a move. BUILD and POLISH re-place everything by definition, so
+   *  the distinction does not arise and the field is absent. */
+  seeded: z.number().int().optional(),
   /** The PINNED fixtures an `infeasible` verdict is about, sorted.
    *
    *  `infeasible` has two sources and they say opposite things to an organiser.

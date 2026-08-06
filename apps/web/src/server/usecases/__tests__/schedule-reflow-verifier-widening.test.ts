@@ -182,4 +182,103 @@ describe.skipIf(!HAS_DB)("reflow reports the FULL verifier's rows over the board
       .sort(byId);
     expect([...out.conflicts].sort(byId)).toEqual(expected);
   }, 120_000);
+
+  /**
+   * THE SHARP EDGE, and the reason the widening needed a ruling at all.
+   *
+   * The case above is warn-level, which is uncomfortable but harmless. This one
+   * is BLOCKING: a board carrying a court double-booking, handed back unchanged
+   * by a reflow that cannot move either offender, now comes back red — on a
+   * surface that has never shown the organiser a red row for it before.
+   *
+   * Boards like this exist. `court` became blocking in #399 over boards that
+   * were published while it was a warning, which is the entire reason the WRITE
+   * gate is a delta rather than an absolute test. So the two cards are written
+   * straight to the table rather than through `applySchedule`: the apply gate
+   * would refuse to CREATE this board, and refusing to create one is not the
+   * same as never having to read one.
+   */
+  it("names exactly the blocking court clash on a board it hands back unchanged", async () => {
+    const { auth, stageId } = await seed();
+
+    const rows = await sql<
+      { id: string; home_entrant_id: string; away_entrant_id: string }[]
+    >`select id, home_entrant_id, away_entrant_id
+      from fixtures where stage_id = ${stageId} order by id`;
+    // The pair is CHOSEN, not taken as rows[0]/rows[1]. In a 4-entrant round
+    // robin exactly one other fixture is entrant-disjoint from any given one, so
+    // an arbitrary pair is disjoint about a fifth of the time — and the expected
+    // set below would then be two rows instead of four, at random, on a suite
+    // that runs against fresh uuids every time.
+    const a = rows[0]!;
+    const b = rows.find(
+      (r) =>
+        r.id !== a.id &&
+        [r.home_entrant_id, r.away_entrant_id].some((e) =>
+          [a.home_entrant_id, a.away_entrant_id].includes(e),
+        ),
+    )!;
+    const shared = [a.home_entrant_id, a.away_entrant_id].find((e) =>
+      [b.home_entrant_id, b.away_entrant_id].includes(e),
+    )!;
+    const others = rows.filter((r) => r.id !== a.id && r.id !== b.id);
+
+    // Two cards stacked on ONE court at ONE time — physically impossible, and
+    // `assertNoNewBlocking` would refuse to write it, so it goes in directly.
+    await sql`
+      update fixtures set scheduled_at = ${at(0)}, court_label = 'C1'
+      where id in ${sql([a.id, b.id])}`;
+    // Everything else parked two hours apart on the other court, so this clash
+    // is the only thing wrong and the expected set below is exact.
+    for (const [i, r] of others.entries()) {
+      await sql`
+        update fixtures set scheduled_at = ${at(300 + i * 120)}, court_label = 'C2'
+        where id = ${r.id}`;
+    }
+    // Pinned, so the repair solver may not resolve the clash and the incumbent
+    // board is what comes back.
+    for (const f of [a, b]) await patchFixture(auth, f.id, { schedule_locked: true });
+
+    const out = await autoSchedule(auth, stageId, { only_unlocked: true, mode: "reflow" });
+
+    // Handed back unchanged...
+    expect(out.assignments.find((x) => x.fixture_id === a.id)?.scheduled_at).toBe(at(0));
+    expect(out.assignments.find((x) => x.fixture_id === b.id)?.scheduled_at).toBe(at(0));
+
+    // ...and reported as BLOCKING — the exact set, all FOUR rows. Two families
+    // fire, not one: the cards collide on the court AND put the same human on
+    // two courts at once, and both are blocking. This is what an organiser now
+    // sees in red on a board they had been living with, and it is the behaviour
+    // we deliberately chose to keep rather than narrow.
+    //
+    // Note `warn.person_overlap` carries `blocking: true`. The code's prefix and
+    // its blocking-ness genuinely disagree in `REASON_CODE`; that predates this
+    // work, and pinning it here is how a later tidy-up gets noticed rather than
+    // silently changing what the board shows.
+    const key = (x: { fixture_id: string; code: string }) => `${x.fixture_id}|${x.code}`;
+    const byKey = (x: { fixture_id: string; code: string }, y: typeof x) =>
+      key(x).localeCompare(key(y));
+    const expected = [
+      [a.id, b.id],
+      [b.id, a.id],
+    ]
+      .flatMap(([self, other]) => [
+        {
+          fixture_id: self!,
+          code: "conflict.court",
+          rule: "H2",
+          blocking: true,
+          detail: `court C1 double-booked with ${other}`,
+        },
+        {
+          fixture_id: self!,
+          code: "warn.person_overlap",
+          rule: "H4",
+          blocking: true,
+          detail: `entrant ${shared} overlap with ${other}`,
+        },
+      ])
+      .sort(byKey);
+    expect([...out.conflicts].sort(byKey)).toEqual(expected);
+  }, 120_000);
 });

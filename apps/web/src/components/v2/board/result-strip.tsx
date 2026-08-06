@@ -100,6 +100,30 @@ export function ScheduleResultStrip({
    *      a wrong count reads better than a blank sentence.
    */
   const pinCount = solver.contradictory_pins?.length ?? pinnedConflictCount ?? dropped;
+
+  /**
+   * "12 matches moved" or "12 matches scheduled".
+   *
+   * A card that was never on the timetable cannot be MOVED, and a re-flow over
+   * an unscheduled stage places the whole board — so the plain churn sentence is
+   * wrong about every card in exactly the case an organiser is most likely to
+   * meet. `solver.seeded` is how many of `moved` were first-time placements.
+   *
+   * The choice lives here and the DATA comes off the wire, deliberately.
+   * Deriving "was this seeded" locally would mean testing `moved === placed`,
+   * which is true on plenty of ordinary re-flows that seeded nothing, and would
+   * relabel them.
+   *
+   * The mixed run — some seeded, some relocated — keeps the "moved" wording:
+   * it is the sentence that is true of the set as a whole, and inventing a third
+   * string for a rare case is worse copy than a slightly loose one.
+   */
+  const churn =
+    solver.moved === 0
+      ? msg("board.result.movedNone")
+      : solver.seeded === solver.moved
+        ? plural("board.result.placed", solver.moved)
+        : plural("board.result.moved", solver.moved);
   // Amber is reserved for "there is something here you need to know about your
   // board". `verifier_rejected` deliberately does NOT qualify: it is an internal
   // fault the organiser cannot act on, their board is valid either way, and the
@@ -192,8 +216,7 @@ export function ScheduleResultStrip({
         data-testid="schedule-result-provenance"
         className="mt-1 text-[11px] tabular-nums text-slate-400"
       >
-        {msg(ENGINE_KEY[solver.engine])} · {elapsed} ·{" "}
-        {solver.moved > 0 ? plural("board.result.moved", solver.moved) : msg("board.result.movedNone")}
+        {msg(ENGINE_KEY[solver.engine])} · {elapsed} · {churn}
       </p>
     </section>
   );

@@ -72,6 +72,39 @@ describe("ScheduleResultStrip — the numbers", () => {
     expect(html).toContain("nothing moved");
     expect(html).not.toContain("0 matches moved");
   });
+
+  /** A card that was never on the timetable cannot be MOVED. A re-flow over an
+   *  unscheduled stage places the whole board, and "12 matches moved" is wrong
+   *  about every single one of them. */
+  it("says 'scheduled', not 'moved', when every card was placed for the first time", () => {
+    const html = render(metrics(), solver({ moved: 12, seeded: 12 }));
+    expect(html).toContain("12 matches scheduled");
+    expect(html).not.toContain("12 matches moved");
+  });
+
+  /** The discriminator. Same `moved`, and `moved === placed` in this fixture
+   *  too, so a component that inferred "was this seeded" from the metrics rather
+   *  than reading `solver.seeded` would relabel this genuine re-flow as well. */
+  it("keeps 'moved' for a re-flow that seeded nothing", () => {
+    const html = render(metrics({ placed: 12, total: 12 }), solver({ moved: 12, seeded: 0 }));
+    expect(html).toContain("12 matches moved");
+    expect(html).not.toContain("12 matches scheduled");
+  });
+
+  /** A mixed run keeps the plain wording — it is the sentence that is true of
+   *  the set as a whole, and a third string for a rare case is worse copy. */
+  it("keeps 'moved' when only some of the cards were seeded", () => {
+    const html = render(metrics(), solver({ moved: 12, seeded: 5 }));
+    expect(html).toContain("12 matches moved");
+    expect(html).not.toContain("12 matches scheduled");
+  });
+
+  /** BUILD and POLISH never send the field, and neither does a server one
+   *  deploy behind. */
+  it("keeps 'moved' when the wire carries no seeded count", () => {
+    const html = render(metrics(), solver({ moved: 12 }));
+    expect(html).toContain("12 matches moved");
+  });
 });
 
 describe("ScheduleResultStrip — the anytime contract", () => {

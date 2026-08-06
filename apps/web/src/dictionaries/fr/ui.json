@@ -3217,6 +3217,8 @@
   "board.result.moved.one": "1 match déplacé",
   "board.result.moved.other": "{count} matchs déplacés",
   "board.result.movedNone": "aucun déplacement",
+  "board.result.placed.one": "1 match programmé",
+  "board.result.placed.other": "{count} matchs programmés",
   "board.result.dur.hm": "{h} h {m} min",
   "board.result.dur.m": "{m} min",
   "board.result.dur.s": "{s} s",

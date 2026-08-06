@@ -3217,6 +3217,8 @@
   "board.result.moved.one": "1 wedstrijd verplaatst",
   "board.result.moved.other": "{count} wedstrijden verplaatst",
   "board.result.movedNone": "niets verplaatst",
+  "board.result.placed.one": "1 wedstrijd ingepland",
+  "board.result.placed.other": "{count} wedstrijden ingepland",
   "board.result.dur.hm": "{h} u {m} min",
   "board.result.dur.m": "{m} min",
   "board.result.dur.s": "{s} s",

@@ -833,7 +833,7 @@ export async function autoSchedule(
   // re-places every unlocked card even when nothing is wrong, which is the
   // defect this mode replaces.
   const { schedulable, config, board, total } = plan;
-  const out = await withZ3Teardown(() =>
+  const out = await withZ3Teardown<BuildResult | ReflowResult>(() =>
     body.mode === "reflow"
       ? // Pinned cards are handed separately from the rest: the solver may not
         // move them, but they are still part of the proposal it hands back.
@@ -852,6 +852,12 @@ export async function autoSchedule(
           ...(body.mode === "polish" ? { mode: "polish" as const, frozen: plan.frozen } : {}),
         }),
   );
+
+  /** REFLOW's first-time-placement count, absent on the two modes that cannot
+   *  distinguish one. Read out here rather than through an `in` narrowing at the
+   *  spread below, where `ReflowResult` being assignable to `BuildResult` makes
+   *  the narrowed property `unknown`. */
+  const seeded = "seeded" in out ? out.seeded : undefined;
 
   // ---- Phase 3: map. Pure.
   return {
@@ -902,6 +908,10 @@ export async function autoSchedule(
       budget_expired: out.budgetExpired,
       elapsed_ms: out.elapsedMs,
       moved: out.moved,
+      // REFLOW only — the one path that can tell a first-time placement from a
+      // relocation. BUILD and POLISH re-place everything by definition, so the
+      // distinction does not arise and the field stays off the payload.
+      ...(seeded !== undefined ? { seeded } : {}),
       // Forwarded, never synthesised: absence on an `infeasible` result is
       // the engine SAYING the proof is about the board rather than the pins.
       ...(out.contradictoryPins !== undefined
@@ -1033,7 +1043,7 @@ export function boundSolverWindow<T extends SlotConfig & VerifyConfig>(
  * that returned. The cost is a 200-300 ms reboot on the next solve, paid by a
  * user-initiated action that already takes seconds.
  */
-async function withZ3Teardown(solve: () => Promise<BuildResult>): Promise<BuildResult> {
+async function withZ3Teardown<T extends BuildResult>(solve: () => Promise<T>): Promise<T> {
   try {
     return await solve();
   } finally {
@@ -1089,6 +1099,11 @@ function frozenIds(
  *     and reporting a number from a ladder it never walked would make an
  *     optimality claim (`tiers_completed === tiers_total`) that nothing proved.
  */
+/** A `BuildResult` plus the one fact only the REFLOW path is in a position to
+ *  know: how many of `moved` were cards it placed for the first time rather than
+ *  relocated. See `ScheduleSolverInfo.seeded` for why it is carried. */
+type ReflowResult = BuildResult & { seeded: number };
+
 async function reflowExisting(args: {
   schedulable: readonly SchedulableFixture[];
   /** Where the cards this run may move sit right now. */
@@ -1098,7 +1113,7 @@ async function reflowExisting(args: {
   pinned: readonly Assignment[];
   config: SlotConfig & VerifyConfig & { courts: string[] };
   board: readonly Assignment[];
-}): Promise<BuildResult> {
+}): Promise<ReflowResult> {
   const startedAt = Date.now();
   const total = args.schedulable.length;
   const immovable = [...args.board, ...args.pinned];
@@ -1142,7 +1157,7 @@ async function reflowExisting(args: {
     engine: BuildResult["engine"],
     moved: number,
     budgetExpired: boolean,
-  ): BuildResult => {
+  ): ReflowResult => {
     // The pinned cards rejoin the proposal here and NOT in `existing` above:
     // they are this stage's cards, the caller applies the whole set, and
     // `slotFixtures` has always returned them.
@@ -1175,6 +1190,7 @@ async function reflowExisting(args: {
       budgetExpired,
       elapsedMs: Date.now() - startedAt,
       moved,
+      seeded: seeded.size,
     };
   };
 
@@ -1189,9 +1205,11 @@ async function reflowExisting(args: {
   });
   switch (repaired.status) {
     case "clean":
-      // `engine: "greedy"` even when nothing was seeded: the board came back
-      // untouched and the WASM was never loaded, so claiming z3 produced it
-      // would be a lie in the one field that says where the board came from.
+      // `engine: "greedy"`, and NOT because nothing happened — `clean` is also
+      // the verdict after greedy has just seeded an entire empty stage, where
+      // the board is emphatically not untouched. It is because the REPAIR SOLVER
+      // changed nothing: whatever sits on this board came from greedy, and
+      // `engine` names where the board came from.
       return settle(proposal, "ok", "greedy", touched(), false);
     case "repaired":
       return settle(repaired.assignments, "ok", "z3", touched(repaired.moved), false);
