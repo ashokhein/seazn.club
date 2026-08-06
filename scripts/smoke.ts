@@ -7028,21 +7028,55 @@ async function schedulingConstraintsSuite(): Promise<void> {
   );
 
   interface AutoOut {
-    assignments: { fixture_id: string; scheduled_at: string; court_label: string }[];
+    assignments: { fixture_id: string; scheduled_at: string; ends_at: string; court_label: string }[];
     conflicts: ScheduleConflictLite[];
   }
   // ---- Surface 1: the AUTO pass ----
-  // gapMinutes 0 packs round 2 straight onto the court the semi just vacated,
-  // so the dependent starts 0 minutes after its feeder.
+  //
+  // The dependent: round 2 in generator order, i.e. the fixture BOTH semis feed.
+  // `winner_to_fixture` is not on the v1 wire, so the identification is checked
+  // rather than trusted — the apply gate below names the dependent itself, and
+  // that check asserts it is this same id.
+  const dependent = [...round2].sort((a, b) => a.seq_in_round - b.seq_in_round)[0]!;
+  //
+  // THIS CHECK USED TO ASSERT A VIOLATION WAS REPORTED, and the premise it rested
+  // on was greedy's. `gapMinutes: 0` packs round 2 straight onto the court a semi
+  // just vacated, so under `slotFixtures` the dependent started 0 minutes after
+  // its feeder and the 60-minute rule was breached. The default auto mode is the
+  // z3 repair solver now, and handed that same greedy board it MOVES the
+  // dependent until the rule is satisfied — so there is no violation left to
+  // report, and the old assertion was failing on an improvement.
+  //
+  // What replaces it is the POSITIVE fact, not "no warning": a pass that lost the
+  // rule entirely would satisfy "no warning" perfectly. Three conditions, and the
+  // first is a regression guard rather than a restatement — while this pass was
+  // feed-order-blind (#452) the solver "satisfied" the rule by running the final
+  // BEFORE its own semis, a measured gap of MINUS 60 minutes, and reported
+  // `conflicts: []`; `applySchedule` then answered the pass's own proposal with a
+  // blocking 409.
   const autoTight = v1data<AutoOut>(
     await v1(s, `/api/v1/stages/${cupStage.id}/schedule/auto`, "POST", {}),
   );
   const autoTightHits = idsWithCode(autoTight?.conflicts ?? [], "warn.instruction");
+  const autoTightAt = new Map((autoTight?.assignments ?? []).map((a) => [a.fixture_id, a]));
+  const feederGaps = semis.map((f) => {
+    const feeder = autoTightAt.get(f.id);
+    const dep = autoTightAt.get(dependent.id);
+    if (!feeder || !dep) return Number.NaN;
+    return (Date.parse(dep.scheduled_at) - Date.parse(feeder.ends_at)) / 60_000;
+  });
   check(
-    "#452 auto: a stored feeder→dependent rest rule is REPORTED by the auto pass (#447)",
+    "#452 auto: the auto pass HONOURS the stored feeder→dependent rest rule (#447)",
     (autoTight?.assignments ?? []).length === 4 &&
-      autoTightHits.size === 1 &&
-      round2.some((f) => autoTightHits.has(f.id)),
+      feederGaps.length === 2 &&
+      // 1. Never inverted: no dependent starts before a feeder has finished.
+      feederGaps.every((g) => g >= 0) &&
+      // 2. The rule is honoured, or — if the solver could not place it — said out
+      //    loud. Never both unmet and unmentioned, which is what it used to be.
+      (feederGaps.every((g) => g >= FEEDER_REST_MIN) || autoTightHits.has(dependent.id)) &&
+      // 3. And the blocking family the apply gate keys on is absent, so this
+      //    proposal is one the organiser can actually write.
+      idsWithCode(autoTight?.conflicts ?? [], "warn.order").size === 0,
   );
   // The twin, on the same stored rule: a 90-minute court turnaround pushes round
   // 2 to exactly the 60 minutes the rule asks for, and the rule goes quiet.
@@ -7094,7 +7128,9 @@ async function schedulingConstraintsSuite(): Promise<void> {
       // One row per FEEDER — both semis feed the same final.
       tightRows.length === 2 &&
       new Set(tightRows.map((r) => r.fixture_id)).size === 1 &&
-      round2.some((f) => tightRows[0]!.fixture_id === f.id) &&
+      // The gate names the dependent from the feed edges themselves, so this is
+      // also what turns surface 1's generator-order guess into a checked fact.
+      tightRows[0]!.fixture_id === dependent.id &&
       tightRows.every((r) => r.blocking === false && r.rule === "H8"),
   );
   const tightReport = idsWithCode(await validateCup(), "warn.instruction");
