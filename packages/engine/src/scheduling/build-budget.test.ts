@@ -42,7 +42,7 @@
 // Asserting BOTH the tier count and the spend is deliberate: the tier count
 // alone would also move if the model got harder, and the spend alone would also
 // move if a check got cheaper.
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildSchedule } from "./build.ts";
 import { boardMetrics, isStrictlyBetter } from "./build-objectives.ts";
 import { isBlockingConflict, slotFixtures, validateAssignments } from "./calendar.ts";
@@ -82,6 +82,16 @@ const legalSeed = (): Assignment[] => {
 };
 
 describe("buildSchedule run budget", () => {
+  // BEFORE as well as after. The engine's vitest config runs `isolate: false`
+  // on a thread pool, so every file in a worker shares one z3 instance — and
+  // z3's WASM heap only ever GROWS. This file's three solves (one at 40M
+  // rlimit) are the heaviest in the suite, so inheriting an already-grown heap
+  // kills the worker outright: it passes 3/3 in isolation and dies with a bare
+  // `STACK_TRACE_ERROR` in a full run, which reads as a flake and is not one.
+  beforeAll(async () => {
+    await resetZ3();
+  });
+
   afterAll(async () => {
     await resetZ3();
   });
