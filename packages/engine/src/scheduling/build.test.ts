@@ -20,7 +20,12 @@
 //     card that carries a blocking conflict as "placed" is what let an illegal
 //     greedy board outrank every legal one D3 could reach.
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { buildSchedule, rejectedBlockingConflicts, type BuildInput } from "./build.ts";
+import {
+  MAX_SOLVER_QUEUE,
+  buildSchedule,
+  rejectedBlockingConflicts,
+  type BuildInput,
+} from "./build.ts";
 import { boardMetrics, isStrictlyBetter } from "./build-objectives.ts";
 import { buildGrid } from "./build-grid.ts";
 import {
@@ -848,4 +853,65 @@ describe("buildSchedule — the lattice is the configured courts", () => {
     // may not join it there even though C2 has free time.
     expect(built.assignments.filter((x) => x.court === "C2").map((x) => x.fixtureId)).toEqual(["a"]);
   }, 180_000);
+});
+
+describe("buildSchedule — the solver queue cap", () => {
+  afterAll(async () => {
+    await resetZ3();
+  });
+
+  // DELIBERATELY THE SMALLEST BOARD IN THE FILE. This is the one case that runs
+  // `MAX_SOLVER_QUEUE` solves concurrently, and the suite is memory-bound rather
+  // than core-bound — `vitest.config.ts` caps `maxWorkers` against total memory
+  // because concurrent WASM heaps killed a worker per run, in a different
+  // innocent file each time. Two fixtures on two courts is enough to prove every
+  // claim below; growing it "to make the solve meaningful" buys nothing and
+  // spends the budget that keeps this file honest.
+  const config = cfg({ courts: ["C1", "C2"] });
+  const fixtures = [fx("a", "E1", "E2"), fx("b", "E3", "E4")];
+
+  it("hands the greedy board straight back rather than queueing behind two strangers", async () => {
+    // Every call is issued in ONE tick, so the counts asserted here are
+    // deterministic rather than a race: `buildSchedule` increments its counter
+    // synchronously before it awaits anything, and nothing can decrement until a
+    // solve finishes.
+    const results = await Promise.all(
+      Array.from({ length: MAX_SOLVER_QUEUE + 2 }, () => buildSchedule({ fixtures, config })),
+    );
+    const busy = results.filter((r) => r.status === "solver_busy");
+
+    // BOTH DIRECTIONS, and the second is the one that means anything.
+    // `results.some(r => r.status === "solver_busy")` is satisfied by an
+    // implementation that refuses every caller — including one whose cap is 0 —
+    // so the complement is asserted as an exact count: the cap must let
+    // `MAX_SOLVER_QUEUE` through and refuse the rest.
+    expect(busy).toHaveLength(2);
+    expect(results.length - busy.length).toBe(MAX_SOLVER_QUEUE);
+    // And the ones that got through are the ones that arrived FIRST — a cap that
+    // refused an arbitrary two would satisfy the counts above.
+    expect(results.map((r) => r.status === "solver_busy")).toEqual([false, false, true, true]);
+
+    for (const r of results) {
+      // The refusal costs the organiser nothing they can see: a full board, no
+      // conflicts, and the same two cards the solver would have placed.
+      expect(r.assignments.map((a) => a.fixtureId).sort()).toEqual(["a", "b"]);
+      expect(r.conflicts).toEqual([]);
+    }
+    for (const r of busy) {
+      // Nothing was spent on it, and it says so.
+      expect(r.engine).toBe("greedy");
+      expect(r.tiersCompleted).toBe(0);
+      expect(r.budgetExpired).toBe(false);
+      expect(r.rlimitSpent).toBe(0);
+    }
+
+    // THE QUEUE DRAINS. `queued` is module state and `isolate: false` shares the
+    // module cache across files in a worker, so a counter that failed to
+    // decrement would refuse every build for the rest of the run. Asserted
+    // through the public API rather than by exporting a reader: a fifth call
+    // that is NOT refused is the same evidence, and it reds if the decrement is
+    // dropped, which a reader export would only duplicate.
+    const after = await buildSchedule({ fixtures, config });
+    expect(after.status).not.toBe("solver_busy");
+  }, 240_000);
 });

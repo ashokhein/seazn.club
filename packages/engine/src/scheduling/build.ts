@@ -866,6 +866,28 @@ function greedyOnly(input: BuildInput, status: BuildStatus): BuildResult {
   });
 }
 
+/**
+ * How many builds may be waiting on the WASM before a caller is told to take the
+ * greedy board instead (Gap 4).
+ *
+ * `withZ3Lock` serialises the whole PROCESS — it is a correctness device, not a
+ * throttle: `resetZ3` kills pthreads process-wide, so it cannot be reentrant.
+ * Without this cap the third organiser to click auto-schedule waits out two full
+ * `wallMs` budgets before their own run even starts, and their request simply
+ * appears hung. Declining to queue converts that into an immediate greedy board
+ * carrying `status: "solver_busy"`, which the result strip already renders as an
+ * ordinary outcome rather than an error.
+ *
+ * **`queued` IS PER-PROCESS, so on a multi-instance deployment the real ceiling
+ * is `instances x MAX_SOLVER_QUEUE` concurrent solves.** This is memory
+ * protection for ONE process's WASM heap — z3's heap only ever grows, and behind
+ * a process-wide lock a deeper queue buys no throughput at all, only waiting. It
+ * is NOT global admission control and must not be read as one: nothing here
+ * coordinates between instances, so a fleet-wide concurrency limit sized off
+ * this number would be sized off a single box's.
+ */
+export const MAX_SOLVER_QUEUE = 2;
+
 export function buildSchedule(input: BuildInput): Promise<BuildResult> {
   // `withZ3Lock` is NOT reentrant. It is taken exactly here, and nothing below
   // may take it again — `loadZ3` deliberately does not, neither does anything
