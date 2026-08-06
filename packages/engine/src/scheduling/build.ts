@@ -108,9 +108,42 @@ import { loadZ3, withZ3LockAndReset, type Z3Context } from "./z3-load.ts";
 
 const MS_PER_MIN = 60_000;
 
-/** Set by `scripts/bench-build.ts` (Task 13) — a placeholder until it runs.
- *  A RUN total, not a per-check allowance; see `RunBudget`. */
-export const DEFAULT_BUILD_RLIMIT = 40_000_000;
+/**
+ * A RUN total, not a per-check allowance; see `RunBudget`.
+ *
+ * MEASURED by `scripts/bench-build.ts` (Task 13), replacing the placeholder.
+ * The rule is the one `DEFAULT_REPAIR_BUDGET_MS` used: twice the worst `rlimit`
+ * any board consumed that completed ALL FOUR TIERS, across both measured
+ * densities, rounded up. The worst such board spent **14_562_487** (10 fixtures,
+ * 2 matches per entrant, 8.1 s), so 2x is 29_124_974 and this is 30_000_000.
+ * Every four-tier completion measured, for the record: 52_497 / 72_269 /
+ * 765_734 / 850_484 / 864_501 / 1_822_166 / 7_693_966 / 8_281_447 / 14_562_487.
+ *
+ * --- READ THIS BEFORE TUNING IT -------------------------------------------
+ *
+ * **AT THE PRODUCTION WALL THIS CONSTANT GOVERNS NOTHING, and the change from
+ * 40M to 30M is behaviourally inert.** The bench measured this box at roughly
+ * 0.9-1.9M rlimit units per second of solving, so `AUTO_SOLVER_WALL_MS` (8_000)
+ * can buy at most ~15M units — half of this budget and a third of the old one.
+ * Every run in the 14-row sweep stopped on the WALL, never on the budget, at
+ * every size from 10 fixtures to 200. D9 says the budget is the rlimit and not
+ * the clock; in practice it is the clock, which is why the same board can come
+ * back differently on a different machine.
+ *
+ * The mechanism, from Q9 of the same bench: at 200 fixtures an ABORTED check
+ * spends **1** rlimit unit while costing 322 ms of wall, because z3 tests the
+ * resource limit during preprocessing and bails before its counter moves. An
+ * rlimit budget therefore cannot bound elapsed time on a large model at all —
+ * D9's premise holds for small models and breaks for big ones.
+ *
+ * Making D9 true again means setting this BELOW what the wall can buy on the
+ * slowest supported machine — around **6_000_000** on the measurements here —
+ * so the deterministic cap fires first and the answer stops depending on
+ * machine speed. That trades search for reproducibility and is an owner ruling,
+ * not a tuning decision, so it is written up in the Task 13 report rather than
+ * applied here.
+ */
+export const DEFAULT_BUILD_RLIMIT = 30_000_000;
 /**
  * How much of a run's budget the monolithic solve may draw before the window
  * fallback gets a look (ruling R11).
@@ -1298,7 +1331,7 @@ function restrictToConfiguredCourts(
 
 // --- the three lexicographic tiers ------------------------------------------
 
-interface Tier {
+export interface Tier {
   name: string;
   /**
    * The metric this tier minimises, in WHOLE MILLISECONDS.
@@ -1327,7 +1360,7 @@ interface Tier {
   atMost: (boundMs: number) => void;
 }
 
-interface TierInput {
+export interface TierInput {
   Z3: Z3Context["Z3"];
   solver: Solver<"repair">;
   model: EncodedModel;
@@ -1345,8 +1378,17 @@ interface TierInput {
  * would then "optimise" a variable nothing constrains and report a bound no
  * board meets. Every definition here is an IMPLICATION off a placement literal,
  * so none of it changes which boards are legal.
+ *
+ * EXPORTED for `scripts/bench-build.ts` only (Task 13, question Q8: how big is
+ * the idle-gap clause family at target scale, and which tier dominates). The
+ * size of a tier's encoding is invisible from `BuildResult` — every symptom of
+ * an expensive tier washes out into "the run stopped early", which is also what
+ * a cheap tier under a small budget looks like — so measuring it means stating a
+ * bound against a real encoded model and counting the assertions. The
+ * alternative was for the bench to restate the clause shapes itself, which is a
+ * placer/verifier fork in a new costume. No production caller outside this file.
  */
-function buildTiers(input: TierInput): Tier[] {
+export function buildTiers(input: TierInput): Tier[] {
   const { Z3, solver, model, grid, fixtures, config } = input;
   const slots = grid.slots;
   const durMs = config.matchMinutes * MS_PER_MIN;
