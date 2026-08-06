@@ -192,15 +192,29 @@ bypass i18n):
   `cfg` (`ballsPerOver`, best-of…), an attribution requirement
   (`none | side | person(role?) | persons(n)`), and a stable `labelKey`
   resolved through the existing scoring-vocab i18n pattern.
-- **fidelity tiers** — which panels/actions belong to `quick` (result-only),
-  `standard` (structured events), `full` (everything, person-attributed).
-  Formalises the `fidelityTiers` notion already on `SportInfo`.
+- **fidelity tiers** — ~~which panels/actions belong to `quick` (result-only),
+  `standard` (structured events), `full` (everything, person-attributed)~~
+  **SUPERSEDED 2026-08-06 by S2/#430** (ruling in
+  `2026-08-06-scoringpad-v2-prompts/_INDEX.md`). There is no
+  `quick`/`standard`/`full` — that vocabulary was invented here and never
+  existed in the code. The fidelity ladder is the **numeric `FidelityTier.tier`, 0–3**,
+  already declared at `packages/engine/src/sport/module.ts:63-67` and already
+  read by the paywall at `apps/web/src/server/usecases/fidelity.ts:17-29` (free
+  floor `tier <= 1`). `padSpec` tiers ARE that number; minting a second name for
+  it would require a permanent translation table whose drift means a free org
+  pressing a paid button. **The fidelity ladder is closed at 0–3 — there will never be a
+  tier 4.** Note when reading any module: tier 3 is a byte-identical duplicate
+  of tier 2 in 7 of 8 module files; **cricket alone** (`cricket.ts:2392-2401`)
+  has a real four-band fidelity ladder, and it is the correct model.
 
 **Conformance.** For every builtin module and **every declared variant**:
 (a) every `eventSchema` union branch is reachable from some action — the full
 tier hides nothing; (b) every action generates payloads `eventSchema` accepts
 (property-generation across parameter bounds); (c) label keys unique and
-stable; (d) tiers nest (`quick ⊆ standard ⊆ full`); (e) `DOMAIN.md` present.
+stable; (d) tiers nest — asserted by iterating **adjacent members of the
+module's declared `fidelityTiers` array**, never as hardcoded pairs, so a module
+declaring only 0 and 1 (carrom) exercises the same assertion as one declaring
+0–3; (e) `DOMAIN.md` present.
 A module without a complete padSpec fails CI.
 
 ### Chassis

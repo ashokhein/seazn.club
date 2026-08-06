@@ -12,6 +12,9 @@
 // directions of "covered" without depending on what the frozen files happen to
 // hold today.
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import type { LineupPair } from "../core/types.ts";
+import type { AnySportModule } from "../sport/module.ts";
 import { builtinModules } from "../sports/index.ts";
 import { cricket } from "../sports/cricket/index.ts";
 import { icehockey } from "../sports/icehockey/index.ts";
@@ -290,6 +293,87 @@ describe("pinnedConfigFields", () => {
   it("counts a knob set to a FALSY value — `false` is a recorded decision", () => {
     const pinned = pinnedConfigFields(football, cfgCorpusOf("football", { rollingSubs: false }));
     expect(pinned.has("rollingSubs")).toBe(true);
+  });
+
+  // #429 scope item 4a, second half. `stateMismatch` and the schema-snapshot
+  // state walk both stopped name-matching `cfg` and started asking the module
+  // (`configStateKey`) — precisely so the rule is about the CONFIG and not about
+  // a spelling. The FROZEN half of this function still read `parsed.cfg`, which
+  // is latent only because all eleven builtins happen to file their config
+  // there. For a module that does not, the frozen pin contributes nothing and
+  // `uncoveredConfigFields` demands an EXTEND_GOLDEN pass for a knob the
+  // recorded states already pin. Hence a module that files it elsewhere.
+  describe("a module that files its config under another name", () => {
+    const settingsSport = {
+      key: "settings-sport",
+      version: "1.0.0",
+      configSchema: z.object({
+        halfMinutes: z.number(),
+        stoppageSeconds: z.number().optional(),
+      }),
+      // The state entry that IS the parsed config, by identity — spelled
+      // `settings`, and with a decoy key spelled `cfg` that is part of the fold.
+      init: (cfg: unknown) => ({ settings: cfg, cfg: { unrelated: true }, phase: "live" }),
+    } as unknown as AnySportModule;
+
+    const lineups: LineupPair = {
+      home: { entrantId: "H", slots: [] },
+      away: { entrantId: "A", slots: [] },
+    };
+
+    /** A corpus whose RAW config writes only the required knob, so the optional
+     *  one can be pinned by the frozen state or by nothing at all. */
+    function corpus(frozenSettings: Record<string, unknown>): GoldenCorpus {
+      return {
+        key: "settings-sport",
+        version: "1.0.0",
+        recordedBy: "testkit/golden.ts",
+        params: { minEvents: MIN_EVENTS, maxEvents: MAX_EVENTS },
+        configs: { only: { halfMinutes: 45 } },
+        streams: [
+          {
+            config: "only",
+            seed: 1,
+            lineups,
+            events: [],
+            states: [
+              JSON.stringify({
+                settings: frozenSettings,
+                cfg: { unrelated: true },
+                phase: "live",
+              }),
+            ],
+            outcome: "null",
+            summary: "{}",
+            deltas: "{}",
+          },
+        ],
+      };
+    }
+
+    it("locates the config the module's way, so the FROZEN pin still counts", () => {
+      // The knob is absent from the raw config, so the ONLY thing that can pin
+      // it is the config serialised into the frozen state — under `settings`.
+      expect(declaredOptionalConfigFields(settingsSport)).toEqual(["stoppageSeconds"]);
+      const pinned = pinnedConfigFields(
+        settingsSport,
+        corpus({ halfMinutes: 45, stoppageSeconds: 30 }),
+      );
+      expect(pinned.has("stoppageSeconds")).toBe(true);
+      expect(
+        uncoveredConfigFields(settingsSport, corpus({ halfMinutes: 45, stoppageSeconds: 30 })),
+      ).toEqual([]);
+    });
+
+    it("still reports the knob unpinned when the frozen config omits it", () => {
+      // The control. Without it the assertion above would pass for a function
+      // that answered "pinned" to everything.
+      const pinned = pinnedConfigFields(settingsSport, corpus({ halfMinutes: 45 }));
+      expect(pinned.has("stoppageSeconds")).toBe(false);
+      expect(uncoveredConfigFields(settingsSport, corpus({ halfMinutes: 45 }))).toEqual([
+        "stoppageSeconds",
+      ]);
+    });
   });
 });
 

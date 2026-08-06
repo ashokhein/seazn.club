@@ -1,0 +1,423 @@
+// Committed JSON-Schema snapshots, one per sport module — #429 scope item 2.
+//
+// WHY THIS EXISTS, given the frozen goldens already exist. `stateMismatch`
+// compares recorded bytes, so it reds on any path a stream actually WRITES.
+// The gap it cannot close is coverage: a config knob no stream sets, an event
+// payload branch no seed reaches, an enum member no stream picks — narrow any
+// of those and all eleven corpora stay green (GOLDEN-POLICY.md, last section).
+//
+// A snapshot closes that gap from the other side. It is taken from the
+// DECLARATION rather than from a replay, so it is complete by construction for
+// the two halves that have a zod schema: every enum member, every optional
+// field and every union branch appears whether or not a stream ever exercised
+// it. Narrow one and the snapshot's committed bytes stop matching.
+//
+// Deliberately a snapshot, not a hand-written expectation: the reviewable
+// artefact is the DIFF. A widening shows up as added lines and is approved by
+// regenerating; a narrowing shows up as removed lines, which is the thing that
+// is supposed to be hard to land by accident.
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { z } from "zod";
+import { resolvePositions } from "../sport/catalog.ts";
+import type { LineupPair } from "../core/types.ts";
+import type { AnySportModule } from "../sport/module.ts";
+import { configStateKey, goldenPath, readCorpus } from "./golden.ts";
+import type { GoldenCorpus } from "./golden.ts";
+import { defaultLineupPair } from "./helpers.ts";
+
+/** Snapshots live beside the corpus they complement, on the same naming
+ *  convention, and derive their directory from `goldenPath` rather than from a
+ *  second copy of the sport→directory table — a copy is a thing that drifts. */
+export function snapshotPath(key: string): string {
+  return goldenPath(key).replace(/\.golden\.json$/, ".schema.json");
+}
+
+/** JSON Schema dialect and IO direction are PINNED, not defaulted.
+ *
+ *  `io: "input"` is the load-bearing choice. The snapshot's job is to catch a
+ *  narrowing of what the engine will ACCEPT — an event payload recorded last
+ *  season must still parse — and the input schema is exactly that contract. The
+ *  output schema differs in the other direction (a `.default()` knob is
+ *  required on the way out, optional on the way in), which would report an
+ *  additive default as a change to a required set.
+ *
+ *  `unrepresentable` is left at its default of "throw" on purpose. A schema
+ *  construct JSON Schema cannot express should fail the regenerate loudly, not
+ *  degrade to `{}` and quietly stop guarding that subtree. */
+const JSON_SCHEMA_OPTIONS = { io: "input", target: "draft-2020-12" } as const;
+
+// ----------------------------------------------------------------- state walk
+//
+// The state half has no zod schema to convert — `SportModule<Cfg, Ev, State>`
+// declares `configSchema` and `eventSchema` only, and every State is a plain TS
+// interface never validated at runtime. So it is derived structurally, and its
+// coverage claim is correspondingly weaker. See `SchemaSnapshot.state` and
+// GOLDEN-POLICY.md for exactly what it does and does not cover.
+
+export type JsonKind = "array" | "boolean" | "null" | "number" | "object" | "string";
+
+function kindOf(value: unknown): JsonKind {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  const t = typeof value;
+  if (t === "string" || t === "number" || t === "boolean") return t;
+  return "object";
+}
+
+/** The two side keys, plus every entrant and person id in the lineups —
+ *  rendered as `[]` rather than as themselves. Same rule the golden state walk
+ *  uses (`collapseKeysFor` in golden.ts) and for the same reason: a recorded
+ *  value cannot say which of its objects are RECORDS (person id → runs) and
+ *  which are structs, so keying a record by its ids turns lineup data into
+ *  schema paths that name no field. `home`/`away` maps are symmetric by
+ *  construction, so keying those apart would report "this seed sin-binned an
+ *  away player and not a home one" as a shape difference. */
+export function collapseKeysFor(lineups: LineupPair): Set<string> {
+  const out = new Set<string>(["home", "away"]);
+  for (const side of [lineups.home, lineups.away]) {
+    out.add(side.entrantId);
+    for (const slot of side.slots) out.add(slot.personId);
+  }
+  return out;
+}
+
+const MAX_DEPTH = 12; // no engine state nests anywhere near this deep
+
+function record(out: Map<string, Set<JsonKind>>, path: string, kind: JsonKind): void {
+  const seen = out.get(path);
+  if (seen === undefined) out.set(path, new Set([kind]));
+  else seen.add(kind);
+}
+
+function walk(
+  value: unknown,
+  prefix: string,
+  out: Map<string, Set<JsonKind>>,
+  collapse: ReadonlySet<string>,
+  depth: number,
+): void {
+  if (depth > MAX_DEPTH) return;
+  if (Array.isArray(value)) {
+    const path = `${prefix}[]`;
+    for (const item of value) {
+      record(out, path, kindOf(item));
+      walk(item, path, out, collapse, depth + 1);
+    }
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const [key, member] of Object.entries(value as Record<string, unknown>)) {
+    if (member === undefined) continue; // a JSON round-trip drops the key
+    const path = collapse.has(key) ? `${prefix}[]` : prefix === "" ? key : `${prefix}.${key}`;
+    record(out, path, kindOf(member));
+    walk(member, path, out, collapse, depth + 1);
+  }
+}
+
+/** Every dotted path a state value writes, with the JSON kinds seen at each.
+ *  `omit` drops keys at the ROOT only — the module's config lives there, and
+ *  the `configSchema` half of the snapshot already owns every knob in it. */
+export function statePathKinds(
+  value: unknown,
+  collapse: ReadonlySet<string>,
+  omit: ReadonlySet<string>,
+  into: Map<string, Set<JsonKind>> = new Map(),
+): Map<string, Set<JsonKind>> {
+  const root =
+    typeof value !== "object" || value === null || Array.isArray(value)
+      ? value
+      : Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).filter(([key]) => !omit.has(key)),
+        );
+  walk(root, "", into, collapse, 0);
+  return into;
+}
+
+function lineupsFor(module: AnySportModule, cfg: unknown, recorded?: LineupPair): LineupPair {
+  return recorded ?? defaultLineupPair(resolvePositions(module, cfg));
+}
+
+/** The state shape, from `init` under every config the corpus records, widened
+ *  by every per-event state the corpus recorded. Both inputs are frozen — the
+ *  corpus is the committed file and `init` is deterministic — so this never
+ *  depends on `arbitraryEvent`, and widening a generator cannot move it. */
+export function stateShapeOf(
+  module: AnySportModule,
+  corpus: GoldenCorpus,
+): Record<string, JsonKind[]> {
+  const kinds = new Map<string, Set<JsonKind>>();
+
+  // `configStateKey` re-runs `init`, and a stream can carry a thousand recorded
+  // states — resolving per state made the cricket walk quadratic in corpus size
+  // for an answer that only ever varies per (config, recorded lineups).
+  const lensCache = new Map<string, { collapse: Set<string>; omit: Set<string> }>();
+  const lensFor = (name: string, recordedLineups?: LineupPair) => {
+    // US (0x1f), written as an ESCAPE and never as a literal byte. A config name
+    // cannot contain it and `JSON.stringify` escapes control characters into a
+    // six-character u-form rather than emitting them raw, so the join stays
+    // unambiguous — the same guarantee the
+    // NUL this replaces gave. A literal NUL in the SOURCE, though, makes the
+    // file binary to git: it shipped as `Bin 0 -> 18258 bytes` in f08b7750 and
+    // every diff of it since rendered as "Binary files differ", with `git grep`
+    // hiding every matching line. `test/source-bytes.test.ts` is the gate.
+    const cacheKey = `${name}\x1f${recordedLineups === undefined ? "" : JSON.stringify(recordedLineups)}`;
+    const hit = lensCache.get(cacheKey);
+    if (hit !== undefined) return hit;
+    const rawConfig = corpus.configs[name];
+    const cfg: unknown = module.configSchema.parse(rawConfig);
+    const configKey = configStateKey(module, rawConfig, recordedLineups);
+    const fresh = {
+      collapse: collapseKeysFor(lineupsFor(module, cfg, recordedLineups)),
+      omit: configKey === null ? new Set<string>() : new Set([configKey]),
+    };
+    lensCache.set(cacheKey, fresh);
+    return fresh;
+  };
+
+  for (const name of Object.keys(corpus.configs).sort(compareStrings)) {
+    const cfg: unknown = module.configSchema.parse(corpus.configs[name]);
+    const state: unknown = module.init(cfg, lineupsFor(module, cfg));
+    const lens = lensFor(name);
+    statePathKinds(state, lens.collapse, lens.omit, kinds);
+  }
+
+  for (const stream of corpus.streams) {
+    if (!(stream.config in corpus.configs)) continue; // a corpus that lost a config
+    const lens = lensFor(stream.config, stream.lineups);
+    for (const serialised of stream.states) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(serialised);
+      } catch {
+        continue;
+      }
+      statePathKinds(parsed, lens.collapse, lens.omit, kinds);
+    }
+  }
+
+  const out: Record<string, JsonKind[]> = {};
+  for (const path of [...kinds.keys()].sort(compareStrings)) {
+    out[path] = [...(kinds.get(path) ?? new Set<JsonKind>())].sort(compareStrings);
+  }
+  return out;
+}
+
+// ------------------------------------------------------------------- snapshot
+
+export interface SchemaSnapshot {
+  /** Bumped when the snapshot FORMAT changes, so a format migration is one
+   *  reviewable regenerate rather than eleven mystery diffs. */
+  snapshotVersion: 1;
+  key: string;
+  /** The module version the snapshot was taken against. All eleven modules are
+   *  pinned at 1.0.0; `registry.get` is an exact lookup with no fallback. */
+  version: string;
+  generatedBy: "testkit/schema-snapshot.ts";
+  /** `z.toJSONSchema(module.configSchema, { io: "input" })`. Complete: every
+   *  knob, every enum member, every bound, exercised or not. */
+  configSchema: unknown;
+  /** `z.toJSONSchema(module.eventSchema, { io: "input" })`. The union of the
+   *  sport's event PAYLOADS — the envelope's `type` discriminator lives outside
+   *  it, so this snapshot cannot say which payload goes with which type. */
+  eventSchema: unknown;
+  /** Structural, and weaker than the two above. See `stateShapeOf`. */
+  state: { paths: Record<string, JsonKind[]> };
+}
+
+export function buildSchemaSnapshot(
+  module: AnySportModule,
+  corpus: GoldenCorpus = readCorpus(module.key),
+): SchemaSnapshot {
+  const configSchema: z.ZodType = module.configSchema as z.ZodType;
+  const eventSchema: z.ZodType = module.eventSchema as z.ZodType;
+  return {
+    snapshotVersion: 1,
+    key: module.key,
+    version: module.version,
+    generatedBy: "testkit/schema-snapshot.ts",
+    configSchema: z.toJSONSchema(configSchema, JSON_SCHEMA_OPTIONS),
+    eventSchema: z.toJSONSchema(eventSchema, JSON_SCHEMA_OPTIONS),
+    state: { paths: stateShapeOf(module, corpus) },
+  };
+}
+
+// ------------------------------------------------------- canonical rendering
+//
+// The CI gate is "regenerate, then `git status --porcelain` must be empty", so
+// byte determinism is not a nicety — it IS the gate. Two rules, applied
+// everywhere, so there is nothing to remember per call site:
+//
+//   1. object keys sorted by UTF-16 code unit (never `localeCompare`, which is
+//      locale-dependent and would make the gate machine-dependent);
+//   2. the two JSON Schema keywords whose arrays are SETS — `required` and
+//      `enum` — sorted too, so reordering a zod object's properties is not a
+//      diff. Every other array keeps its order: `anyOf`/`prefixItems` are
+//      positional and reordering them is a real change.
+//
+// Pretty-printed at 2 spaces, unlike the corpora: these files are meant to be
+// read in review, and they are small (a few KB each).
+
+export function compareStrings(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+const SET_VALUED_KEYWORDS = new Set(["required", "enum"]);
+
+function canonicalise(value: unknown, key: string | null): unknown {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => canonicalise(item, null));
+    return key !== null && SET_VALUED_KEYWORDS.has(key)
+      ? [...items].sort((a, b) => compareStrings(JSON.stringify(a) ?? "", JSON.stringify(b) ?? ""))
+      : items;
+  }
+  if (value === null || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+    compareStrings(a, b),
+  )) {
+    if (v === undefined) continue;
+    out[k] = canonicalise(v, k);
+  }
+  return out;
+}
+
+/** The exact bytes of a committed snapshot file. Newline-terminated so the file
+ *  is POSIX-clean and a diff never reports "\ No newline at end of file". */
+export function renderSchemaSnapshot(snapshot: SchemaSnapshot): string {
+  return `${JSON.stringify(canonicalise(snapshot, null), null, 2)}\n`;
+}
+
+export function readSnapshotText(key: string): string | null {
+  const path = snapshotPath(key);
+  return existsSync(path) ? readFileSync(path, "utf8") : null;
+}
+
+/** Writes only when the bytes changed, so a no-op regenerate does not touch
+ *  eleven mtimes. Returns whether anything was written. */
+export function writeSchemaSnapshot(snapshot: SchemaSnapshot): boolean {
+  const path = snapshotPath(snapshot.key);
+  const next = renderSchemaSnapshot(snapshot);
+  if (existsSync(path) && readFileSync(path, "utf8") === next) return false;
+  writeFileSync(path, next);
+  return true;
+}
+
+// ----------------------------------------------------------------- diffing
+//
+// "not equal" on a 4 KB JSON blob tells a reviewer nothing, and the failure
+// they most need to read is the one-line one: an enum lost a member.
+
+export interface SnapshotChange {
+  path: string;
+  kind: "added" | "removed" | "changed";
+  before?: string;
+  after?: string;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function leaf(value: unknown): string {
+  const rendered = JSON.stringify(value);
+  return rendered === undefined ? String(value) : rendered;
+}
+
+function join(prefix: string, segment: string): string {
+  return prefix === "" ? segment : `${prefix}.${segment}`;
+}
+
+function diffInto(before: unknown, after: unknown, prefix: string, out: SnapshotChange[]): void {
+  if (isPlainObject(before) && isPlainObject(after)) {
+    for (const key of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort(
+      compareStrings,
+    )) {
+      const has = { before: key in before, after: key in after };
+      if (has.before && !has.after) out.push({ path: join(prefix, key), kind: "removed", before: leaf(before[key]) });
+      else if (!has.before && has.after) out.push({ path: join(prefix, key), kind: "added", after: leaf(after[key]) });
+      else diffInto(before[key], after[key], join(prefix, key), out);
+    }
+    return;
+  }
+  if (Array.isArray(before) && Array.isArray(after)) {
+    const beforeItems: readonly unknown[] = before;
+    const afterItems: readonly unknown[] = after;
+    // An array of PRIMITIVES is reported as a set — `required` and `enum` are
+    // the arrays that matter here, and an index-wise diff of a sorted list that
+    // lost one member renders as a cascade of "changed" lines that buries the
+    // one fact worth reading.
+    const primitive = [...beforeItems, ...afterItems].every(
+      (item) => !isPlainObject(item) && !Array.isArray(item),
+    );
+    if (primitive) {
+      const beforeSet = new Set(beforeItems.map(leaf));
+      const afterSet = new Set(afterItems.map(leaf));
+      for (const item of [...beforeSet].filter((x) => !afterSet.has(x)).sort(compareStrings)) {
+        out.push({ path: prefix, kind: "removed", before: item });
+      }
+      for (const item of [...afterSet].filter((x) => !beforeSet.has(x)).sort(compareStrings)) {
+        out.push({ path: prefix, kind: "added", after: item });
+      }
+      return;
+    }
+    const length = Math.max(beforeItems.length, afterItems.length);
+    for (let i = 0; i < length; i++) {
+      const at = `${prefix}[${i}]`;
+      if (i >= beforeItems.length) out.push({ path: at, kind: "added", after: leaf(afterItems[i]) });
+      else if (i >= afterItems.length) out.push({ path: at, kind: "removed", before: leaf(beforeItems[i]) });
+      else diffInto(beforeItems[i], afterItems[i], at, out);
+    }
+    return;
+  }
+  if (leaf(before) !== leaf(after)) {
+    out.push({ path: prefix, kind: "changed", before: leaf(before), after: leaf(after) });
+  }
+}
+
+export function snapshotChanges(before: unknown, after: unknown): SnapshotChange[] {
+  const out: SnapshotChange[] = [];
+  diffInto(before, after, "", out);
+  return out;
+}
+
+const MAX_REPORTED_CHANGES = 40;
+
+export function formatSnapshotChanges(changes: readonly SnapshotChange[]): string[] {
+  const lines = changes.slice(0, MAX_REPORTED_CHANGES).map((change) => {
+    const where = change.path === "" ? "(root)" : change.path;
+    if (change.kind === "removed") return `  - ${where}: removed ${change.before ?? ""}`;
+    if (change.kind === "added") return `  + ${where}: added ${change.after ?? ""}`;
+    return `  ~ ${where}: ${change.before ?? ""} -> ${change.after ?? ""}`;
+  });
+  if (changes.length > MAX_REPORTED_CHANGES) {
+    lines.push(`  … ${changes.length - MAX_REPORTED_CHANGES} more`);
+  }
+  return lines;
+}
+
+export const REGENERATE_HINT =
+  "run `npm run schema:snapshot --workspace packages/engine` and commit the result";
+
+/** "" when the committed bytes are current. Otherwise the reviewable summary
+ *  the staleness test prints — which section moved, and what moved in it. */
+export function stalenessReport(key: string, committed: string | null, fresh: string): string {
+  if (committed === null) {
+    return `${key}.schema.json is MISSING — ${REGENERATE_HINT}`;
+  }
+  if (committed === fresh) return "";
+  const header = `${key}.schema.json is STALE — ${REGENERATE_HINT}`;
+  let changes: SnapshotChange[];
+  try {
+    changes = snapshotChanges(JSON.parse(committed), JSON.parse(fresh));
+  } catch {
+    return `${header}\n  (committed file is not valid JSON)`;
+  }
+  if (changes.length === 0) {
+    // Structurally identical bytes that differ is a rendering-rule change, not
+    // a schema change — say so rather than printing an empty change list.
+    return `${header}\n  (structurally identical; only key order or formatting moved)`;
+  }
+  const removed = changes.filter((c) => c.kind === "removed").length;
+  const counts = `  ${changes.length} change(s), ${removed} of them REMOVALS — a removal is a narrowing`;
+  return [header, counts, ...formatSnapshotChanges(changes)].join("\n");
+}

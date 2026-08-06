@@ -122,6 +122,128 @@ describe("residual-tie seed fallback (no lots in the cascade)", () => {
   });
 });
 
+// #429 scope item 5 — `metricOf` returned 0 for an ABSENT metric key, so a row
+// that never recorded the metric (folded before it existed, or an entrant with
+// no fixtures in the table being ranked) was ranked as if it had genuinely
+// scored zero. Absence is now no-data and sorts last, the same rule `seed`
+// already uses for an entrant with no seed; a RECORDED zero is untouched.
+describe("an absent metric is no data, not a zero (#429)", () => {
+  it("ranks a row that recorded no GD BELOW a row that recorded a negative GD", () => {
+    const ranked = rankStandings([row("nodata", 0), row("winless", 0, { gd: -5 })], {
+      cascade: ["points", "diff"],
+    });
+    expect(ranked.rows.map((entry) => entry.entrantId)).toEqual(["winless", "nodata"]);
+  });
+
+  it("keeps a RECORDED zero ranked above a negative, and level with another zero", () => {
+    const ranked = rankStandings(
+      [row("neg", 0, { gd: -5 }), row("zero", 0, { gd: 0 }), row("alsozero", 0, { gd: 0 })],
+      { cascade: ["points", "diff"], seeds: new Map([["alsozero", 1], ["zero", 2]]) },
+    );
+    expect(ranked.rows.map((entry) => entry.entrantId)).toEqual(["alsozero", "zero", "neg"]);
+    // The two recorded zeros were level on `diff` — only seed separated them.
+    expect(ranked.rows[0]?.tieBreak?.key).toBe("seed");
+  });
+
+  it("leaves two no-data rows level on the key and falls through to the cascade", () => {
+    const ranked = rankStandings([row("b", 0), row("a", 0)], { cascade: ["points", "diff"] });
+    expect(ranked.rows.map((entry) => entry.entrantId)).toEqual(["a", "b"]);
+    expect(ranked.rows.every((entry) => entry.tieUnbroken === true)).toBe(true);
+  });
+
+  it("applies the same rule to `for` and `fair_play`", () => {
+    const gf = rankStandings([row("nodata", 0), row("few", 0, { gf: 1 })], {
+      cascade: ["points", "for"],
+    });
+    expect(gf.rows.map((entry) => entry.entrantId)).toEqual(["few", "nodata"]);
+    const fp = rankStandings([row("nodata", 0), row("dirty", 0, { fair_play: -9 })], {
+      cascade: ["points", "fair_play"],
+    });
+    expect(fp.rows.map((entry) => entry.entrantId)).toEqual(["dirty", "nodata"]);
+  });
+});
+
+// The non-regression pin for the two federation cascades named in the #429
+// ruling. Complete data on every row, so no key is ever absent — these orders
+// must not move, and they differ from each other, which is what makes the pair
+// worth asserting.
+describe("federation cascades on complete data are unaffected", () => {
+  // A and B level on 4 points. A has the better GD (+5 vs +1); B won the
+  // head-to-head. FIH consults GD first, IIHF consults head-to-head first.
+  const rows = [
+    row("A", 4, { gd: 5, gf: 6 }),
+    row("B", 4, { gd: 1, gf: 3 }),
+  ];
+  const results: FixtureResult[] = [[delta("B", 3, 1), delta("A", 0)]];
+
+  it("FIH (points → GD → GF → head-to-head) ranks A first on GD", () => {
+    const ranked = rankStandings(rows, {
+      cascade: ["points", "diff", "for", "h2h_points"],
+      results,
+    });
+    expect(ranked.rows.map((entry) => entry.entrantId)).toEqual(["A", "B"]);
+    expect(ranked.rows[0]?.tieBreak?.key).toBe("diff");
+  });
+
+  it("IIHF (points → head-to-head → GD → GF) ranks B first on head-to-head", () => {
+    const ranked = rankStandings(rows, {
+      cascade: ["points", "h2h_points", "diff", "for"],
+      results,
+    });
+    expect(ranked.rows.map((entry) => entry.entrantId)).toEqual(["B", "A"]);
+    expect(ranked.rows[0]?.tieBreak?.key).toBe("h2h_points");
+  });
+});
+
+// A metric key that is not a `TiebreakerKey` cannot affect ORDER. That is the
+// guarantee display-only metrics rest on — the set-piece conversion counters
+// are emitted for every gated fixture and must never move a table.
+//
+// It is enforced at runtime, not merely by the type: `validateCascade`'s switch
+// has NO `default` branch, so an unregistered key passes validation untouched;
+// and `rankStandings` looks the key up in `COMPARATORS` behind
+// `if (cmp !== undefined)` with no `else` (tiebreakers.ts:534-535), so it is
+// SILENTLY SKIPPED at rank time. Both halves are asserted below, because either
+// one changing is a behaviour change worth noticing: an `else` that threw, or a
+// validation that started rejecting, would break every caller passing a cascade
+// this engine does not know — and would do it at rank time, in production.
+describe("an unregistered cascade key is silently skipped, never an ordering input", () => {
+  // Cast: the point of the test is the RUNTIME behaviour on a key the type
+  // system is supposed to exclude, so the cast is the fixture, not a shortcut.
+  const unknown = "sp_pc_scored" as Parameters<typeof rankStandings>[1]["cascade"][number];
+
+  it("validateCascade accepts it — the switch has no `default`, so it passes through", () => {
+    expect(() => validateCascade([unknown], { metrics: [] })).not.toThrow();
+  });
+
+  it("rankStandings ignores it rather than throwing, and the order is unmoved", () => {
+    // B leads on the unknown key, A leads on GD. If the unknown key were an
+    // ordering input at all, B would come first.
+    const rows = [
+      row("A", 4, { gd: 5, sp_pc_scored: 0 }),
+      row("B", 4, { gd: 1, sp_pc_scored: 99 }),
+    ];
+    const ranked = rankStandings(rows, { cascade: [unknown, "diff"], results: [] });
+    expect(ranked.rows.map((entry) => entry.entrantId)).toEqual(["A", "B"]);
+    // And the split is attributed to `diff`, not to the key that was skipped.
+    expect(ranked.rows[0]?.tieBreak?.key).toBe("diff");
+  });
+
+  it("a cascade of NOTHING BUT unregistered keys falls through to the seed", () => {
+    // The strongest form: the cascade contributes NOTHING, so the residual-tie
+    // seed fallback decides. If the skip ever became a throw this reds; if it
+    // ever became a real comparison, B would lead on `sp_pc_scored: 99` and the
+    // split would be attributed to that key instead of to `seed`.
+    const rows = [
+      row("A", 4, { sp_pc_scored: 0 }),
+      row("B", 4, { sp_pc_scored: 99 }),
+    ];
+    const ranked = rankStandings(rows, { cascade: [unknown], results: [] });
+    expect(ranked.rows.map((entry) => entry.entrantId)).toEqual(["A", "B"]);
+    expect(ranked.rows[0]?.tieBreak?.key).toBe("seed");
+  });
+});
+
 describe("validateCascade rejections (spec 05 §4.1)", () => {
   const cases: [string, Parameters<typeof validateCascade>[0]][] = [
     ["goal/run difference", ["diff"]],

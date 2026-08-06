@@ -1,0 +1,912 @@
+{
+  "configSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "abandonPolicy": {
+        "default": "replay",
+        "enum": [
+          "award",
+          "replay"
+        ],
+        "type": "string"
+      },
+      "assists": {
+        "default": false,
+        "type": "boolean"
+      },
+      "awardScore": {
+        "default": {
+          "goals": 3
+        },
+        "properties": {
+          "goals": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "goals"
+        ],
+        "type": "object"
+      },
+      "goalKinds": {
+        "default": [
+          "fg",
+          "pc",
+          "stroke",
+          "og"
+        ],
+        "items": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "goalkeeper": {
+        "enum": [
+          "optional",
+          "required"
+        ],
+        "type": "string"
+      },
+      "overtime": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "sudden_death",
+                "type": "string"
+              },
+              "minutes": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "skaters": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "minutes"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "periods",
+                "type": "string"
+              },
+              "minutes": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "count",
+              "kind",
+              "minutes"
+            ],
+            "type": "object"
+          }
+        ],
+        "default": null
+      },
+      "periodSeconds": {
+        "additionalProperties": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "propertyNames": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "periods": {
+        "default": {
+          "count": 4,
+          "minutes": 15
+        },
+        "properties": {
+          "count": {
+            "maximum": 4,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "minutes": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count",
+          "minutes"
+        ],
+        "type": "object"
+      },
+      "points": {
+        "default": {
+          "draw": 1,
+          "loss": 0,
+          "win": 3
+        },
+        "properties": {
+          "draw": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "loss": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "otLoss": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "otWin": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "shootoutLoss": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "shootoutWin": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "win": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "draw",
+          "loss",
+          "win"
+        ],
+        "type": "object"
+      },
+      "setPieceKinds": {
+        "default": [
+          "pc",
+          "stroke"
+        ],
+        "items": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "shootout": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attempts": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "clockSeconds": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "suddenDeath": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "attempts",
+              "suddenDeath"
+            ],
+            "type": "object"
+          }
+        ],
+        "default": null
+      },
+      "strength": {
+        "default": {
+          "base": 11,
+          "min": 7
+        },
+        "properties": {
+          "base": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "min": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base",
+          "min"
+        ],
+        "type": "object"
+      },
+      "suspensions": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "properties": {
+              "classes": {
+                "additionalProperties": {
+                  "properties": {
+                    "minutes": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "permanent": {
+                      "type": "boolean"
+                    },
+                    "pim": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "releaseOnGoal": {
+                      "type": "boolean"
+                    },
+                    "teamShort": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "minutes",
+                    "teamShort"
+                  ],
+                  "type": "object"
+                },
+                "propertyNames": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "classes"
+            ],
+            "type": "object"
+          }
+        ],
+        "default": {
+          "classes": {
+            "green": {
+              "minutes": 2,
+              "teamShort": true
+            },
+            "red": {
+              "minutes": null,
+              "permanent": true,
+              "teamShort": true
+            },
+            "yellow": {
+              "minutes": 5,
+              "teamShort": true
+            }
+          }
+        }
+      }
+    },
+    "type": "object"
+  },
+  "eventSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "anyOf": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "assists": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 2,
+            "type": "array"
+          },
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "clockRef": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "emptyNet": {
+            "type": "boolean"
+          },
+          "kind": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "period": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "by"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "to": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "class": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "clockRef": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minutes": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "servedBy": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "by",
+          "class"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "class": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "by"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "goalkeeper": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "meta": {
+            "additionalProperties": false,
+            "properties": {
+              "clockSeconds": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "ineligible": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "scored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "by",
+          "scored"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "clockRef": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "goalkeeper": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "missed",
+              "post",
+              "saved",
+              "scored"
+            ],
+            "type": "string"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "by",
+          "kind"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "generatedBy": "testkit/schema-snapshot.ts",
+  "key": "hockey",
+  "snapshotVersion": 1,
+  "state": {
+    "paths": {
+      "asOf": [
+        "object"
+      ],
+      "asOf.elapsed": [
+        "number"
+      ],
+      "asOf.period": [
+        "string"
+      ],
+      "cardLog": [
+        "array"
+      ],
+      "cardLog[]": [
+        "object"
+      ],
+      "cardLog[].classKey": [
+        "string"
+      ],
+      "cardLog[].expiresAt": [
+        "object"
+      ],
+      "cardLog[].expiresAt.elapsed": [
+        "number"
+      ],
+      "cardLog[].expiresAt.period": [
+        "string"
+      ],
+      "cardLog[].minutes": [
+        "number"
+      ],
+      "cardLog[].person": [
+        "string"
+      ],
+      "cardLog[].reason": [
+        "string"
+      ],
+      "cardLog[].servedBy": [
+        "string"
+      ],
+      "cardLog[].side": [
+        "string"
+      ],
+      "cardLog[].startedAt": [
+        "object"
+      ],
+      "cardLog[].startedAt.elapsed": [
+        "number"
+      ],
+      "cardLog[].startedAt.period": [
+        "string"
+      ],
+      "entrants": [
+        "object"
+      ],
+      "entrants[]": [
+        "string"
+      ],
+      "goalLog": [
+        "array"
+      ],
+      "goalLog[]": [
+        "object"
+      ],
+      "goalLog[].assists": [
+        "array"
+      ],
+      "goalLog[].assists[]": [
+        "string"
+      ],
+      "goalLog[].at": [
+        "object"
+      ],
+      "goalLog[].at.elapsed": [
+        "number"
+      ],
+      "goalLog[].at.period": [
+        "string"
+      ],
+      "goalLog[].by": [
+        "string"
+      ],
+      "goalLog[].clockRef": [
+        "string"
+      ],
+      "goalLog[].credited": [
+        "string"
+      ],
+      "goalLog[].emptyNet": [
+        "boolean"
+      ],
+      "goalLog[].kind": [
+        "string"
+      ],
+      "goalLog[].person": [
+        "string"
+      ],
+      "goalLog[].phase": [
+        "string"
+      ],
+      "goals": [
+        "object"
+      ],
+      "goals[]": [
+        "number"
+      ],
+      "kindCounts": [
+        "object"
+      ],
+      "kindCounts[]": [
+        "object"
+      ],
+      "kindCounts[].pc": [
+        "number"
+      ],
+      "kindCounts[].stroke": [
+        "number"
+      ],
+      "outcome": [
+        "null",
+        "object"
+      ],
+      "outcome.kind": [
+        "string"
+      ],
+      "outcome.loser": [
+        "string"
+      ],
+      "outcome.method": [
+        "string"
+      ],
+      "outcome.score": [
+        "object"
+      ],
+      "outcome.score[]": [
+        "number"
+      ],
+      "outcome.winner": [
+        "string"
+      ],
+      "periods": [
+        "array"
+      ],
+      "periods[]": [
+        "object"
+      ],
+      "periods[].phase": [
+        "string"
+      ],
+      "periods[][]": [
+        "number"
+      ],
+      "phase": [
+        "string"
+      ],
+      "replayFlagged": [
+        "boolean"
+      ],
+      "setPieces": [
+        "object"
+      ],
+      "setPieces[]": [
+        "object"
+      ],
+      "setPieces[].pc": [
+        "object"
+      ],
+      "setPieces[].pc.awarded": [
+        "number"
+      ],
+      "setPieces[].pc.resolved": [
+        "number"
+      ],
+      "setPieces[].pc.scored": [
+        "number"
+      ],
+      "setPieces[].stroke": [
+        "object"
+      ],
+      "setPieces[].stroke.awarded": [
+        "number"
+      ],
+      "setPieces[].stroke.resolved": [
+        "number"
+      ],
+      "setPieces[].stroke.scored": [
+        "number"
+      ],
+      "shootout": [
+        "null",
+        "object"
+      ],
+      "shootout.kicks": [
+        "array"
+      ],
+      "shootout.kicks[]": [
+        "object"
+      ],
+      "shootout.kicks[].goalkeeper": [
+        "string"
+      ],
+      "shootout.kicks[].person": [
+        "string"
+      ],
+      "shootout.kicks[].scored": [
+        "boolean"
+      ],
+      "shootout.kicks[].side": [
+        "string"
+      ],
+      "suspensions": [
+        "array"
+      ],
+      "suspensions[]": [
+        "object"
+      ],
+      "suspensions[].classKey": [
+        "string"
+      ],
+      "suspensions[].expiresAt": [
+        "object"
+      ],
+      "suspensions[].expiresAt.elapsed": [
+        "number"
+      ],
+      "suspensions[].expiresAt.period": [
+        "string"
+      ],
+      "suspensions[].minutes": [
+        "number"
+      ],
+      "suspensions[].permanent": [
+        "boolean"
+      ],
+      "suspensions[].person": [
+        "string"
+      ],
+      "suspensions[].reason": [
+        "string"
+      ],
+      "suspensions[].servedBy": [
+        "string"
+      ],
+      "suspensions[].side": [
+        "string"
+      ],
+      "suspensions[].startedAt": [
+        "object"
+      ],
+      "suspensions[].startedAt.elapsed": [
+        "number"
+      ],
+      "suspensions[].startedAt.period": [
+        "string"
+      ],
+      "suspensions[].teamShort": [
+        "boolean"
+      ]
+    }
+  },
+  "version": "1.0.0"
+}

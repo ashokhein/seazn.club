@@ -1,0 +1,153 @@
+{
+  "configSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "allowDraws": {
+        "type": "boolean"
+      },
+      "points": {
+        "default": {
+          "d": 1,
+          "l": 0,
+          "w": 3
+        },
+        "properties": {
+          "d": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "l": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "w": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "d",
+          "l",
+          "w"
+        ],
+        "type": "object"
+      },
+      "progressScore": {
+        "default": false,
+        "type": "boolean"
+      },
+      "resultMode": {
+        "enum": [
+          "score",
+          "win_loss"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "allowDraws",
+      "resultMode"
+    ],
+    "type": "object"
+  },
+  "eventSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "anyOf": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "isDraw": {
+            "type": "boolean"
+          },
+          "p1Score": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "p2Score": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "winnerId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "points": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "by",
+          "points"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "generatedBy": "testkit/schema-snapshot.ts",
+  "key": "generic",
+  "snapshotVersion": 1,
+  "state": {
+    "paths": {
+      "entrants": [
+        "object"
+      ],
+      "entrants[]": [
+        "string"
+      ],
+      "outcome": [
+        "null",
+        "object"
+      ],
+      "outcome.kind": [
+        "string"
+      ],
+      "outcome.loser": [
+        "string"
+      ],
+      "outcome.method": [
+        "string"
+      ],
+      "outcome.winner": [
+        "string"
+      ],
+      "phase": [
+        "string"
+      ],
+      "running": [
+        "object"
+      ],
+      "running[]": [
+        "number"
+      ],
+      "score": [
+        "null",
+        "object"
+      ],
+      "score[]": [
+        "number"
+      ]
+    }
+  },
+  "version": "1.0.0"
+}

@@ -19,8 +19,10 @@
 // Purity note: this file lives in testkit and may touch node:fs. Nothing under
 // src/sport/** or src/sports/** may import it — @seazn/engine ships with zero
 // runtime dependencies.
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { EngineError } from "../core/errors.ts";
 import { foldMatch, isCoreEventType, type EventEnvelope } from "../core/events.ts";
@@ -488,16 +490,29 @@ export function declaredOptionalConfigFields(module: AnySportModule): string[] {
   return fields;
 }
 
-/** The parsed `cfg` a stream's frozen state carries, or undefined. Taken from
- *  the FIRST recorded state: no fold rewrites `cfg`, so every state in a stream
- *  carries the same one, and `keepRecordedCfg` preserves it across a
- *  re-baseline precisely so this stays the cfg the corpus was frozen against. */
-function recordedCfgOf(stream: GoldenStream): unknown {
+/** The parsed config a stream's frozen state carries, or undefined. Taken from
+ *  the FIRST recorded state: no fold rewrites the config, so every state in a
+ *  stream carries the same one, and `keepRecordedConfig` preserves it across a
+ *  re-baseline precisely so this stays the config the corpus was frozen against.
+ *  Step 0 is also always an anchor, so it is never a digest.
+ *
+ *  #429 scope item 4a: located by `configStateKey`, NEVER by the spelling
+ *  `cfg`. Every other config lookup moved to the module-derived key so the rule
+ *  would be about the config rather than about a name; this one name-matched,
+ *  which is latent only because all eleven builtins happen to file their config
+ *  under `cfg`. For a module that does not, the FROZEN half of
+ *  `pinnedConfigFields` silently contributed nothing and `uncoveredConfigFields`
+ *  would demand an EXTEND_GOLDEN pass for a knob the recorded states already
+ *  pin — while a nested fold key that happened to be spelled `cfg` was read as
+ *  the config. */
+function recordedCfgOf(module: AnySportModule, corpus: GoldenCorpus, stream: GoldenStream): unknown {
   const first = stream.states[0];
-  if (first === undefined) return undefined;
+  if (first === undefined || isStateDigest(first)) return undefined;
+  const configKey = configStateKey(module, corpus.configs[stream.config], stream.lineups);
+  if (configKey === null) return undefined;
   try {
     const parsed: unknown = JSON.parse(first);
-    return isPlainObject(parsed) ? parsed.cfg : undefined;
+    return isPlainObject(parsed) ? parsed[configKey] : undefined;
   } catch {
     return undefined;
   }
@@ -530,7 +545,7 @@ export function pinnedConfigFields(module: AnySportModule, corpus: GoldenCorpus)
   const declared = declaredOptionalConfigFields(module);
   const recorded: unknown[] = [
     ...Object.values(corpus.configs),
-    ...corpus.streams.map(recordedCfgOf),
+    ...corpus.streams.map((stream) => recordedCfgOf(module, corpus, stream)),
   ];
   return new Set(declared.filter((p) => recorded.some((cfg) => fieldPresent(cfg, p))));
 }
@@ -1007,13 +1022,28 @@ export function extendCorpus(module: AnySportModule, existing: GoldenCorpus): Co
       (e) => ({ type: e.type, payload: e.payload }),
     );
     corpus.configs[best.name] = best.raw;
-    corpus.streams.push({
-      config: best.name,
-      seed: best.seed,
-      ...(lineups === undefined ? {} : { lineups }),
-      events,
-      ...recomputeStream(module, best.raw, events, lineups),
-    });
+    // Written in the canonical SLIM form (#429 scope item 3), because that is
+    // the form the committed corpora are in and `golden-slim.test.ts` asserts
+    // `slimCorpus(unslimCorpus(committed))` reproduces the committed bytes. A
+    // stream appended whole breaks that gate the moment it lands, and breaks it
+    // with a message about a hand-edited digest or a hand-edited anchor —
+    // pointing at the wrong cause entirely. `slimStream` applies exactly the
+    // rule `rebaselineCorpus` applies (streamLens → anchorSteps → slimStates).
+    //
+    // ONLY the appended stream, never `slimCorpus` over the whole thing:
+    // `golden.test.ts` requires the existing prefix byte for byte, and
+    // re-slimming an already-slim stream is not an identity — `anchorSteps`
+    // derives shape growth by walking states and a digest contributes no shape,
+    // so a second pass can compute a different anchor set.
+    corpus.streams.push(
+      slimStream(module, corpus, {
+        config: best.name,
+        seed: best.seed,
+        ...(lineups === undefined ? {} : { lineups }),
+        events,
+        ...recomputeStream(module, best.raw, events, lineups),
+      }),
+    );
     used.add(`${best.name}:${best.seed}`);
     appended.push(`${best.name}:${best.seed}`);
     for (const type of best.hits) {
@@ -1025,22 +1055,106 @@ export function extendCorpus(module: AnySportModule, existing: GoldenCorpus): Co
   return { corpus, gained, stillMissing: [...wanted], appended };
 }
 
+/** Re-folds one stream's ledger and puts the RECORDED config back into every
+ *  state. The shared half of `rebaselineCorpus` and `unslimCorpus`.
+ *
+ *  #429 scope item 3: the recorded config is stored only at the anchors now, so
+ *  a step whose own state was digested takes it from the stream's first STORED
+ *  state. That is exact, not an approximation — no fold rewrites the config, so
+ *  every state in a stream carries the same one, which is the fact
+ *  `recordedCfgOf` has always relied on. */
+function refoldStream(
+  module: AnySportModule,
+  corpus: GoldenCorpus,
+  stream: GoldenStream,
+): {
+  fresh: ReplayedStream;
+  states: string[];
+  configKey: string | null;
+  collapse: ReadonlySet<string>;
+} {
+  const raw = corpus.configs[stream.config];
+  const fresh = recomputeStream(module, raw, stream.events, stream.lineups);
+  const { configKey, collapse } = streamLens(module, corpus, stream);
+  const carrier = stream.states.find((state) => !isStateDigest(state));
+  const states = fresh.states.map((state, i) => {
+    const own = stream.states[i];
+    const recorded = own !== undefined && !isStateDigest(own) ? own : carrier;
+    return recorded === undefined ? state : keepRecordedConfig(state, recorded, configKey);
+  });
+  return { fresh, states, configKey, collapse };
+}
+
 export function rebaselineCorpus(module: AnySportModule, existing: GoldenCorpus): GoldenCorpus {
   return {
     ...existing,
     streams: existing.streams.map((stream) => {
-      const fresh = recomputeStream(
-        module,
-        existing.configs[stream.config],
-        stream.events,
-        stream.lineups,
-      );
+      const { fresh, states, configKey, collapse } = refoldStream(module, existing, stream);
       return {
         ...stream,
         ...fresh,
-        states: fresh.states.map((state, i) => keepRecordedCfg(state, stream.states[i] as string)),
+        states: slimStates(
+          states,
+          new Set(anchorSteps(states, { collapse, configKey })),
+          configKey,
+        ),
       };
     }),
+  };
+}
+
+/** Every digested step restored to its full state, by re-folding the ledger the
+ *  corpus still stores. `outcome`, `summary` and `deltas` are left exactly as
+ *  recorded — this restores STATES and nothing else.
+ *
+ *  This is the recomputability claim the whole of scope item 3 rests on, written
+ *  as code rather than as a sentence in a failure message, and it is what keeps
+ *  the equivalence proof honest. Once the committed corpora are slim there is no
+ *  full corpus left on disk to compare a slim one against, so
+ *  `golden-mutations.test.ts` would otherwise degrade into comparing a corpus
+ *  with itself — the two "forms" identical, every entry still redding, and the
+ *  proof asserting nothing. It derives the full form here instead.
+ *
+ *  Round-tripping it is also a gate in its own right: `slimCorpus(unslimCorpus(
+ *  committed))` must reproduce the committed corpus exactly, which is how a
+ *  hand-edited digest or a hand-edited anchor is caught.
+ *
+ *  A stream that stores no digest is ALREADY full, so it is returned untouched
+ *  rather than re-folded. That is not a shortcut that weakens anything — the
+ *  re-fold is provably an identity there (`rebaselineCorpus` reports
+ *  `changedStates=0` on a corpus that replays, and `keepRecordedConfig` puts the
+ *  recorded config back regardless) — it is what keeps this callable from a test
+ *  that runs over all eleven modules without paying a full re-fold per module
+ *  for nothing. Cricket alone folds ~700 steps.
+ *
+ *  NEVER USE THIS TO COMPARE TWO VERSIONS OF THE ENGINE. It reconstructs the
+ *  missing states by RE-FOLDING the stored ledger with whatever code is loaded
+ *  now, so both sides of any before/after comparison come back as the CURRENT
+ *  behaviour. In particular
+ *
+ *      corpusStateDiff(unslimCorpus(before), unslimCorpus(after))
+ *
+ *  reports `changedStates: 0` for a fold change that moved dozens of recorded
+ *  states — measured while landing the set-piece `resolved` counter, where the
+ *  true answer was 39 full states and 51 digests across 7 streams. The failure
+ *  presents as a REASSURING NUMBER rather than an error, which is why this is a
+ *  warning and not a guard: there is no signal to trip on. It is the same
+ *  compare-a-thing-with-itself shape the slimming work existed to eliminate,
+ *  reintroduced by the function written to recover from it.
+ *
+ *  The correct comparison is against the RECORDED BYTES: loop `verifyStream`
+ *  over `readCorpus(key).streams`, which compares each stored state (or its
+ *  digest) with a fresh replay and names what moved. `corpusStateDiff` is
+ *  honest when its `after` side is a real `rebaselineCorpus` output and its
+ *  `before` side is the committed corpus as read from disk. */
+export function unslimCorpus(module: AnySportModule, corpus: GoldenCorpus): GoldenCorpus {
+  return {
+    ...corpus,
+    streams: corpus.streams.map((stream) =>
+      stream.states.some(isStateDigest)
+        ? { ...stream, states: refoldStream(module, corpus, stream).states }
+        : stream,
+    ),
   };
 }
 
@@ -1050,18 +1164,29 @@ export function rebaselineCorpus(module: AnySportModule, existing: GoldenCorpus)
  *  would quietly convert that tolerance into a frozen expectation, and would
  *  put an unrelated config change into the same diff as the fold change the
  *  re-baseline exists to show. Replacing a value leaves key order untouched. */
-function keepRecordedCfg(recomputed: string, recorded: string): string {
-  let fresh: unknown;
-  let old: unknown;
-  try {
-    fresh = JSON.parse(recomputed);
-    old = JSON.parse(recorded);
-  } catch {
-    return recomputed;
-  }
-  if (!isPlainObject(fresh) || !isPlainObject(old)) return recomputed;
-  if (!Object.hasOwn(fresh, "cfg") || !Object.hasOwn(old, "cfg")) return recomputed;
-  return JSON.stringify({ ...fresh, cfg: old.cfg });
+export function keepRecordedConfig(
+  recomputed: string,
+  recorded: string,
+  configKey: string | null,
+): string {
+  if (configKey === null) return recomputed;
+  // Splice the value in the SOURCE TEXT rather than merging parsed objects: a
+  // `JSON.parse` round-trip reorders integer-like keys, so the state written
+  // back would differ in key order from the live fold and the very next replay
+  // would red on an ordering the re-baseline itself introduced.
+  const fresh = jsonObjectMembers(recomputed);
+  const old = jsonObjectMembers(recorded);
+  if (fresh === null || old === null) return recomputed;
+  const recordedConfig = old.find((member) => member.key === configKey);
+  if (recordedConfig === undefined) return recomputed;
+  if (!fresh.some((member) => member.key === configKey)) return recomputed;
+  const spliced = fresh
+    .map(
+      (member) =>
+        `${member.rawKey}:${member.key === configKey ? recordedConfig.rawValue : member.rawValue}`,
+    )
+    .join(",");
+  return `{${spliced}}`;
 }
 
 export function readCorpus(key: string): GoldenCorpus {
@@ -1070,6 +1195,359 @@ export function readCorpus(key: string): GoldenCorpus {
 
 export function writeCorpus(corpus: GoldenCorpus): void {
   writeFileSync(goldenPath(corpus.key), `${JSON.stringify(corpus, null, 0)}\n`);
+}
+
+// ------------------------------------------------ corpus-write policy (#429)
+//
+// The policy, in one sentence: a re-baseline is legitimate only when it is
+// DELIBERATE, ISOLATED IN ITS OWN COMMIT, and REVIEWED AS A STATE DIFF. Never a
+// side effect of another change; never `UPDATE_GOLDEN=1` reached for to clear a
+// red. See GOLDEN-POLICY.md next to this file.
+//
+// The mechanism for the middle clause existed before this pass and enforced
+// nothing: `REBASELINE_GOLDEN=1` would happily rewrite eleven corpora on top of
+// a half-finished feature branch, and the resulting commit is then unreviewable
+// — a reader cannot tell which state moved because the fold changed and which
+// moved because the working tree was dirty. So the two writing modes now refuse
+// to run unless every dirty path is a corpus file they are about to rewrite.
+//
+// Split pure from impure deliberately: `corpusWriteVerdict` takes a porcelain
+// listing and returns a verdict, so the unit tests drive it with fixture
+// listings instead of manufacturing dirty git state.
+
+export interface WorkingTreeVerdict {
+  ok: boolean;
+  /** Dirty paths that are NOT one of the corpus files the run may rewrite. */
+  offending: string[];
+  /** Why, ready to print — names the offending paths when there are any. */
+  reason: string;
+}
+
+/** One porcelain line -> the path(s) it dirties. Renames and copies name two.
+ *  A line too short to carry `XY <path>` is returned verbatim as its own path:
+ *  the guard fails closed on anything it cannot read, rather than skipping it. */
+function porcelainPaths(line: string): string[] {
+  if (line.trim() === "") return [];
+  if (line.length < 4) return [line];
+  const status = line.slice(0, 2);
+  const rest = line.slice(3);
+  const parts =
+    (status.includes("R") || status.includes("C")) && rest.includes(" -> ")
+      ? rest.split(" -> ")
+      : [rest];
+  return parts.map((part) =>
+    part.startsWith(`"`) ? ((JSON.parse(part) as string) ?? part) : part,
+  );
+}
+
+/** Whether a corpus-writing run (UPDATE_GOLDEN / REBASELINE_GOLDEN) may proceed.
+ *
+ *  @param porcelain lines of `git status --porcelain`, or `null` when the
+ *    directory is not a git checkout. `null` FAILS CLOSED, and that is the
+ *    point rather than an edge case: outside a checkout there is no diff to
+ *    review, so the run cannot satisfy the policy it is being gated on.
+ *  @param writablePaths repo-relative paths the run is about to rewrite —
+ *    i.e. the corpus files, and nothing else. */
+export function corpusWriteVerdict(
+  porcelain: readonly string[] | null,
+  writablePaths: readonly string[],
+): WorkingTreeVerdict {
+  if (porcelain === null) {
+    return {
+      ok: false,
+      offending: [],
+      reason:
+        `refusing to rewrite the golden corpus: this is not a git checkout, so the ` +
+        `re-baseline could not be reviewed as a state diff (#429). Run it inside the repo.`,
+    };
+  }
+  const allowed = new Set(writablePaths);
+  const offending = [...new Set(porcelain.flatMap(porcelainPaths))]
+    .filter((path) => !allowed.has(path))
+    .sort();
+  if (offending.length === 0) {
+    return { ok: true, offending: [], reason: "working tree holds only corpus changes" };
+  }
+  return {
+    ok: false,
+    offending,
+    reason:
+      `refusing to rewrite the golden corpus: the working tree has ${offending.length} ` +
+      `change(s) outside the corpus, so the commit could not be a reviewable state diff ` +
+      `(#429 — a re-baseline is deliberate, isolated in its own commit, and reviewed as a ` +
+      `state diff). Commit or stash these first:\n  ${offending.join("\n  ")}`,
+  };
+}
+
+/** The corpus files a write mode may rewrite, repo-relative, or `null` when
+ *  this is not a git checkout. Derived from `SPORT_DIRS`, so a module added
+ *  without a corpus cannot widen the allowance by accident. */
+export function corpusWritablePaths(repoRoot: string): string[] {
+  return [...new Set(Object.keys(SPORT_DIRS).map((key) => relative(repoRoot, goldenPath(key))))]
+    .sort()
+    .map((path) => path.split(sep).join("/"));
+}
+
+/** git's stderr is DISCARDED, not inherited: "not a git repository" is a normal
+ *  answer here, not a fault, and the tests that prove the guard fails closed
+ *  probe a non-checkout deliberately. Inheriting it printed three fatals into
+ *  every green run, which is how a real one stops being read. The `catch` owns
+ *  the outcome either way. */
+const GIT_STDIO = ["ignore", "pipe", "ignore"] as const;
+
+/** `git status --porcelain` for `cwd`, or `null` when it is not a checkout. */
+export function gitPorcelain(cwd: string): string[] | null {
+  try {
+    return execFileSync("git", ["status", "--porcelain"], {
+      cwd,
+      encoding: "utf8",
+      stdio: [...GIT_STDIO],
+    })
+      .split("\n")
+      .filter((line) => line.trim() !== "");
+  } catch {
+    return null;
+  }
+}
+
+/** The repository root containing this file, or `null` when there is none. */
+export function gitRepoRoot(cwd: string): string | null {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      encoding: "utf8",
+      stdio: [...GIT_STDIO],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** The verdict for THIS checkout — the impure half, wired for the harness. */
+export function corpusWriteGuard(): WorkingTreeVerdict {
+  const root = gitRepoRoot(HERE);
+  if (root === null) return corpusWriteVerdict(null, []);
+  return corpusWriteVerdict(gitPorcelain(HERE), corpusWritablePaths(root));
+}
+
+// ------------------------------------------- re-baseline state-diff summary
+//
+// The third clause of the policy — "reviewed as a state diff" — was prose with
+// nothing behind it: the run wrote eleven files and said nothing about what
+// moved, leaving a reviewer to eyeball a minified 1.6 MB JSON line. This
+// summarises the move instead, and it is a RETURNED VALUE first and a printout
+// second so it can be asserted on without running a re-baseline.
+
+export interface StreamStateDiff {
+  /** Index into `corpus.streams`. */
+  index: number;
+  config: string;
+  seed: number;
+  /** Indices into `stream.states` whose recorded JSON moved. */
+  changedSteps: number[];
+  /** The subset of `changedSteps` the corpus stores only as a digest, on one or
+   *  both sides. No key can be named for these — see the note on the summary. */
+  digestOnlySteps: number[];
+  /** Steps whose stored FORM changed (a full state replaced by its own digest,
+   *  or the reverse) while the state itself did not. Not a move. */
+  reformattedSteps: number[];
+  /** Distinct TOP-LEVEL state keys that moved, across this stream's steps. */
+  changedStateKeys: string[];
+  outcomeMoved: boolean;
+  summaryMoved: boolean;
+  deltasMoved: boolean;
+  /** Must always be false — a re-baseline keeps the recorded ledger. */
+  eventsMoved: boolean;
+}
+
+export interface CorpusStateDiff {
+  key: string;
+  /** Only the streams that actually moved. */
+  streams: StreamStateDiff[];
+  changedStreams: number;
+  changedStates: number;
+  /** Moved states the corpus stores only as a digest — reported, but with no
+   *  key attribution possible. */
+  digestOnlyStates: number;
+  /** States rewritten from a full state to its own digest (or back) without
+   *  moving. The run that slims the corpora is ~2,450 of these and 0 moves. */
+  reformattedStates: number;
+  /** Distinct top-level state keys that moved anywhere in the corpus. */
+  changedStateKeys: string[];
+  /** True if any recorded event moved, or the stream count did. Always a bug. */
+  eventsMoved: boolean;
+}
+
+/** Sentinel key for a state that is not a JSON object, so a diff of one is
+ *  reported rather than silently contributing no key at all. */
+const OPAQUE_STATE_KEY = "(state is not a JSON object)";
+
+/** Top-level keys whose recorded value text differs between two states. */
+function changedTopLevelKeys(before: string, after: string): string[] {
+  const a = jsonObjectMembers(before);
+  const b = jsonObjectMembers(after);
+  if (a === null || b === null) return [OPAQUE_STATE_KEY];
+  const byKey = (members: JsonMember[]) => new Map(members.map((m) => [m.key, m.rawValue]));
+  const left = byKey(a);
+  const right = byKey(b);
+  const keys = new Set([...left.keys(), ...right.keys()]);
+  return [...keys].filter((key) => left.get(key) !== right.get(key)).sort();
+}
+
+/** What a re-baseline moved, per module and per stream.
+ *
+ *  `module` is optional and only ever used to resolve where a module files its
+ *  config, so that a step rewritten from a full state to its own DIGEST can be
+ *  recognised as a re-format rather than reported as a move. Without it such a
+ *  step is reported as moved — fail loud, because the alternative is a summary
+ *  that quietly under-reports. Supply it whenever you have it; the re-baseline
+ *  run does. */
+export function corpusStateDiff(
+  before: GoldenCorpus,
+  after: GoldenCorpus,
+  module?: AnySportModule,
+): CorpusStateDiff {
+  const streams: StreamStateDiff[] = [];
+  let eventsMoved = after.streams.length !== before.streams.length;
+  const allKeys = new Set<string>();
+  let changedStates = 0;
+  let digestOnlyStates = 0;
+  let reformattedStates = 0;
+
+  const shared = Math.min(before.streams.length, after.streams.length);
+  for (let i = 0; i < shared; i++) {
+    const was = before.streams[i] as GoldenStream;
+    const now = after.streams[i] as GoldenStream;
+    const changedSteps: number[] = [];
+    const digestOnlySteps: number[] = [];
+    const reformattedSteps: number[] = [];
+    const keys = new Set<string>();
+    // `undefined` means "no module was supplied, so the config cannot be
+    // located"; `null` means "this module embeds no config in its state".
+    const configKey =
+      module === undefined ? undefined : configStateKey(module, after.configs[now.config], now.lineups);
+    const steps = Math.max(was.states.length, now.states.length);
+    for (let step = 0; step < steps; step++) {
+      const oldState = was.states[step];
+      const newState = now.states[step];
+      if (oldState === newState) continue;
+      const oldIsDigest = oldState !== undefined && isStateDigest(oldState);
+      const newIsDigest = newState !== undefined && isStateDigest(newState);
+
+      // One side kept the state, the other kept only its digest. That is the
+      // slimming pass itself, and reporting ~2,450 of them as moves would make
+      // the one printout whose whole point is MINIMALITY unreadable at the exact
+      // moment it matters most. Compare like with like when the config can be
+      // located, and fall through to reporting it when it cannot.
+      if (oldIsDigest !== newIsDigest && oldState !== undefined && newState !== undefined) {
+        if (configKey !== undefined) {
+          const a = oldIsDigest ? oldState : stateDigest(oldState, configKey);
+          const b = newIsDigest ? newState : stateDigest(newState, configKey);
+          if (a === b) {
+            reformattedSteps.push(step);
+            continue;
+          }
+        }
+        changedSteps.push(step);
+        digestOnlySteps.push(step);
+        continue;
+      }
+      if (oldIsDigest || newIsDigest) {
+        changedSteps.push(step);
+        digestOnlySteps.push(step);
+        continue;
+      }
+      changedSteps.push(step);
+      for (const key of changedTopLevelKeys(oldState ?? "", newState ?? "")) keys.add(key);
+    }
+    const streamEventsMoved = JSON.stringify(was.events) !== JSON.stringify(now.events);
+    if (streamEventsMoved) eventsMoved = true;
+    reformattedStates += reformattedSteps.length;
+    const diff: StreamStateDiff = {
+      index: i,
+      config: now.config,
+      seed: now.seed,
+      changedSteps,
+      digestOnlySteps,
+      reformattedSteps,
+      changedStateKeys: [...keys].sort(),
+      outcomeMoved: was.outcome !== now.outcome,
+      summaryMoved: was.summary !== now.summary,
+      deltasMoved: was.deltas !== now.deltas,
+      eventsMoved: streamEventsMoved,
+    };
+    if (
+      changedSteps.length > 0 ||
+      diff.outcomeMoved ||
+      diff.summaryMoved ||
+      diff.deltasMoved ||
+      streamEventsMoved
+    ) {
+      streams.push(diff);
+      changedStates += changedSteps.length;
+      digestOnlyStates += digestOnlySteps.length;
+      for (const key of keys) allKeys.add(key);
+    }
+  }
+
+  return {
+    key: after.key,
+    streams,
+    changedStreams: streams.length,
+    changedStates,
+    digestOnlyStates,
+    reformattedStates,
+    changedStateKeys: [...allKeys].sort(),
+    eventsMoved,
+  };
+}
+
+/** The summary a reviewer reads. One line per moved stream; the distinct set of
+ *  moved state keys last, because that is the minimality claim. */
+export function formatCorpusStateDiff(diff: CorpusStateDiff): string {
+  const reformatted =
+    diff.reformattedStates > 0
+      ? ` (${diff.reformattedStates} state(s) re-formatted to digests, unmoved)`
+      : "";
+  if (diff.streams.length === 0 && !diff.eventsMoved) {
+    return `[rebaseline] ${diff.key}: nothing moved${reformatted}`;
+  }
+  const lines = [
+    `[rebaseline] ${diff.key}: ${diff.changedStreams} stream(s), ` +
+      `${diff.changedStates} state(s) moved${reformatted}`,
+  ];
+  for (const stream of diff.streams) {
+    const moved = [
+      stream.outcomeMoved ? "outcome" : null,
+      stream.summaryMoved ? "summary" : null,
+      stream.deltasMoved ? "deltas" : null,
+      stream.eventsMoved ? "EVENTS(!)" : null,
+    ].filter((part) => part !== null);
+    lines.push(
+      `  #${stream.index} config=${stream.config} seed=${stream.seed} ` +
+        `steps=[${stream.changedSteps.join(",")}] ` +
+        `keys=[${stream.changedStateKeys.join(",")}]` +
+        (stream.digestOnlySteps.length > 0
+          ? ` digests=[${stream.digestOnlySteps.join(",")}]`
+          : "") +
+        (moved.length > 0 ? ` moved=${moved.join("+")}` : ""),
+    );
+  }
+  lines.push(`  state keys moved: ${diff.changedStateKeys.join(", ") || "(none)"}`);
+  // The honest residual of #429 scope item 3, printed where the reviewer is
+  // rather than left in a policy document they may not open.
+  if (diff.digestOnlyStates > 0) {
+    lines.push(
+      `  ${diff.digestOnlyStates} of those state(s) are stored as digests only, so no key ` +
+        `can be named for them. Recompute the full state from the recorded ledger: ` +
+        `recomputeStream(module, corpus.configs[stream.config], stream.events, ` +
+        `stream.lineups).states[N]`,
+    );
+  }
+  if (diff.eventsMoved) {
+    lines.push(`  !! RECORDED EVENTS MOVED — this is not a re-baseline, it is a re-record`);
+  }
+  return lines.join("\n");
 }
 
 // ------------------------------------------------------------- comparison
@@ -1090,6 +1568,127 @@ export function writeCorpus(corpus: GoldenCorpus): void {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// ------------------------------------------------ JSON source-text splitting
+//
+// #429 scope item 4. `JSON.parse` DOES NOT PRESERVE KEY ORDER: a JS object puts
+// array-index-like own keys first, in ascending numeric order, whatever order
+// they appeared in the text. So a state recorded as `{"2":…,"1":…}` parses to
+// `{"1":…,"2":…}`, and any comparison that parses BOTH sides and re-serialises
+// them normalises the two identically — a genuine order change between the
+// recorded and replayed state comes out equal. That is a false GREEN on the
+// exact-equality half of the golden comparison, which is the half that carries
+// the whole fold.
+//
+// No corpus has an integer-like state key today. That is the reason to fix it
+// now rather than a reason not to: cricket keys innings by `r1`/`r2` and
+// several modules key maps by entrant id, so one module numbering a map by
+// period, over or board number is all it takes, and the failure mode is a gate
+// that reports success.
+//
+// The fix is to drop the round-trip, not to sort after it: sorting picks A
+// canonical order, and the comparison needs THE RECORDED one.
+
+export interface JsonMember {
+  /** The key's exact source text, quotes and escapes included. */
+  rawKey: string;
+  /** The decoded key. */
+  key: string;
+  /** The value's exact source text. */
+  rawValue: string;
+}
+
+/** Top-level members of a JSON object's SOURCE TEXT, in serialised order, each
+ *  value kept as its exact bytes. `null` when the text is not a JSON object.
+ *  Nested values are never parsed — they stay opaque strings, which is exactly
+ *  what an exact comparison of the non-config half of a state wants. */
+export function jsonObjectMembers(json: string): JsonMember[] | null {
+  let i = 0;
+  const skipWs = (): void => {
+    while (i < json.length && " \t\n\r".includes(json[i] as string)) i++;
+  };
+  const skipString = (): boolean => {
+    if (json[i] !== `"`) return false;
+    i++;
+    while (i < json.length) {
+      const ch = json[i] as string;
+      if (ch === "\\") i += 2;
+      else if (ch === `"`) {
+        i++;
+        return true;
+      } else i++;
+    }
+    return false;
+  };
+  const skipValue = (): boolean => {
+    const ch = json[i];
+    if (ch === `"`) return skipString();
+    if (ch === "{" || ch === "[") {
+      let depth = 0;
+      while (i < json.length) {
+        const cur = json[i] as string;
+        if (cur === `"`) {
+          if (!skipString()) return false;
+          continue;
+        }
+        if (cur === "{" || cur === "[") depth++;
+        else if (cur === "}" || cur === "]") {
+          depth--;
+          i++;
+          if (depth === 0) return true;
+          continue;
+        }
+        i++;
+      }
+      return false;
+    }
+    // A scalar: number, true, false or null. Runs to the next structural char.
+    const start = i;
+    while (i < json.length && !",}]".includes(json[i] as string)) i++;
+    return i > start;
+  };
+
+  skipWs();
+  if (json[i] !== "{") return null;
+  i++;
+  const out: JsonMember[] = [];
+  skipWs();
+  if (json[i] === "}") {
+    i++;
+    skipWs();
+    return i === json.length ? out : null;
+  }
+  for (;;) {
+    skipWs();
+    const keyStart = i;
+    if (!skipString()) return null;
+    const rawKey = json.slice(keyStart, i);
+    skipWs();
+    if (json[i] !== ":") return null;
+    i++;
+    skipWs();
+    const valueStart = i;
+    if (!skipValue()) return null;
+    let key: string;
+    try {
+      key = JSON.parse(rawKey) as string;
+    } catch {
+      return null;
+    }
+    out.push({ rawKey, key, rawValue: json.slice(valueStart, i) });
+    skipWs();
+    if (json[i] === ",") {
+      i++;
+      continue;
+    }
+    if (json[i] === "}") {
+      i++;
+      skipWs();
+      return i === json.length ? out : null;
+    }
+    return null;
+  }
 }
 
 /** First path at which `expected` is not reproduced by `actual`, or null.
@@ -1121,40 +1720,480 @@ function subsetMismatch(actual: unknown, expected: unknown, path: string): strin
     : `${path}: recorded ${JSON.stringify(expected)}, replayed ${JSON.stringify(actual)}`;
 }
 
-/** Everything but `cfg`, re-serialised in the order it was parsed — so the
- *  non-config half of the state stays an exact string comparison. */
-function withoutCfg(state: Record<string, unknown>): string {
-  return JSON.stringify(Object.fromEntries(Object.entries(state).filter(([k]) => k !== "cfg")));
+/** Everything but the module's config, kept as the exact bytes the corpus
+ *  recorded and in the order it recorded them — so the non-config half of the
+ *  state stays a genuine string comparison.
+ *
+ *  This used to take the PARSED state and re-serialise it, which quietly made
+ *  the comparison order-INSENSITIVE for integer-like keys (see the
+ *  `jsonObjectMembers` note): both sides went through the same normalisation,
+ *  so a real order change compared equal. Splitting the source text keeps the
+ *  recorded bytes, which is what "exact" was always supposed to mean. */
+function withoutConfig(members: readonly JsonMember[], configKey: string): string {
+  return members
+    .map(
+      (member) =>
+        `${member.rawKey}:${member.key === configKey ? CONFIG_PLACEHOLDER : member.rawValue}`,
+    )
+    .join(",");
+}
+
+/** Stands in for the config's VALUE so its POSITION in key order still compares.
+ *  Dropping the entry entirely would let a module move its config from the first
+ *  key to the last with the non-config half reported identical. */
+const CONFIG_PLACEHOLDER = "<config compared as a subset>";
+
+/** The top-level state key a module embeds its parsed config under.
+ *
+ *  #429 scope item 4: NOT a name match. `stateMismatch` used to give the subset
+ *  tolerance to whatever was literally called `cfg`, which is wrong in both
+ *  directions — a module storing its config as `settings` silently loses the
+ *  tolerance (so an additive knob reds its corpus, the exact failure the subset
+ *  rule exists to prevent), and the rule stops being about the config at all
+ *  and becomes about a spelling. The config's location is a fact about the
+ *  module, so ask the module: `init` is handed the parsed cfg, and the state
+ *  entry that IS that object is where it lives. Identity first, serialised
+ *  equality as the fallback for a module that copies rather than stores.
+ *
+ *  `null` means the module embeds no config in its state, and then the whole
+ *  state is compared exactly — there is nothing to be tolerant about. */
+export function configStateKey(
+  module: AnySportModule,
+  rawConfig: unknown,
+  recordedLineups?: LineupPair,
+): string | null {
+  let cfg: unknown;
+  let state: unknown;
+  try {
+    cfg = module.configSchema.parse(rawConfig);
+    state = module.init(cfg, recordedLineups ?? defaultLineupPair(resolvePositions(module, cfg)));
+  } catch {
+    // A module that cannot be initialised has no locatable config. Falling back
+    // to "cfg" here would let the name match in through the back door.
+    return null;
+  }
+  if (!isPlainObject(state)) return null;
+  // Identity: `init` was handed this exact object, and every builtin files it
+  // straight into the state it returns.
+  const stored = Object.entries(state).find(([, value]) => value === cfg);
+  if (stored !== undefined) return stored[0];
+  // Fallback for a module that copies its config in. TOP-LEVEL ONLY, always: a
+  // nested object that happens to be spelled `cfg` is part of the fold, and
+  // handing it the subset tolerance would blind the corpus to a real change.
+  const target = JSON.stringify(cfg);
+  const copied = Object.entries(state).find(
+    ([, value]) => isPlainObject(value) && JSON.stringify(value) === target,
+  );
+  return copied?.[0] ?? null;
 }
 
 /** Why a replayed state differs from the recorded one, or null if it does not.
- *  Exact everywhere except `cfg`, which is a subset (see the note above). */
-export function stateMismatch(actual: string, expected: string): string | null {
+ *  Exact everywhere except the module's embedded config, which is compared as a
+ *  subset (see the note above). `configKey` says where that config lives —
+ *  `configStateKey` derives it from the module; `null` means the state carries
+ *  no config and every byte is exact. */
+export function stateMismatch(
+  actual: string,
+  expected: string,
+  configKey: string | null,
+): string | null {
   if (actual === expected) return null;
 
-  let parsedActual: unknown;
-  let parsedExpected: unknown;
   try {
-    parsedActual = JSON.parse(actual);
-    parsedExpected = JSON.parse(expected);
+    JSON.parse(actual);
+    JSON.parse(expected);
   } catch {
     return `state is not JSON: recorded ${expected}, replayed ${actual}`;
   }
-  // Only a state that RECORDED a cfg gets the subset rule; anything else is a
-  // plain fold and must reproduce byte for byte.
-  if (
-    !isPlainObject(parsedActual) ||
-    !isPlainObject(parsedExpected) ||
-    !Object.hasOwn(parsedExpected, "cfg")
-  ) {
+  // No embedded config means no tolerance to apply: the state is a plain fold
+  // and must reproduce byte for byte.
+  if (configKey === null) return `recorded ${expected}, replayed ${actual}`;
+
+  const actualMembers = jsonObjectMembers(actual);
+  const expectedMembers = jsonObjectMembers(expected);
+  if (actualMembers === null || expectedMembers === null) {
     return `recorded ${expected}, replayed ${actual}`;
   }
+  const expectedConfig = expectedMembers.find((member) => member.key === configKey);
+  const actualConfig = actualMembers.find((member) => member.key === configKey);
+  // Only a state that RECORDED a config gets the subset rule; a module gaining
+  // or losing one in its state IS a fold change and must red either way.
+  if (expectedConfig === undefined) return `recorded ${expected}, replayed ${actual}`;
+  if (actualConfig === undefined) return `${configKey}: recorded key is gone`;
 
-  const rest = withoutCfg(parsedActual);
-  const expectedRest = withoutCfg(parsedExpected);
-  if (rest !== expectedRest) return `state outside cfg: recorded ${expectedRest}, replayed ${rest}`;
+  const rest = withoutConfig(actualMembers, configKey);
+  const expectedRest = withoutConfig(expectedMembers, configKey);
+  if (rest !== expectedRest) {
+    return `state outside ${configKey}: recorded ${expectedRest}, replayed ${rest}`;
+  }
 
-  return subsetMismatch(parsedActual.cfg, parsedExpected.cfg, "cfg");
+  let actualConfigValue: unknown;
+  let expectedConfigValue: unknown;
+  try {
+    actualConfigValue = JSON.parse(actualConfig.rawValue);
+    expectedConfigValue = JSON.parse(expectedConfig.rawValue);
+  } catch {
+    return `state is not JSON: recorded ${expected}, replayed ${actual}`;
+  }
+  return subsetMismatch(actualConfigValue, expectedConfigValue, configKey);
+}
+
+// ------------------------------------- per-step digests (#429 scope item 3)
+//
+// WHY. The eleven corpora recorded a full `JSON.stringify(state)` after every
+// event — 4,507,821 bytes across eleven single-line files, of which the states
+// were roughly 90%. Cricket alone was 1.8 MB. That weight buys one thing the
+// harness genuinely needs (a per-step tripwire) and one thing it does not (the
+// bytes of every intermediate state, all but a handful of which no human will
+// ever read).
+//
+// WHAT THIS COSTS, stated first because it is the part that is easy to lose.
+// Scope item 1 made "reviewed as a state diff" the core of the re-baseline
+// policy, and a digest tells a reviewer THAT a step moved and never WHAT moved:
+// only the digest was stored, so the previous state is a hash in git too and
+// `corpusStateDiff` cannot name a key for it. That is a real degradation and it
+// is why the anchors below are chosen by a rule rather than by a stride someone
+// liked. It is bounded by one fact: the corpus still stores the `config`, the
+// `lineups` and every `event`, so the full state at ANY step is recomputable
+// locally — `recomputeStream(module, corpus.configs[stream.config],
+// stream.events, stream.lineups).states[N]`. A digest mismatch says so.
+//
+// WHAT THIS DOES NOT COST. The digest is taken over `comparableStateText` —
+// the exact text the byte-exact half of `stateMismatch` compares, with the
+// module's config replaced by its placeholder. So it reds on precisely what
+// that comparison redded on and tolerates precisely what it tolerated. In
+// particular it is ORDER-SENSITIVE (it hashes the recorded source text, member
+// by member, in the recorded order) and it keeps the config-subset tolerance,
+// which is permanent: hashing the raw state instead would red all eleven
+// corpora the next time a knob gains a `.default()`.
+
+/** Marks a `states[i]` entry as a digest rather than a recorded state.
+ *
+ *  `#` is chosen because it is NOT valid JSON. Every existing reader that walks
+ *  the recorded states for a shape already parses inside a `try/catch
+ *  { continue }` — `recordedStatePaths` here, `stateShapeOf` in
+ *  schema-snapshot.ts, `recordedCfgOf` below — so each of them skips a
+ *  digest-only step without being taught about digests at all. Skipping is the
+ *  CORRECT behaviour for them, and not by luck: `anchorSteps` keeps every step
+ *  at which the state shape grows, so a skipped step contributes no path and no
+ *  kind that an anchor did not already contribute. `golden-slim.test.ts` proves
+ *  that for all eleven modules rather than asserting it. */
+export const STATE_DIGEST_PREFIX = "#";
+
+/** Hex characters of SHA-256 kept. 64 bits: the corpora hold ~3,600 states, so
+ *  the chance of a mutated fold colliding with its recorded digest is ~5e-20
+ *  per step, against ~20 bytes per step of file weight. */
+export const STATE_DIGEST_HEX = 16;
+
+/** Whether a `states[i]` entry is a digest rather than a recorded state. */
+export function isStateDigest(entry: string): boolean {
+  return entry.startsWith(STATE_DIGEST_PREFIX);
+}
+
+/** The text `stateMismatch` compares byte for byte — the recorded state's own
+ *  source bytes, in the recorded member order, with the module's config swapped
+ *  for `CONFIG_PLACEHOLDER` so the subset tolerance still applies and the
+ *  config's POSITION in key order still compares. */
+export function comparableStateText(state: string, configKey: string | null): string {
+  if (configKey === null) return state;
+  const members = jsonObjectMembers(state);
+  if (members === null) return state;
+  return withoutConfig(members, configKey);
+}
+
+/** The digest a slim corpus stores in place of a recorded state. */
+export function stateDigest(state: string, configKey: string | null): string {
+  const hex = createHash("sha256")
+    .update(comparableStateText(state, configKey), "utf8")
+    .digest("hex")
+    .slice(0, STATE_DIGEST_HEX);
+  return `${STATE_DIGEST_PREFIX}${hex}`;
+}
+
+// -------------------------------------------------------------- the anchors
+//
+// "Keep a handful of full states" is only as good as WHICH handful, so the rule
+// is three clauses and each earns its place:
+//
+//   FIRST and LAST, always. The first state carries the config the corpus was
+//     frozen against (`recordedCfgOf` reads it, and the subset pin lives there
+//     — no fold rewrites the config, so pinning it once per stream pins it for
+//     every step). The last is the state `outcome`, `summary` and `deltas` are
+//     derived from, and those are never digested.
+//   EVERY STRIDE-th STEP, for review. This is the localisation budget: a
+//     reviewer looking at a moved digest is at most ANCHOR_STRIDE steps from a
+//     stored full state, in both directions, and the harness names the nearest.
+//   EVERY STEP AT WHICH THE STATE SHAPE GROWS. This is the clause that makes
+//     the anchor set deliberate rather than a sample. Both gates that walk the
+//     recorded states — `recordedStatePaths` and, more sharply,
+//     `stateShapeOf`, whose output is committed as `<key>.schema.json` under a
+//     byte-equality CI gate — union a path/kind set over the states. Keeping
+//     exactly the steps that ADD to that set preserves both outputs by
+//     construction, so slimming cannot narrow a different tripwire or drop
+//     eleven schema snapshots on the floor. It is also the clause a reviewer
+//     wants: those are the steps where something structurally new happened.
+
+/** Steps between forced interior anchors. */
+export const ANCHOR_STRIDE = 10;
+
+const MAX_SHAPE_DEPTH = 12; // no engine state nests anywhere near this deep
+
+type StateKind = "array" | "boolean" | "null" | "number" | "object" | "string";
+
+function stateKindOf(value: unknown): StateKind {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  const t = typeof value;
+  if (t === "string" || t === "number" || t === "boolean") return t;
+  return "object";
+}
+
+function walkShape(
+  value: unknown,
+  prefix: string,
+  out: Set<string>,
+  collapse: ReadonlySet<string>,
+  depth: number,
+): void {
+  if (depth > MAX_SHAPE_DEPTH) return;
+  if (Array.isArray(value)) {
+    const path = `${prefix}[]`;
+    for (const item of value) {
+      out.add(`${path} ${stateKindOf(item)}`);
+      walkShape(item, path, out, collapse, depth + 1);
+    }
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const [key, member] of Object.entries(value as Record<string, unknown>)) {
+    if (member === undefined) continue; // a JSON round-trip drops the key
+    const path = collapse.has(key) ? `${prefix}[]` : prefix === "" ? key : `${prefix}.${key}`;
+    out.add(`${path} ${stateKindOf(member)}`);
+    walkShape(member, path, out, collapse, depth + 1);
+  }
+}
+
+/** `path kind` tokens for one state — the same grammar `statePathKinds` in
+ *  schema-snapshot.ts walks, flattened into a set.
+ *
+ *  DUPLICATED DELIBERATELY. schema-snapshot.ts imports `readCorpus`,
+ *  `goldenPath` and `configStateKey` from this file, so importing its walker
+ *  back would make the two modules a cycle for the sake of two dozen lines.
+ *  `golden-slim.test.ts` asserts the two walkers agree token for token on a
+ *  real folded state, which is what actually holds them together: if either
+ *  grammar drifts, the anchor rule stops preserving the committed snapshots and
+ *  that test reds before the CI drift gate does. */
+export function stateShapeTokens(
+  state: unknown,
+  collapse: ReadonlySet<string>,
+  omit: ReadonlySet<string>,
+): Set<string> {
+  const out = new Set<string>();
+  const root =
+    typeof state !== "object" || state === null || Array.isArray(state)
+      ? state
+      : Object.fromEntries(
+          Object.entries(state as Record<string, unknown>).filter(([key]) => !omit.has(key)),
+        );
+  walkShape(root, "", out, collapse, 0);
+  return out;
+}
+
+export interface AnchorOptions {
+  /** Object keys rendered as `[]` — `collapseKeysFor(lineups)`. Without it a
+   *  new person id reads as a new state path and every step that introduces one
+   *  becomes an anchor, which for cricket is most of them. */
+  collapse?: ReadonlySet<string>;
+  /** Where the module files its config, from `configStateKey`. Dropped from the
+   *  shape walk: the config is constant across a stream and step 0 pins it. */
+  configKey?: string | null;
+  stride?: number;
+}
+
+/** Which steps of a stream keep their full recorded state. Sorted, unique. */
+export function anchorSteps(states: readonly string[], options: AnchorOptions = {}): number[] {
+  if (states.length === 0) return [];
+  const collapse = options.collapse ?? new Set<string>();
+  const configKey = options.configKey ?? null;
+  const omit = configKey === null ? new Set<string>() : new Set([configKey]);
+  const stride = options.stride ?? ANCHOR_STRIDE;
+
+  const keep = new Set<number>([0, states.length - 1]);
+  for (let i = 0; i < states.length; i += stride) keep.add(i);
+
+  const seen = new Set<string>();
+  for (let i = 0; i < states.length; i++) {
+    const text = states[i] as string;
+    if (isStateDigest(text)) continue; // already slim: it can contribute no shape
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      keep.add(i); // unparseable: keep it, so nothing is silently thrown away
+      continue;
+    }
+    let grew = false;
+    for (const token of stateShapeTokens(parsed, collapse, omit)) {
+      if (seen.has(token)) continue;
+      seen.add(token);
+      grew = true;
+    }
+    if (grew) keep.add(i);
+  }
+  return [...keep].sort((a, b) => a - b);
+}
+
+// ------------------------------------------------------------------ slimming
+
+/** Whether a stream is already stored in slim form. */
+export function isSlimStream(stream: GoldenStream): boolean {
+  return stream.states.some(isStateDigest);
+}
+
+/** `states` with every step outside `keep` replaced by its digest. */
+export function slimStates(
+  states: readonly string[],
+  keep: ReadonlySet<number>,
+  configKey: string | null,
+): string[] {
+  return states.map((state, i) =>
+    keep.has(i) || isStateDigest(state) ? state : stateDigest(state, configKey),
+  );
+}
+
+/** The lens a stream's states are walked and compared under. */
+function streamLens(
+  module: AnySportModule,
+  corpus: GoldenCorpus,
+  stream: GoldenStream,
+): { configKey: string | null; collapse: ReadonlySet<string> } {
+  const raw = corpus.configs[stream.config];
+  const configKey = configStateKey(module, raw, stream.lineups);
+  let collapse: ReadonlySet<string> = new Set<string>();
+  try {
+    const cfg = module.configSchema.parse(raw);
+    collapse = collapseKeysFor(lineupsFor(module, cfg, stream.lineups));
+  } catch {
+    // A stream whose config no longer parses is the replay test's problem, not
+    // the anchor rule's; an empty collapse set only ever keeps MORE anchors.
+  }
+  return { configKey, collapse };
+}
+
+/** One stream in slim form. A stream that is already slim is returned as it
+ *  stands — re-slimming would hash a hash, and the anchor rule cannot see the
+ *  shape of a state that is no longer stored. */
+export function slimStream(
+  module: AnySportModule,
+  corpus: GoldenCorpus,
+  stream: GoldenStream,
+): GoldenStream {
+  if (isSlimStream(stream)) return stream;
+  const { configKey, collapse } = streamLens(module, corpus, stream);
+  const keep = new Set(anchorSteps(stream.states, { collapse, configKey }));
+  return { ...stream, states: slimStates(stream.states, keep, configKey) };
+}
+
+/** A corpus with every stream slimmed. `events`, `configs`, `outcome`,
+ *  `summary` and `deltas` are untouched — the last three are what standings
+ *  depend on, they are small, and they are never digested. Idempotent. */
+export function slimCorpus(module: AnySportModule, corpus: GoldenCorpus): GoldenCorpus {
+  return { ...corpus, streams: corpus.streams.map((s) => slimStream(module, corpus, s)) };
+}
+
+// -------------------------------------------------------------- the replay
+//
+// One gate, called by the replay test AND by the mutation list, so a mutation
+// is proven against the code that actually guards the corpus rather than
+// against a re-implementation of it that could drift green.
+
+/** The half of a `GoldenStream` a replay reproduces. */
+export type ReplayedStream = Pick<GoldenStream, "states" | "outcome" | "summary" | "deltas">;
+
+/** The nearest step at or around `step` whose full state the corpus stores. */
+function nearestFullStep(stream: GoldenStream, step: number): number | null {
+  for (let d = 1; d < stream.states.length; d++) {
+    for (const i of [step - d, step + d]) {
+      const entry = stream.states[i];
+      if (entry !== undefined && !isStateDigest(entry)) return i;
+    }
+  }
+  return null;
+}
+
+/** Why a replayed state differs from what the corpus recorded for that step, or
+ *  null. An anchored step is compared byte for byte (config aside) exactly as
+ *  before; a digest-only step is compared by digest, and the message then has
+ *  to carry what the corpus no longer can — WHERE to get the detail. */
+export function stepMismatch(
+  stream: GoldenStream,
+  step: number,
+  actual: string,
+  configKey: string | null,
+): string | null {
+  const recorded = stream.states[step];
+  if (recorded === undefined) return `the corpus records no state for step ${step}`;
+  if (!isStateDigest(recorded)) return stateMismatch(actual, recorded, configKey);
+
+  const replayed = stateDigest(actual, configKey);
+  if (replayed === recorded) return null;
+  const nearest = nearestFullStep(stream, step);
+  return (
+    `digest moved: recorded ${recorded}, replayed ${replayed}. This step is stored as a ` +
+    `digest (#429 scope item 3), so the corpus cannot say which key moved — only the digest ` +
+    `was kept, so the previous state is a hash in git too. The full state IS recomputable ` +
+    `locally, because the ledger it folds from is still recorded: ` +
+    `recomputeStream(module, corpus.configs[${JSON.stringify(stream.config)}], stream.events, ` +
+    `stream.lineups).states[${step}]` +
+    (nearest === null ? "." : `. The nearest stored full state is step ${nearest}.`)
+  );
+}
+
+/** Everything the replay of one committed stream disagrees with the corpus
+ *  about, as messages. Empty means the stream replays.
+ *
+ *  `replayed` is injectable so a mutation can be applied to the RESULT of a
+ *  real fold — deterministic, cheap and CI-safe — instead of to a module's
+ *  source. See `golden-mutations.ts`. */
+export function verifyStream(
+  module: AnySportModule,
+  corpus: GoldenCorpus,
+  stream: GoldenStream,
+  replayed?: ReplayedStream,
+): string[] {
+  const raw = corpus.configs[stream.config];
+  const label = `${module.key} config=${stream.config} seed=${stream.seed}`;
+  const result = replayed ?? recomputeStream(module, raw, stream.events, stream.lineups);
+  const configKey = configStateKey(module, raw, stream.lineups);
+  const out: string[] = [];
+
+  if (result.states.length !== stream.states.length) {
+    out.push(
+      `${label}: the corpus records ${stream.states.length} states, the replay produced ` +
+        `${result.states.length}`,
+    );
+  }
+  for (let i = 0; i < stream.states.length; i++) {
+    const actual = result.states[i];
+    if (actual === undefined) continue; // the length mismatch above owns this
+    const hit = stepMismatch(stream, i, actual, configKey);
+    if (hit !== null) {
+      out.push(`${label} state after event ${i} (${stream.events[i]?.type ?? "?"}): ${hit}`);
+    }
+  }
+  // Never digested, always exact: standings are derived from these three, and
+  // they are a few hundred bytes per stream against the states' several
+  // thousand, so there is nothing to buy by weakening them.
+  if (result.outcome !== stream.outcome) {
+    out.push(`${label} outcome: recorded ${stream.outcome}, replayed ${result.outcome}`);
+  }
+  if (result.summary !== stream.summary) {
+    out.push(`${label} summary: recorded ${stream.summary}, replayed ${result.summary}`);
+  }
+  if (result.deltas !== stream.deltas) {
+    out.push(`${label} deltas: recorded ${stream.deltas}, replayed ${result.deltas}`);
+  }
+  return out;
 }
 
 // ------------------------------------------------- additive-only tripwire

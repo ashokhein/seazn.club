@@ -61,13 +61,13 @@ state, `summary.` = `module.summary(state)`.
 | Faceoffs won / lost | all | 2 persons | — | deferred | Same fidelity argument as shots on goal. |
 | Three periods; period-by-period score | all | entrant | `Cfg.periods{count:3,minutes:20}`, `Ev.PeriodAdvance.to`, `State.periods[]` | modelled | P1 → P2 → P3 → FT. |
 | Sudden-death overtime, first goal wins | iihf | entrant | `Cfg.overtime{kind:"sudden_death",minutes:5}` | modelled | Rule 84.1; the OT goal decides instantly with `method:"extra_time"`. |
-| Overtime is played 3-on-3 | iihf | entrant | `Cfg.overtime.skaters` | deferred | **Parsed and dropped.** `strengthOf` always bases on `Cfg.strength.base`, so a penalty in OT reads `5v4` instead of `4v3`. Fixing it properly is not a base swap either: under Rule 84.4 the NON-offending team gains a skater rather than the offender losing one — a different strength algorithm. It also cannot be done additively: two states in the frozen golden corpus are in OT with a penalty running, so the chip they recorded would change. Needs a product decision. |
+| Overtime is played 3-on-3 | iihf | entrant | `Cfg.overtime.skaters` + `PeriodPreset.overtimeSkaterAdvantage` → `summary.detail.strength` | extended | Rule 84.4. While overtime runs, strength is SIDE-RELATIVE: the penalised team is never reduced below `Cfg.overtime.skaters` and the NON-offending team gains a skater instead — `strength(X) = skaters + max(0, short(opponent) − short(X))`, in `overtimeStrengthChip`. One penalty reads `4v3`, two on one side `5v3`, two against one `4v3`, and two coincidental `3v3`. The `max(0, …)` is the whole rule: a flat "gain one per opponent penalty" gives `5v4` and `4v4` on the last two. A base swap is not merely incomplete, it is actively WRONG, and this is the part to read before reaching for it: ice hockey declares `Cfg.strength{base:5,min:3}` against `Cfg.overtime.skaters:3`, so swapping the overtime base to 3 makes base EQUAL min, `strengthOf` floors both sides at 3 for any number of penalties, `strengthChip` returns null, and the powerplay chip DISAPPEARS in overtime — strictly less than the `5v4` it printed before. Field hockey's `fih-detail` coverage config collides the same way (`skaters:7` against `min:7`), which is why this hangs off a PRESET flag, off by default: an FIH card reduces the offender and nobody gains, so `hockey` leaves it off and is byte-identical. A cfg that declares no `skaters` keeps the base/min rule — the flag cannot invent a complement, and only the sudden-death branch carries the field. Read-side only, gated on `inOvertime`, so nothing folds. The corpus CANNOT referee it in either direction: `Cfg.strength` has exactly ONE reader, `strengthChip` inside `summary`, and every recorded stream ends in phase `done`, so no recorded summary moves — `period.test.ts` "period kernel — overtime strength (NHL 84.4)" is the only evidence the behaviour exists. (For the record, since two earlier numbers here were invented: the corpus holds **3** states in OT with a penalty running, across streams 3, 4 and 13, measured over the unslimmed replay; an earlier revision of this row said two and the S1 decision log said 35.) |
 | Game-winning shots: 5 shooters, then sudden-death pairs | iihf | entrant | `Cfg.shootout{attempts:5,suddenDeath:true}` | modelled | Early-out when the lead exceeds the opponent's remaining entitlement. |
 | GWS shooting order and shooter | iihf | person | `Ev.PeriodShootoutAttempt.person` → `State.shootout.kicks[].person`, `playerStats.so_attempts` / `so_goals` | extended | The payload field existed; the fold recorded only `{side, scored}`, so the taker was unrecoverable from state. |
 | The goalkeeper facing each attempt | iihf | person | `Ev.PeriodShootoutAttempt.goalkeeper` → `State.shootout.kicks[].goalkeeper`, `playerStats.so_saves` | extended | Named on the GWS section of the sheet. |
 | When each shoot-out attempt was taken | iihf | — | `Ev.PeriodShootoutAttempt.at` → `State.asOf` | extended | W4a. Cards are already stampable in `SHOOTOUT` and the attempt is the only other event that phase is made of, so leaving it unstampable froze `State.asOf` at the last stamped card for the whole decider and a consumer reading "as of when is this true" got an instant from before the shoot-out began. Distinct from `meta.clockSeconds`, which is the 8-second limit on ONE attempt rather than a position in the match. |
 | A player in the box at the end of OT is ineligible to shoot | iihf | person | `Ev.PeriodShootoutAttempt.meta.ineligible` | modelled | Recorded, never enforced — the engine does not adjudicate. |
-| The GWS winner is credited one goal in the official score | iihf | entrant | `State.goals` (excludes it) | deferred | IIHF adds +1 to the winner's score; we show `0 — 0 (GWS 1–0)` and `gf`/`ga` exclude it. Changing it rewrites existing folds and every standings row. Product decision. |
+| The GWS winner is credited one goal in the official score | iihf | entrant | `PeriodPreset.shootoutWinnerGoal` → `officialScore` → `summary.headline`, `standingsDelta.metrics{gf,ga,gd}` | extended | IIHF Rule 87 / NHL Rule 84.4. A 2–2 match won on the shoot-out is RECORDED 3–2: the winner takes GF +1, the loser GA +1, and it flows into goal difference. Awarded in the OFFICIAL-SCORE layer — one `officialScore` derivation read by both `summary` and `sideMetrics`, so the headline and the standings ledger cannot fork — and NEVER in the fold. `State.goals`, `State.kindCounts` and `State.goalLog` are untouched and no goal event is minted, because the same rules give shoot-out attempts no player goals and no goals-against; a phantom goal with no scorer would corrupt the per-person attribution that player stats and the career rollup read. Gated on the DECIDED outcome, so a shoot-out still running credits nothing, and on `award`, so a forfeit score stays `Cfg.awardScore`. ICE HOCKEY ONLY: the preset flag is off by default and field hockey deliberately leaves it off — see the matching row in `hockey/DOMAIN.md` before "fixing" the inconsistency. The four icehockey golden streams that end on a shoot-out (3, 4, 12, 13) were re-baselined for it; `summary` and `deltas` moved, no state, no outcome and no event did. This was never a product deferral — no rulebook supported the old output. |
 | Points 3 / 2 / 1 / 0 | iihf | entrant | `Cfg.points{win:3,otWin:2,otLoss:1,loss:0}` → `standingsDelta` | modelled | Event Code §219; the OT/GWS split rides on `outcome.method`. |
 | H2H-first tie-break | all | entrant | `defaultTiebreakers` | modelled | Event Code §220; pinned by a hand-computed 3-team tie in `period.test.ts`. |
 | Draws stand where no decider is configured | recreational | entrant | `Cfg.overtime = null`, `Cfg.shootout = null`, `supportsDraws` | modelled | 2/1/0. |
@@ -80,7 +80,7 @@ state, `summary.` = `module.summary(state)`.
 
 | Where in the match an event happened (the position axis) | all | — | `SportModule.position(state)` -> `period` + `clock` segments, e.g. `P2 . 12:41` | extended | W4a T6b. A **read-side projection**, never a payload: a `MatchPosition` on every stamped event was considered this wave and rejected, because position is derivable from state the fold already computes and recording it would create a recorded value and a derived value of the same type that can silently disagree — the `DisciplineCard.entrantSide` shape. A wrong recorded value is in the hash-chained ledger forever; a wrong projection is one deploy away from fixed. Ordered segments rather than a display string, so W8 can drop a segment for a 375px scorebug, localise each `key` and order two positions in one match; `formatPosition` is the plain-text path. Nothing is materialised into state, so every frozen golden is byte-identical. Shares ONE function reference with hockey through the period kernel, asserted by identity. SHOOTOUT is evidenced from `State.shootout` and sorts last, so a fixture decided there reports `SHOOTOUT` rather than the third period. The clock is attached only when `asOf.period` matches the phase that resolved — an unstamped period change leaves the newest stamp naming the period before it, and printing 19:59 beside `P3` asserts something false about where play is. |
 
-**Row counts:** 22 modelled, 19 extended, 12 deferred (53 rows).
+**Row counts:** 22 modelled, 21 extended, 10 deferred (53 rows).
 Asserted against the table itself by `src/testkit/dossiers.test.ts`.
 
 ## Downstream owed
@@ -99,8 +99,14 @@ Asserted against the table itself by `src/testkit/dossiers.test.ts`.
    `so_saves`, `pen_served`.
 5. **No new standings metric was added.** A team-level penalty-shot conversion
    rate would have to appear in `standingsDelta.metrics` for every fixture or
-   for none; adding it unconditionally changes the frozen golden deltas. Needs
-   a decision on absent-key semantics in the standings fold first.
+   for none; adding it unconditionally changes the frozen golden deltas. The
+   absent-key blocker is now GONE: `competition/tiebreakers.ts` `metricOf` is
+   partial, and `compareMetric` ranks a row that never recorded the metric
+   BELOW every row that did instead of scoring it a genuine zero. A rate metric
+   can therefore be emitted for the fixtures that have one. What is still owed
+   is a consumer — no federation ranks on conversion rate (FIH is points → GD →
+   GF → head-to-head, IIHF points → head-to-head → GD → GF), so emitting it
+   today would move eleven corpora and every standings delta for display only.
 6. **`DisciplineCard` cannot see the new detail.** It carries
    `{personId, entrantSide, color, eventId}` only, so discipline accumulation
    still keys on colour + person: no "three of the same infraction" rule, and a
@@ -108,8 +114,11 @@ Asserted against the table itself by `src/testkit/dossiers.test.ts`.
    lives in `core/types.ts`, outside this wave's blast radius.
 7. **Shots on goal / saves / faceoffs** are the honest next fidelity step for
    this sport and would be a tier-4 conversation, not an extension of tier 3.
-8. **`Cfg.overtime.skaters` is dead config** until the 3-on-3 strength question
-   above is decided. Anything reading it today gets a number the fold ignores.
+8. **`Cfg.overtime.skaters` is LIVE** as of the row above — it is the overtime
+   complement `summary.detail.strength` is computed from, under
+   `PeriodPreset.overtimeSkaterAdvantage`. It still reaches no fold and no
+   state: the chip is a read-side projection, so a pad wanting an overtime
+   strength must read `summary`, not `State.suspensions.length`.
 
 9. **W4a (#425) — the time model.** New payload key `at` on the goal, the
    suspension start and end, the set piece and the period advance (`clockRef`

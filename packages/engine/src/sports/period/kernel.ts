@@ -39,6 +39,7 @@ import type { PlayerStatsModel } from "../../stats/stats.ts";
 import type { EntrantModel } from "../../sport/entrant-model.ts";
 import {
   escalationHints,
+  overtimeStrengthChip,
   pimOf,
   strengthChip,
   type ActiveSuspension,
@@ -356,6 +357,30 @@ export interface SetPieceTally {
   /** Attempts whose `outcome` was `scored` — the counter the FIH match record
    *  prints beside the awarded count. Named for the token that feeds it. */
   scored: number;
+  /**
+   * Attempts carrying ANY recorded `outcome`, scored or not.
+   *
+   * `PeriodSetPiece.outcome` is optional and stays optional — requiring it
+   * would be a schema narrowing, and every already-recorded event without one
+   * would stop parsing, bricking replay of the frozen corpora. But two
+   * counters cannot express three states, so before this an attempt the scorer
+   * never resolved folded to exactly the numbers a recorded MISS folds to, and
+   * any conversion rate computed as `scored / awarded` was dragged toward zero
+   * by the missing data, silently. That is the #429 silent-0 defect one level
+   * below where it was fixed: `metricOf` learned to tell "no data" from a
+   * recorded zero at the RANKING layer, while the tally underneath was still
+   * collapsing the two.
+   *
+   * So: a conversion rate is `scored / resolved`, and `awarded − resolved` is
+   * the unknown, as a number a consumer can put on screen. Keyed on the
+   * PRESENCE of an outcome rather than on a token list, so a future member of
+   * `AttemptOutcome` resolves without an edit here.
+   *
+   * Three counters and not five (one per token) deliberately: this is the
+   * minimum that makes the unknown visible, and a per-token breakdown is
+   * additive later if a consumer ever wants one.
+   */
+  resolved: number;
 }
 
 export interface PeriodState {
@@ -1143,10 +1168,12 @@ function applySetPiece(
     invalid(`set piece kind "${payload.kind}" is not valid for this sport`, { kind: payload.kind });
   }
   const base = state.setPieces ?? { home: {}, away: {} };
-  const previous = base[side][payload.kind] ?? { awarded: 0, scored: 0 };
+  const previous = base[side][payload.kind] ?? { awarded: 0, scored: 0, resolved: 0 };
   const tally: SetPieceTally = {
     awarded: previous.awarded + 1,
     scored: previous.scored + (payload.outcome === "scored" ? 1 : 0),
+    // The PRESENCE of an outcome, not a token list — see `SetPieceTally`.
+    resolved: previous.resolved + (payload.outcome === undefined ? 0 : 1),
   };
   return {
     ...state,
@@ -1224,6 +1251,31 @@ export interface PeriodPreset {
   defaultTiebreakers: TiebreakerKey[];
   officialLabel: { scorer: string };
   shootoutLabel: string; // 'GWS' (ice) | 'SO' (FIH)
+  // IIHF Rule 87 / NHL Rule 84.4 — the shoot-out winner is credited ONE extra
+  // goal in the OFFICIAL SCORE: 2-2 won on the shoot-out is recorded 3-2, so
+  // the winner's GF and the loser's GA carry it and it reaches goal difference.
+  //
+  // A SPORT flag, and omitted means off, because this is not a shared rule.
+  // FIH records the identical match as a DRAW plus a bonus point — which is
+  // exactly what `hockey`'s `fih-shootout` variant encodes (`shootoutWin: 2`
+  // = draw 1 + 1) — and FIFA records 4-4 with the shoot-out beside it, which
+  // is what football's corpus already holds. Awarding it in the kernel would
+  // put a shoot-out win into FIH goal difference, where the same competition
+  // has already paid for it in points.
+  shootoutWinnerGoal?: boolean;
+  // NHL Rule 84.4 / IIHF Rule 84 — while overtime is running, strength is
+  // SIDE-RELATIVE: the penalised team is never reduced below `cfg.overtime
+  // .skaters` and the NON-offending team gains a skater instead
+  // (`overtimeStrengthChip`). Outside overtime nothing changes, and a cfg that
+  // declares no `skaters` keeps the base/min rule — the flag cannot invent a
+  // complement.
+  //
+  // A SPORT flag, and omitted means off, for the same reason as above: an FIH
+  // card REDUCES the offending side and nobody gains, so applying this in the
+  // shared kernel would hand field hockey a rule it does not have. `hockey`'s
+  // own `fih-detail` config declares `overtime.skaters: 7`, so the field being
+  // present is not evidence the rule applies.
+  overtimeSkaterAdvantage?: boolean;
   timelineEntitlement: string; // FeatureKey for tier-2/3 attributed scoring
   playerStats?: PlayerStatsModel;
   entrantModel?: EntrantModel;
@@ -1299,10 +1351,83 @@ export function makePeriodModule(
           },
         };
 
+  /**
+   * The OFFICIAL score, which is not always `state.goals`.
+   *
+   * Where the sport credits the shoot-out winner a goal
+   * (`preset.shootoutWinnerGoal`, IIHF Rule 87 / NHL Rule 84.4), the recorded
+   * result of a 2-2 match won on the shoot-out is 3-2. It is DERIVED here and
+   * never folded, for the reason the same rules give: a shoot-out attempt
+   * produces no player goal and no goal against, only the deciding kick. So
+   * `state.goals`, `kindCounts`, `goalLog` and every per-person stat stay the
+   * goals actually scored in play, and no phantom scorer is minted — S8's
+   * player stats and S9's career rollup read those, and a goal with no scorer
+   * would corrupt both.
+   *
+   * Gated on the DECIDED outcome, so a shoot-out still running credits nothing.
+   * `award` is excluded: a forfeit score is `cfg.awardScore`, not a match score.
+   */
+  const officialScore = (state: PeriodState): { home: number; away: number } => {
+    const { home, away } = state.goals;
+    const outcome = state.outcome;
+    if (
+      preset.shootoutWinnerGoal !== true ||
+      outcome === null ||
+      outcome === undefined ||
+      outcome.kind !== "win" ||
+      outcome.method !== "shootout"
+    ) {
+      return { home, away };
+    }
+    return sideOf(state, outcome.winner) === "home"
+      ? { home: home + 1, away }
+      : { home, away: away + 1 };
+  };
+
+  /**
+   * The strength chip, which follows a different rule while overtime runs.
+   *
+   * NHL Rule 84.4 / IIHF Rule 84: in 3-on-3 overtime the penalised team is
+   * never reduced below `cfg.overtime.skaters` — the NON-offending team gains a
+   * skater. Side-relative, so coincidental penalties cancel to 3-on-3 rather
+   * than 4-on-4. `overtimeStrengthChip` holds the arithmetic and the reason a
+   * base swap is not merely incomplete but destructive.
+   *
+   * Three gates, all of which must hold, and each closes a different hole:
+   *
+   * 1. `preset.overtimeSkaterAdvantage` — the SPORT opts in. FIH cards reduce
+   *    the offender and nobody gains.
+   * 2. `inOvertime(state)` — regulation, the shoot-out and `done` are untouched,
+   *    so every recorded stream (all of which end `done`) is unmoved.
+   * 3. `cfg.overtime.skaters` is DECLARED. Only the sudden-death branch carries
+   *    it, and it has no default: without a number there is nothing to be
+   *    side-relative about, so the base/min rule stands. The flag cannot invent
+   *    a complement, and cfg is read live at fold time — deriving one would let
+   *    a later config edit change what an already-scored fixture displays.
+   *
+   * Read-side only: nothing here reaches the fold, so no state moves and no
+   * corpus can witness it in either direction (`strength` has exactly this one
+   * production reader).
+   */
+  const strengthChipOf = (state: PeriodState): string | null => {
+    const ot = state.cfg.overtime;
+    if (
+      preset.overtimeSkaterAdvantage === true &&
+      inOvertime(state) &&
+      ot !== null &&
+      ot.kind === "sudden_death" &&
+      ot.skaters !== undefined
+    ) {
+      return overtimeStrengthChip(state.suspensions, ot.skaters, state.cfg.strength.base);
+    }
+    return strengthChip(state.suspensions, state.cfg.strength.base, state.cfg.strength.min);
+  };
+
   const sideMetrics = (state: PeriodState, side: Side, zero: boolean): Record<string, number> => {
     const opp = opponent(side);
-    const gf = zero ? 0 : state.goals[side];
-    const ga = zero ? 0 : state.goals[opp];
+    const score = officialScore(state);
+    const gf = zero ? 0 : score[side];
+    const ga = zero ? 0 : score[opp];
     const out: Record<string, number> = { gf, ga, gd: gf - ga };
     if (state.cfg.suspensions !== null) {
       const classes = state.cfg.suspensions.classes;
@@ -1323,6 +1448,38 @@ export function makePeriodModule(
     for (const kind of state.cfg.goalKinds) {
       if (kind === "fg" || kind === "og") continue;
       out[`goals_${kind}`] = zero ? 0 : (state.kindCounts[side][kind] ?? 0);
+    }
+    // Set-piece conversion, DISPLAY ONLY (FIH penalty corner / stroke, IIHF
+    // penalty shot). Three INTEGER counters per kind and never a rate:
+    // `compareRatio` already cross-multiplies two ledger counters and owns the
+    // 0/0 "no data" branch, so a float here would fix the precision and the
+    // rounding for every consumer and throw away the no-attempts case that
+    // #429 taught the ranking layer to keep.
+    //
+    // GATED on `setPieces` being present at all, which is the cost control: a
+    // fixture that recorded no set piece emits none of these keys, so the seven
+    // corpus streams that DID record one are the only ones this moves. The
+    // omission is honest rather than a hidden zero — since #429 `metricOf` is
+    // partial and ranks a row that never recorded a key BELOW every row that
+    // did, instead of scoring it a genuine zero.
+    //
+    // NOT zeroed on a forfeit, unlike the goals. `zero` exists so an awarded
+    // fixture reports `cfg.awardScore` instead of the goals played; a set piece
+    // awarded on the pitch stays awarded, following `pim` and `cards_*` —
+    // records of what happened, not score.
+    //
+    // Iterates the DECLARED kinds (`cfg.setPieceKinds`), exactly as the
+    // `goals_<kind>` block above iterates `cfg.goalKinds`, so the emitted key
+    // set is a property of the competition's config rather than of which kinds
+    // this particular fixture happened to see.
+    if (state.setPieces !== undefined) {
+      const tallies = state.setPieces[side];
+      for (const kind of state.cfg.setPieceKinds) {
+        const tally = tallies[kind];
+        out[`sp_${kind}_awarded`] = tally?.awarded ?? 0;
+        out[`sp_${kind}_scored`] = tally?.scored ?? 0;
+        out[`sp_${kind}_resolved`] = tally?.resolved ?? 0;
+      }
     }
     return out;
   };
@@ -1469,7 +1626,9 @@ export function makePeriodModule(
     // §9.5 — defined at every prefix. Headline grammar per v6/00 §5:
     // `2 — 1 · P3`, `3 — 2 (OT)`, `2 — 1 (GWS 2–1)`, `1 — 1 · Q4`.
     summary(state): ScoreSummary {
-      const { home, away } = state.goals;
+      // The headline is the official score, so it and the standings ledger
+      // cannot fork — one derivation, read by both (`officialScore`).
+      const { home, away } = officialScore(state);
       const tally = state.shootout === null ? null : shootoutTally(state.shootout.kicks);
       const soSuffix =
         tally === null ? "" : ` (${preset.shootoutLabel} ${tally.home}–${tally.away})`;
@@ -1478,7 +1637,7 @@ export function makePeriodModule(
           ? " (OT)"
           : "";
       const phaseSuffix = isPlayPhase(state) ? ` · ${state.phase}` : "";
-      const chip = strengthChip(state.suspensions, state.cfg.strength.base, state.cfg.strength.min);
+      const chip = strengthChipOf(state);
       return {
         headline: `${home} — ${away}${soSuffix}${otSuffix}${phaseSuffix}`,
         perSide: [

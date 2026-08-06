@@ -63,7 +63,7 @@
 | `apps/web/src/server/api-v1/schemas.ts:856` | `AutoScheduleRequest.mode`; `AutoScheduleResult.metrics` / `.solver`. |
 | `apps/web/src/server/usecases/schedule.ts:~660-740` | `autoSchedule` becomes a three-way dispatch. |
 | `apps/web/src/components/v2/schedule-board.tsx` | Result strip + Polish button. |
-| `apps/web/messages/{en,es,fr,de}.json` (or the repo's 4 dictionaries) | New keys. |
+| `apps/web/src/dictionaries/{en,es,fr,nl}/ui.json` | New keys. |
 | `scripts/smoke.ts` | Solver smoke step. |
 | `apps/web/src/server/usecases/__tests__/schedule.test.ts` | Dispatch + reflow behaviour change. |
 | `openapi/v1.json`, `openapi/v1.public.json` | Regenerated. |
@@ -83,25 +83,25 @@
 
 ```bash
 cd /Users/ashokhein/github/seazn.club
-git worktree add ../seazn-z3-build -b feat/z3-auto-schedule main
-cd ../seazn-z3-build && pwd
+git worktree add ../wt-z3-build -b feat/z3-auto-schedule main
+cd ../wt-z3-build && pwd
 ```
 
 - [ ] **Step 2: Check the three worktree traps before trusting any test result**
 
 ```bash
-cd ../seazn-z3-build && \
+cd ../wt-z3-build && \
   readlink -f node_modules/@seazn/engine && \
   ls -la .claude/agent-memory 2>&1 | head -1 && \
   ls -la .env.local 2>&1 | head -1
 ```
 
-Expected: the `readlink` path is **inside `seazn-z3-build`**, not `seazn.club`. If it resolves to main's engine, the build compiles the wrong branch while every gate stays green — run a real install in the worktree. **The installer is pnpm** (`pnpm install --frozen-lockfile`, matching `.github/workflows/ci.yml:63`); scripts are still invoked as `npm run <x> --workspace <ws>`, which is why every command below says `npm`. If `.claude/agent-memory` is missing, symlink it. If `.env.local` is missing, ~1772 DB tests will skip with `total` unchanged and only `pending` moving — copy it from main before believing any count.
+Expected: the `readlink` path is **inside `wt-z3-build`**, not `seazn.club`. If it resolves to main's engine, the build compiles the wrong branch while every gate stays green — run a real install in the worktree. **The installer is pnpm** (`pnpm install --frozen-lockfile`, matching `.github/workflows/ci.yml:63`); scripts are still invoked as `npm run <x> --workspace <ws>`, which is why every command below says `npm`. If `.claude/agent-memory` is missing, symlink it. If `.env.local` is missing, ~1772 DB tests will skip with `total` unchanged and only `pending` moving — copy it from main before believing any count.
 
 - [ ] **Step 3: Record the baseline**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/base-engine.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/base-engine.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -113,7 +113,7 @@ cd ../seazn-z3-build && npm test --workspace packages/engine -- \
 
 Spec: docs/superpowers/specs/2026-08-05-z3-auto-schedule-design.md
 Plan: docs/superpowers/plans/2026-08-05-z3-auto-schedule.md
-Worktree: ../seazn-z3-build   Branch: feat/z3-auto-schedule
+Worktree: ../wt-z3-build   Branch: feat/z3-auto-schedule
 
 ## Baseline (Task 0)
 engine: <passed>/<total>, <failed> failed
@@ -237,7 +237,7 @@ describe("isStrictlyBetter", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build-objectives.test.ts --reporter=json --outputFile=/tmp/t1.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t1.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -348,7 +348,7 @@ export * from "./build-objectives.ts";
 - [ ] **Step 5: Run the test and the full engine suite**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t1.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t1.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -476,11 +476,27 @@ describe("buildGrid", () => {
     expect(g.byCourt.get("C1")!.map((i) => g.slots[i]!.startAt)).toContain(pinnedAt);
   });
 
+  it("keeps a start whose match runs past midnight", () => {
+    // REGRESSION. Bounding the occupancy by `bucket.to` drops this start from
+    // BOTH days: excluded by day 0's bound, and unreachable from day 1 whose
+    // stepping begins at midnight. Needs step < duration to appear at all,
+    // which is any `gapMinutes > 0` — the ordinary case, no DST involved.
+    const from = Date.UTC(2026, 7, 8, 0, 0);
+    const g = buildGrid({
+      config: cfg({ tz: "UTC", window: { from, to: from + 3 * DAY }, matchMinutes: 90, gapMinutes: 30 }),
+    });
+    expect(g.byCourt.get("C1")!.map((i) => g.slots[i]!.startAt)).toContain(from + 1380 * MIN); // 23:00 -> 00:30
+  });
+
   it("anchors each day at local midnight so a DST day does not drift", () => {
-    // Europe/London springs forward 29 Mar 2026 at 01:00 local.
+    // Europe/London springs forward 29 Mar 2026 at 01:00 local. The step must
+    // NOT divide the local-midnight offsets, or the anchored and UTC-stepped
+    // lattices are the same instants and the assertion proves nothing: those
+    // offsets are 0/1440/2820/4260 minutes, all divisible by 60 and only the
+    // first two by 45. A 60-minute step here is VACUOUS — measured, not feared.
     const from = Date.UTC(2026, 2, 28, 0, 0);
     const g = buildGrid({
-      config: cfg({ tz: "Europe/London", window: { from, to: from + 3 * DAY }, matchMinutes: 60, gapMinutes: 60 }),
+      config: cfg({ tz: "Europe/London", window: { from, to: from + 3 * DAY }, matchMinutes: 45, gapMinutes: 45 }),
     });
     const local = (ms: number) =>
       new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
@@ -509,7 +525,7 @@ describe("buildGrid", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build-grid.test.ts --reporter=json --outputFile=/tmp/t2.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t2.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -624,8 +640,17 @@ export function buildGrid(input: BuildGridInput): BuildGrid {
   outer: for (const court of courts) {
     for (const bucket of buckets) {
       const lo = Math.max(bucket.from, universe.from);
-      const hi = Math.min(bucket.to, universe.to);
-      for (let start = lo; start + durMs <= hi; start += stepMs) {
+      // Step ANCHORED to the bucket — that is what keeps a start on a whole
+      // local hour across a DST transition. But bound the OCCUPANCY by the
+      // universe, never by the bucket: a match that starts at 23:00 and ends
+      // at 00:30 is legal, and bounding it by `bucket.to` drops it from BOTH
+      // days at once — this day excludes it, and the next day's own `lo`
+      // begins at midnight so it is never reachable there either. Fires on any
+      // `gapMinutes > 0` with a multi-day window. `repair-domain.ts` gets this
+      // right: its position domain is continuous over the whole universe, and
+      // day buckets restrict day-SCOPED RULES, never raw start admissibility.
+      const stopStepping = Math.min(bucket.to, universe.to);
+      for (let start = lo; start < stopStepping && start + durMs <= universe.to; start += stepMs) {
         if (!admits(start)) continue;
         if (slots.length >= MAX_SLOTS) { overCap = true; break outer; }
         slots.push({ court, startAt: start });
@@ -689,7 +714,7 @@ export * from "./build-grid.ts";
 - [ ] **Step 5: Run the test and the full engine suite**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t2.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t2.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -818,7 +843,7 @@ async function assertParity(
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build-encode-parity.test.ts --reporter=json --outputFile=/tmp/t3.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t3.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -904,9 +929,13 @@ export function encodeBuild(input: EncodeInput): EncodedModel {
   // 1. A fixture takes at most one slot, and `placed[i]` says whether it took
   //    one. Encoded as AtMost + an equivalence rather than exactly-one, because
   //    T0 needs "unplaced" to be a legal state it can then minimise.
+  // NOTE the array argument. `AtMost`/`AtLeast`/`PbLe` take a NON-EMPTY TUPLE,
+  // not varargs — `AtMost(...lits, 1)` is a runtime TypeError, and `repair.ts`
+  // spells it `Z3.AtMost([lits[0]!, ...lits.slice(1)], k)` for that reason.
   fixtures.forEach((_, i) => {
-    solver.add(Z3.AtMost(...place[i]!, 1));
-    solver.add(placed[i]!.eq(Z3.Or(...place[i]!)));
+    const lits = place[i]!;
+    if (lits.length > 0) solver.add(Z3.AtMost([lits[0]!, ...lits.slice(1)], 1));
+    solver.add(placed[i]!.eq(Z3.Or(...lits)));
   });
 
   // 2. A slot holds at most one fixture. This is the court-clash rule, and the
@@ -1039,7 +1068,7 @@ export * from "./build-encode.ts";
 ```
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build-encode-parity.test.ts --reporter=json --outputFile=/tmp/t3.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t3.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1049,7 +1078,7 @@ Expected: `2 2 0`.
 - [ ] **Step 5: Run the whole engine suite and commit**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t3all.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t3all.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 git add packages/engine/src/scheduling/build-encode.ts \
@@ -1057,6 +1086,69 @@ git add packages/engine/src/scheduling/build-encode.ts \
         packages/engine/src/scheduling/index.ts .claude/z3-scheduling-state.md
 git commit -m "feat(engine): boolean slot-assignment encoding, verified against the verifier"
 ```
+
+---
+
+### Task 3b: typed instruction rules in the encoder
+
+**Added mid-flight, on the owner's ruling (2026-08-05), after Task 3 reported the gap.**
+
+**Files:**
+- Modify: `packages/engine/src/scheduling/build-encode.ts`
+- Test: `packages/engine/src/scheduling/build-encode-rules.test.ts` (create)
+
+**Why this is not optional.** `slotFixtures` has placed around typed rules since
+the convergence programme (#463 — see `calendar-day-cap-placement.test.ts` and
+`calendar-day-targets-placement.test.ts`), and `repair.ts:803` (`assertDayCap`)
+encodes `max_fixtures_per_day`. Without this task BUILD is the **only** path that
+ignores rules the greedy it replaces and the repair solver beside it both honour:
+`validateInstructionRules` would report breaches on a board the solver had just
+called lexicographically optimal, and re-running auto could not fix it. That is
+the precise symptom #463 existed to close.
+
+**Why it is cheap here.** In this encoding slot → day and slot → wall-clock are
+known *statically*, which the arithmetic encoding cannot say. So:
+
+- `not_before` / `not_after` / `fixture_on_date` / `fixture_on_weekday` are
+  **per-slot unary filters** — exactly the shape the existing `startWindowFor`
+  filter already uses: if the slot's instant fails the rule for that fixture,
+  assert `Z3.Not(place[i][s])`. A few lines each.
+- `max_fixtures_per_day` is **one `AtMost` per (rule, calendar day)** over the
+  slot literals falling in that day, across the fixtures the rule's scope covers.
+  No auxiliary day literals and no `Iff` — `repair.ts` needs those only because
+  its starts are integers rather than slots.
+
+**Interfaces:** no new exports. `encodeBuild` gains the assertions; its signature
+is unchanged.
+
+**Requirements the tests must pin:**
+
+- Rules come from `effectiveHard(config)`, never from `config.constraints.hard`
+  directly — that merged stream is the verifier's own, and a second reading of it
+  is the fork this file exists to avoid.
+- Scope resolution is `scopeCoversFixture(rule.scope, ruleFixture, assignment)`.
+  Do not reimplement the switch.
+- The day unit is the **calendar day in `config.tz`**, via `dayKeyInTz` /
+  `calendarDaysCovering`. Not a session, not a slice of a day — `repair.ts:810-830`
+  documents at length how counting `dayBuckets` instead admitted one fixture per
+  *session* and let starts fall in an uncounted gap.
+- The cap must **seed from the immovable rows** the rule's scope covers on that
+  day (`existing` rows named by `ruleFixtures`), exactly as `assertDayCap` does —
+  and must count only KNOWN FIXTURES, since an outside booking or a closed court
+  is not a fixture and counting one invents a breach out of a blackout.
+- With `config.tz` absent, every day-shaped rule is **skipped**, matching the
+  verifier. Do not bucket in UTC.
+
+**Acceptance:** a board that breaches each rule type is rejected by the model,
+one that satisfies it is accepted, and — the real gate — `validateInstructionRules`
+returns empty for every board the model accepts. Mutation-prove each: break the
+rule's assertion, confirm its test alone goes red.
+
+- [ ] **Step 1: Write the failing test file**, one describe per rule type, each asserting both directions (breaching board rejected, satisfying board accepted) plus the `validateInstructionRules`-agrees check.
+- [ ] **Step 2: Run it, confirm it fails** for the right reason — the model currently accepts breaching boards, so the "rejected" half fails while the "accepted" half passes.
+- [ ] **Step 3: Implement the per-slot filters**, then the day cap.
+- [ ] **Step 4: Mutation-prove each assertion**, and re-run the Task 3 parity suite — it must still pass, since these rules only ever *remove* legal placements.
+- [ ] **Step 5: Run the engine suite, typecheck, lint, commit.**
 
 ---
 
@@ -1165,7 +1257,7 @@ describe("buildSchedule", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build.test.ts --reporter=json --outputFile=/tmp/t4.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t4.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1302,10 +1394,23 @@ async function solveBuild(input: BuildInput): Promise<BuildResult> {
   // 5. T0 — maximise the number placed. This is what turns greedy's `no_slot`
   //    GUESS into a proof: UNSAT at `placed >= n` is the proof that n is out of
   //    reach, and SAT is a board that reaches it.
+  //
+  //    MEASURED in Task 3: `AtLeast(placed, k)` returns sat in 0.4-2.2 s well
+  //    away from the optimum, but goes `unknown` at a 20 s bound as k
+  //    approaches it. So `unknown` is the EXPECTED terminal state of this walk,
+  //    not an error — it means "no proof either way inside the budget", and the
+  //    incumbent stands. Never report `unknown` as `infeasible`: infeasible is a
+  //    proof, and this is the absence of one.
+  //
+  //    Also measured: a `locked` fixture whose pinned slot is illegal makes the
+  //    WHOLE model UNSAT rather than leaving that one card unplaced. Task 4's
+  //    `infeasible` branch must therefore not be read as "the board is
+  //    impossible" without checking the locked set first.
   for (let target = fixtures.length; target > incumbentMetrics.placed; target--) {
     if (elapsed() >= wallMs) { budgetExpired = true; break; }
     solver.push();
-    solver.add(Z3.AtLeast(...model.placed, target));
+    // Array, not varargs — see the note in Task 3's encoder.
+    solver.add(Z3.AtLeast([model.placed[0]!, ...model.placed.slice(1)], target));
     const verdict = await solver.check();
     if (verdict === "sat") {
       const picked = model.slotOf(solver.model());
@@ -1355,7 +1460,7 @@ export * from "./build.ts";
 ```
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t4.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t4.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1475,7 +1580,7 @@ describe("buildSchedule determinism", () => {
 - [ ] **Step 2: Run both and confirm they fail**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build.test.ts src/scheduling/build-determinism.test.ts \
   --reporter=json --outputFile=/tmp/t5.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t5.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
@@ -1556,7 +1661,7 @@ term builders' signatures.
 - [ ] **Step 4: Run both suites**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t5.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t5.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1665,7 +1770,7 @@ describe("improveByWindows", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build-lns.test.ts --reporter=json --outputFile=/tmp/t6.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t6.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1799,7 +1904,7 @@ Second, after the tier loop, when `tiersCompleted < 2` and budget remains:
 - [ ] **Step 5: Run the whole engine suite and commit**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t6.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t6.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 git add packages/engine/src/scheduling/build-lns.ts \
@@ -1867,7 +1972,7 @@ describe("buildSchedule — polish", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build-polish.test.ts --reporter=json --outputFile=/tmp/t7.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t7.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1893,7 +1998,7 @@ and use `status` in the returned object in place of the inline ternary.
 - [ ] **Step 4: Run the suite and commit**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t7.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t7.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 git add packages/engine/src/scheduling/build.ts \
@@ -1947,7 +2052,7 @@ describe("AutoScheduleRequest.mode", () => {
 - [ ] **Step 2: Run it and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace apps/web -- \
+cd ../wt-z3-build && npm test --workspace apps/web -- \
   src/server/usecases/__tests__/schedule.test.ts --reporter=json --outputFile=/tmp/t8.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t8.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -1959,6 +2064,13 @@ Expected: five failures — `mode` is `undefined`.
 Replace lines 856-866 of `apps/web/src/server/api-v1/schemas.ts`:
 
 ```ts
+// NOTE: `z.preprocess`, NOT `.transform()`. `openapi.ts:288` converts every
+// registered schema with `z.toJSONSchema(…, { io: "output" })`, and a trailing
+// transform IS the output node — so `openapi:gen` dies with "Transforms cannot
+// be represented in JSON Schema". `schemas.ts` already carries that warning on
+// `AiApplyMeta`. Preprocess puts the function on the INPUT side, where the
+// generator never looks. Measured, not guessed: the transform form was tried
+// and the generator failed.
 export const AutoScheduleRequest = z
   .object({
     /** true (default) = re-flow unlocked fixtures only, locked ones are fixed
@@ -2003,7 +2115,7 @@ export const AutoScheduleResult = z.object({
 - [ ] **Step 4: Regenerate OpenAPI and prove no drift**
 
 ```bash
-cd ../seazn-z3-build && npm run openapi:gen && npm run i18n:gen-keys && git status --porcelain
+cd ../wt-z3-build && npm run openapi:gen && npm run i18n:gen-keys && git status --porcelain
 ```
 
 Expected: the two `openapi/*.json` files show as modified; nothing else unexpected. Commit them in this task — a later commit that regenerates them is the drift the CI gate exists to catch.
@@ -2011,7 +2123,7 @@ Expected: the two `openapi/*.json` files show as modified; nothing else unexpect
 - [ ] **Step 5: Run the web suite and commit**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace apps/web -- \
+cd ../wt-z3-build && npm test --workspace apps/web -- \
   --reporter=json --outputFile=/tmp/t8.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t8.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 git add apps/web/src/server/api-v1/schemas.ts openapi/v1.json openapi/v1.public.json \
@@ -2030,6 +2142,32 @@ git commit -m "feat(api): auto-schedule mode, board metrics and solver telemetry
 **Interfaces:**
 - Consumes: `buildSchedule` (Task 4/5/7), `repairSchedule` (existing), `AutoScheduleRequest.mode` (Task 8).
 - Produces: `autoSchedule(auth, stageId, body)` returning `{ assignments, conflicts, metrics, solver }`.
+
+**AMENDED after the Task 5 and Task 11 reviews — these are acceptance criteria,
+not suggestions:**
+
+1. **Task 8 shipped the SCHEMA ONLY.** `metrics`/`solver` are declared in
+   `apps/web/src/server/api-v1/schemas.ts` but `AutoScheduleOut` at
+   `apps/web/src/server/usecases/schedule.ts:648` still returns
+   `{ assignments, conflicts }`. Populating them is THIS task's work. Task 11's
+   result strip and Task 15's e2e are both blind until it lands — the strip
+   currently renders hidden by design when the fields are absent.
+2. **Add `tiers_total: number` to `ScheduleSolverInfo`** and populate it from the
+   engine's tier-ladder length. Rationale: Task 11 had to hardcode
+   `IMPROVEMENT_TARGETS = 4` in the component because the wire carries
+   `tiers_completed` with no denominator. Sending the denominator removes the
+   drift risk at the root instead of bolting a tripwire test onto a constant.
+3. **Add `contradictory_pins?: string[]` to `ScheduleSolverInfo`**, mapped from
+   `BuildResult.contradictoryPins` (Task 5: sorted fixture ids, present only on a
+   probe-proved `infeasible` whose proof is about the pinned set). Task 11's strip
+   currently derives the pin count as `total - placed`, which is a stand-in that
+   misreports whenever the unplaced fixtures are not all pinned.
+4. **Optimality is `tiersCompleted === 4`, NOT `!budgetExpired`** (Task 5 contract
+   correction). A term or metric drift exits a tier without ever setting
+   `budgetExpired`. Do not use the flag to decide whether the board is optimal.
+5. Both fields are additive and optional-on-the-wire, so **re-run `openapi:gen`
+   and `i18n:gen-keys`** and confirm `git status --porcelain` is empty before
+   committing. Both gates are CI-only.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2067,7 +2205,7 @@ describe("autoSchedule dispatch", () => {
 - [ ] **Step 2: Run and confirm they fail**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace apps/web -- \
+cd ../wt-z3-build && npm test --workspace apps/web -- \
   src/server/usecases/__tests__/schedule.test.ts --reporter=json --outputFile=/tmp/t9.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t9.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -2148,7 +2286,7 @@ function frozenIds(all: readonly FixtureRow[], scopes: ScopeRows): string[] { /*
 - [ ] **Step 4: Run the web suite and commit**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace apps/web -- \
+cd ../wt-z3-build && npm test --workspace apps/web -- \
   --reporter=json --outputFile=/tmp/t9.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t9.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 npm run openapi:gen && npm run i18n:gen-keys && git status --porcelain
@@ -2189,7 +2327,7 @@ describe("buildSchedule — queue cap", () => {
 - [ ] **Step 2: Run and confirm it fails**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   src/scheduling/build.test.ts --reporter=json --outputFile=/tmp/t10.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t10.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -2217,7 +2355,7 @@ export function buildSchedule(input: BuildInput): Promise<BuildResult> {
 - [ ] **Step 4: Run and commit**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t10.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t10.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 git add packages/engine/src/scheduling/build.ts packages/engine/src/scheduling/build.test.ts \
@@ -2251,7 +2389,7 @@ Assert the strip renders each metric, and that `budget_expired: true` renders th
 - [ ] **Step 3: Run it, confirm it fails, build the strip, run it again**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace apps/web -- \
+cd ../wt-z3-build && npm test --workspace apps/web -- \
   src/components/v2 --reporter=json --outputFile=/tmp/t11.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t11.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -2263,7 +2401,7 @@ Both must show no horizontal page scroll. Wide content scrolls inside its own co
 - [ ] **Step 5: Gates and commit**
 
 ```bash
-cd ../seazn-z3-build && npm run i18n:gen-keys && npm run openapi:gen && git status --porcelain
+cd ../wt-z3-build && npm run i18n:gen-keys && npm run openapi:gen && git status --porcelain
 git commit -am "feat(board): result strip showing what the solver achieved"
 ```
 
@@ -2279,6 +2417,34 @@ git commit -am "feat(board): result strip showing what the solver achieved"
 - Consumes: `POST /stages/{id}/schedule/auto` with `mode: "polish"`.
 - Produces: `data-testid="schedule-polish"`.
 
+**AMENDED after the Task 11 review — fold these into this task, they are the
+two Important findings re-homed here because they could not be fixed inside
+Task 11 (the fields did not exist yet):**
+
+1. **Delete `IMPROVEMENT_TARGETS = 4`** from
+   `apps/web/src/components/v2/board/result-strip.tsx:399` and read the
+   denominator from `solver.tiers_total`, which Task 9 now sends. Ship a test
+   proving the strip renders "N of M" from the wire, not from a constant.
+2. **Use `solver.contradictory_pins.length`** for the `infeasible` pin count
+   (`result-strip.tsx:453,467`), via the `pinnedConflictCount` prop Task 11
+   already reserved. Keep `total - placed` only as the fallback when the field is
+   absent. Regression test: an `infeasible` where the unplaced set is STRICTLY
+   LARGER than the pinned set — the derived number is wrong there and the wired
+   one is right. That case is the whole point of the fix; a test where the two
+   numbers agree proves nothing.
+3. **Minor, from the same review:** `result-strip.tsx:460` sets
+   `flagged = partial || status === "infeasible"`, which paints amber even when
+   `infeasible` arrives with `placed === total` (nothing actually dropped). The
+   existing test at `result-strip.test.tsx:335` asserts only the headline text,
+   so the tone is unverified in both directions. Decide the tone deliberately and
+   assert `data-tone`.
+4. **Minor, deferred here from Task 11:** `apps/web/src/components/v2/stages-panel.tsx:113-121`
+   holds a SECOND call site for `POST /stages/{id}/schedule/auto`
+   ("Auto-schedule remaining"). Once Task 9 populates the telemetry, that entry
+   point receives it and drops it on the floor, so organisers get solver feedback
+   on the Board and none there. Wire the same strip, or state in the report why
+   not.
+
 - [ ] **Step 1: Add `schedule.polish.action` / `.running` / `.alreadyOptimal` / `.improved` to all four dictionaries**
 
 - [ ] **Step 2: Write the failing component test**
@@ -2292,7 +2458,7 @@ Touch target ≥ 44 px; the button sits beside the existing auto-schedule action
 - [ ] **Step 4: Grep the new text across e2e before committing**
 
 ```bash
-cd ../seazn-z3-build && git grep -an "Auto-schedule\|Polish" -- apps/web/e2e | head -20
+cd ../wt-z3-build && git grep -an "Auto-schedule\|Polish" -- apps/web/e2e | head -20
 ```
 
 UI text changes break e2e specs in this repo; any spec asserting on the old label is updated in this task, not discovered in Task 15.
@@ -2300,7 +2466,7 @@ UI text changes break e2e specs in this repo; any spec asserting on the old labe
 - [ ] **Step 5: Gates and commit**
 
 ```bash
-cd ../seazn-z3-build && npm run i18n:gen-keys && git status --porcelain
+cd ../wt-z3-build && npm run i18n:gen-keys && git status --porcelain
 git commit -am "feat(board): polish action for an already-legal board"
 ```
 
@@ -2323,7 +2489,7 @@ git commit -am "feat(board): polish action for an already-legal board"
 - [ ] **Step 2: Run it and record the table**
 
 ```bash
-cd ../seazn-z3-build && node --experimental-strip-types scripts/bench-build.ts | tee /tmp/bench-build.txt
+cd ../wt-z3-build && node --experimental-strip-types scripts/bench-build.ts | tee /tmp/bench-build.txt
 ```
 
 - [ ] **Step 3: Set the constant from the measurement, not from taste**
@@ -2333,7 +2499,7 @@ Same rule `DEFAULT_REPAIR_BUDGET_MS` used: twice the worst `rlimit` consumed amo
 - [ ] **Step 4: Re-run the engine suite and commit with the table in the message**
 
 ```bash
-cd ../seazn-z3-build && npm test --workspace packages/engine -- \
+cd ../wt-z3-build && npm test --workspace packages/engine -- \
   --reporter=json --outputFile=/tmp/t13.json >/dev/null 2>&1; \
   node -e 'const r=require("/tmp/t13.json");console.log(r.numPassedTests,r.numTotalTests,r.numFailedTests)'
 ```
@@ -2380,7 +2546,7 @@ Run auto-schedule → the result strip shows finish time, court spread, worst ga
 - [ ] **Step 3: Run all three projects and record the counts**
 
 ```bash
-cd ../seazn-z3-build && npm run test:e2e --workspace apps/web 2>&1 | tail -30; echo "EXIT=$?"
+cd ../wt-z3-build && npm run test:e2e --workspace apps/web 2>&1 | tail -30; echo "EXIT=$?"
 ```
 
 A killed background command reports exit 0 — that 0 is the SIGTERM, which is why `EXIT=$?` is echoed by the command itself.
@@ -2394,7 +2560,7 @@ A killed background command reports exit 0 — that 0 is the SIGTERM, which is w
 - [ ] **Step 1: Rebase on main and re-run everything**
 
 ```bash
-cd ../seazn-z3-build && git fetch origin && git rebase origin/main
+cd ../wt-z3-build && git fetch origin && git rebase origin/main
 rm -rf apps/web/.next   # a prod build in a worktree leaves .next/types that fail tsc for untouched pages
 npm run typecheck 2>&1 | tail -5; echo "EXIT=${PIPESTATUS[0]}"
 npx rtk proxy npm run lint 2>&1 | grep -E "✖|problems" | tail -5
@@ -2408,7 +2574,7 @@ node -e 'for(const f of ["/tmp/final-engine.json","/tmp/final-web.json"]){const 
 - [ ] **Step 2: Both drift gates**
 
 ```bash
-cd ../seazn-z3-build && npm run openapi:gen && npm run i18n:gen-keys && git status --porcelain
+cd ../wt-z3-build && npm run openapi:gen && npm run i18n:gen-keys && git status --porcelain
 ```
 
 Must print nothing.

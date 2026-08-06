@@ -1,0 +1,952 @@
+{
+  "configSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "ballsPerInnings": {
+        "anyOf": [
+          {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": 120
+      },
+      "ballsPerOver": {
+        "default": 6,
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "dls": {
+        "default": {
+          "edition": "standard",
+          "enabled": false
+        },
+        "properties": {
+          "edition": {
+            "const": "standard",
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "edition",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "followOn": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "lead": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled",
+          "lead"
+        ],
+        "type": "object"
+      },
+      "inningsPerSide": {
+        "anyOf": [
+          {
+            "const": 1,
+            "type": "number"
+          },
+          {
+            "const": 2,
+            "type": "number"
+          }
+        ],
+        "default": 1
+      },
+      "maxOversPerBowler": {
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "minOversForResult": {
+        "default": 5,
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "playersPerSide": {
+        "default": 11,
+        "maximum": 9007199254740991,
+        "minimum": 2,
+        "type": "integer"
+      },
+      "points": {
+        "default": {
+          "loss": 0,
+          "noResult": 1,
+          "tie": 1,
+          "win": 2
+        },
+        "properties": {
+          "draw": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "loss": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "noResult": {
+            "default": 1,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tie": {
+            "default": 1,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "win": {
+            "default": 2,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "reviews": {
+        "properties": {
+          "perInnings": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "perInnings"
+        ],
+        "type": "object"
+      },
+      "superOver": {
+        "default": false,
+        "type": "boolean"
+      },
+      "superOverStillTied": {
+        "default": "repeat",
+        "enum": [
+          "boundary_count",
+          "repeat",
+          "shared"
+        ],
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "eventSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "anyOf": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "ballInOver": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "boundary": {
+            "anyOf": [
+              {
+                "const": 4,
+                "type": "number"
+              },
+              {
+                "const": 6,
+                "type": "number"
+              }
+            ]
+          },
+          "bowler": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "freeHit": {
+            "type": "boolean"
+          },
+          "nonStriker": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "over": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "runs": {
+            "additionalProperties": false,
+            "properties": {
+              "bat": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "extras": {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "bye",
+                      "legbye",
+                      "noball",
+                      "penalty",
+                      "wide"
+                    ],
+                    "type": "string"
+                  },
+                  "runs": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "runs"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "bat"
+            ],
+            "type": "object"
+          },
+          "striker": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "wicket": {
+            "additionalProperties": false,
+            "properties": {
+              "bowlerCredited": {
+                "type": "boolean"
+              },
+              "fielder": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "fielderAssist": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "incoming": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "bowled",
+                  "caught",
+                  "hitballtwice",
+                  "hitwicket",
+                  "lbw",
+                  "obstructed",
+                  "retired",
+                  "runout",
+                  "stumped",
+                  "timedout"
+                ],
+                "type": "string"
+              },
+              "out": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "bowlerCredited",
+              "kind",
+              "out"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "ballInOver",
+          "bowler",
+          "nonStriker",
+          "over",
+          "runs",
+          "striker"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "boundaries": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "declared": {
+            "type": "boolean"
+          },
+          "legalBalls": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "partial": {
+            "type": "boolean"
+          },
+          "runs": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "wickets": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "legalBalls",
+          "runs",
+          "wickets"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "elected": {
+            "enum": [
+              "bat",
+              "bowl"
+            ],
+            "type": "string"
+          },
+          "wonBy": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "elected",
+          "wonBy"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "enum": [
+              "all_out",
+              "forfeited",
+              "other",
+              "overs_complete",
+              "target_reached",
+              "time",
+              "weather"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "light",
+              "other",
+              "rain"
+            ],
+            "type": "string"
+          },
+          "oversLostEstimate": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "oversPerSide": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "target": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "batting": {
+            "additionalProperties": false,
+            "properties": {
+              "balls": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "out": {
+                "type": "boolean"
+              },
+              "runs": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "balls",
+              "runs"
+            ],
+            "type": "object"
+          },
+          "bowling": {
+            "additionalProperties": false,
+            "properties": {
+              "legalBalls": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "runs": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "wickets": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "legalBalls",
+              "runs",
+              "wickets"
+            ],
+            "type": "object"
+          },
+          "innings": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "innings",
+          "person"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "incoming": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "hurt",
+              "other",
+              "out"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "person",
+          "reason"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "batting",
+              "bowling",
+              "mandatory"
+            ],
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "end",
+              "start"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "phase"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "against": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "player",
+              "umpire"
+            ],
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "struck_down",
+              "umpires_call",
+              "upheld"
+            ],
+            "type": "string"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "by",
+          "kind",
+          "outcome"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "generatedBy": "testkit/schema-snapshot.ts",
+  "key": "cricket",
+  "snapshotVersion": 1,
+  "state": {
+    "paths": {
+      "battingFirst": [
+        "string"
+      ],
+      "entrants": [
+        "object"
+      ],
+      "entrants[]": [
+        "string"
+      ],
+      "followOnEnforced": [
+        "boolean"
+      ],
+      "innings": [
+        "array"
+      ],
+      "innings[]": [
+        "object"
+      ],
+      "innings[].ballsLimit": [
+        "null",
+        "number"
+      ],
+      "innings[].battingSide": [
+        "string"
+      ],
+      "innings[].boundaries": [
+        "number"
+      ],
+      "innings[].closeReason": [
+        "string"
+      ],
+      "innings[].closed": [
+        "boolean"
+      ],
+      "innings[].declared": [
+        "boolean"
+      ],
+      "innings[].fine": [
+        "null",
+        "object"
+      ],
+      "innings[].fine.batterBalls": [
+        "object"
+      ],
+      "innings[].fine.batterBalls[]": [
+        "number"
+      ],
+      "innings[].fine.batterRuns": [
+        "object"
+      ],
+      "innings[].fine.batterRuns[]": [
+        "number"
+      ],
+      "innings[].fine.bowlerBalls": [
+        "object"
+      ],
+      "innings[].fine.bowlerBalls[]": [
+        "number"
+      ],
+      "innings[].fine.bowlerRuns": [
+        "object"
+      ],
+      "innings[].fine.bowlerRuns[]": [
+        "number"
+      ],
+      "innings[].fine.bowlerWickets": [
+        "object"
+      ],
+      "innings[].fine.bowlerWickets[]": [
+        "number"
+      ],
+      "innings[].fine.currentBowler": [
+        "null",
+        "string"
+      ],
+      "innings[].fine.dismissed": [
+        "array"
+      ],
+      "innings[].fine.dismissed[]": [
+        "string"
+      ],
+      "innings[].fine.extras": [
+        "number"
+      ],
+      "innings[].fine.fielding": [
+        "object"
+      ],
+      "innings[].fine.fielding[]": [
+        "object"
+      ],
+      "innings[].fine.fielding[].catches": [
+        "number"
+      ],
+      "innings[].fine.fielding[].runOuts": [
+        "number"
+      ],
+      "innings[].fine.fielding[].stumpings": [
+        "number"
+      ],
+      "innings[].fine.freeHitPending": [
+        "boolean"
+      ],
+      "innings[].fine.nextBatterIndex": [
+        "number"
+      ],
+      "innings[].fine.nonStriker": [
+        "string"
+      ],
+      "innings[].fine.prevOverBowler": [
+        "null",
+        "string"
+      ],
+      "innings[].fine.retiredNotOut": [
+        "array"
+      ],
+      "innings[].fine.retiredNotOut[]": [
+        "string"
+      ],
+      "innings[].fine.striker": [
+        "string"
+      ],
+      "innings[].legalBalls": [
+        "number"
+      ],
+      "innings[].newBallAt": [
+        "array"
+      ],
+      "innings[].newBallAt[]": [
+        "number"
+      ],
+      "innings[].powerplays": [
+        "array"
+      ],
+      "innings[].powerplays[]": [
+        "object"
+      ],
+      "innings[].powerplays[].fromBalls": [
+        "number"
+      ],
+      "innings[].powerplays[].kind": [
+        "string"
+      ],
+      "innings[].powerplays[].toBalls": [
+        "null"
+      ],
+      "innings[].reviews": [
+        "object"
+      ],
+      "innings[].reviews[]": [
+        "object"
+      ],
+      "innings[].reviews[].lost": [
+        "number"
+      ],
+      "innings[].reviews[].taken": [
+        "number"
+      ],
+      "innings[].runs": [
+        "number"
+      ],
+      "innings[].wickets": [
+        "number"
+      ],
+      "interruptions": [
+        "number"
+      ],
+      "margin": [
+        "null",
+        "string"
+      ],
+      "orders": [
+        "object"
+      ],
+      "orders[]": [
+        "array"
+      ],
+      "orders[][]": [
+        "string"
+      ],
+      "outcome": [
+        "null",
+        "object"
+      ],
+      "outcome.kind": [
+        "string"
+      ],
+      "outcome.loser": [
+        "string"
+      ],
+      "outcome.method": [
+        "string"
+      ],
+      "outcome.winner": [
+        "string"
+      ],
+      "phase": [
+        "string"
+      ],
+      "playerLines": [
+        "array"
+      ],
+      "playerLines[]": [
+        "object"
+      ],
+      "playerLines[].batting": [
+        "object"
+      ],
+      "playerLines[].batting.balls": [
+        "number"
+      ],
+      "playerLines[].batting.out": [
+        "boolean"
+      ],
+      "playerLines[].batting.runs": [
+        "number"
+      ],
+      "playerLines[].bowling": [
+        "object"
+      ],
+      "playerLines[].bowling.legalBalls": [
+        "number"
+      ],
+      "playerLines[].bowling.runs": [
+        "number"
+      ],
+      "playerLines[].bowling.wickets": [
+        "number"
+      ],
+      "playerLines[].innings": [
+        "number"
+      ],
+      "playerLines[].person": [
+        "string"
+      ],
+      "quota": [
+        "null",
+        "number"
+      ],
+      "r1": [
+        "null",
+        "number"
+      ],
+      "r2": [
+        "null",
+        "number"
+      ],
+      "revisedTarget": [
+        "null",
+        "number"
+      ],
+      "superOver": [
+        "null",
+        "object"
+      ],
+      "superOver.dismissed": [
+        "object"
+      ],
+      "superOver.dismissed[]": [
+        "array"
+      ],
+      "superOver.innings": [
+        "array"
+      ],
+      "superOver.innings[]": [
+        "object"
+      ],
+      "superOver.innings[].ballsLimit": [
+        "number"
+      ],
+      "superOver.innings[].battingSide": [
+        "string"
+      ],
+      "superOver.innings[].boundaries": [
+        "number"
+      ],
+      "superOver.innings[].closed": [
+        "boolean"
+      ],
+      "superOver.innings[].declared": [
+        "boolean"
+      ],
+      "superOver.innings[].fine": [
+        "object"
+      ],
+      "superOver.innings[].fine.batterBalls": [
+        "object"
+      ],
+      "superOver.innings[].fine.batterBalls[]": [
+        "number"
+      ],
+      "superOver.innings[].fine.batterRuns": [
+        "object"
+      ],
+      "superOver.innings[].fine.batterRuns[]": [
+        "number"
+      ],
+      "superOver.innings[].fine.bowlerBalls": [
+        "object"
+      ],
+      "superOver.innings[].fine.bowlerBalls[]": [
+        "number"
+      ],
+      "superOver.innings[].fine.bowlerRuns": [
+        "object"
+      ],
+      "superOver.innings[].fine.bowlerRuns[]": [
+        "number"
+      ],
+      "superOver.innings[].fine.bowlerWickets": [
+        "object"
+      ],
+      "superOver.innings[].fine.currentBowler": [
+        "null",
+        "string"
+      ],
+      "superOver.innings[].fine.dismissed": [
+        "array"
+      ],
+      "superOver.innings[].fine.extras": [
+        "number"
+      ],
+      "superOver.innings[].fine.freeHitPending": [
+        "boolean"
+      ],
+      "superOver.innings[].fine.nextBatterIndex": [
+        "number"
+      ],
+      "superOver.innings[].fine.nonStriker": [
+        "string"
+      ],
+      "superOver.innings[].fine.prevOverBowler": [
+        "null",
+        "string"
+      ],
+      "superOver.innings[].fine.striker": [
+        "string"
+      ],
+      "superOver.innings[].legalBalls": [
+        "number"
+      ],
+      "superOver.innings[].runs": [
+        "number"
+      ],
+      "superOver.innings[].wickets": [
+        "number"
+      ],
+      "targetSource": [
+        "null",
+        "string"
+      ],
+      "tossTaken": [
+        "boolean"
+      ]
+    }
+  },
+  "version": "1.0.0"
+}

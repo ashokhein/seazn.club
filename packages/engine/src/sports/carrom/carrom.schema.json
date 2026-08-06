@@ -1,0 +1,280 @@
+{
+  "configSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "bestOf": {
+        "default": 3,
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "gameTo": {
+        "default": 25,
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "maxBoards": {
+        "default": 8,
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "points": {
+        "default": {
+          "draw": 1,
+          "loss": 0,
+          "win": 2
+        },
+        "properties": {
+          "draw": {
+            "default": 1,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "loss": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "win": {
+            "default": 2,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "pointsPerCoin": {
+        "default": 1,
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "queenCapAt": {
+        "default": 22,
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "queenFollowsBoard": {
+        "default": false,
+        "type": "boolean"
+      },
+      "queenPoints": {
+        "default": 3,
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "tieBoard": {
+        "default": "extra",
+        "enum": [
+          "draw",
+          "extra"
+        ],
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "eventSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "anyOf": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "firstBreak": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "firstBreak"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "breaker": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "opponentCoinsLeft": {
+            "maximum": 9,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "queenBy": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "queenTo": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "winner": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "opponentCoinsLeft",
+          "queenTo",
+          "winner"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "delta": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "entrantId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "offendingEntrantId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "delta",
+          "entrantId",
+          "reason"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "generatedBy": "testkit/schema-snapshot.ts",
+  "key": "carrom",
+  "snapshotVersion": 1,
+  "state": {
+    "paths": {
+      "entrants": [
+        "object"
+      ],
+      "entrants[]": [
+        "string"
+      ],
+      "firstBreak": [
+        "string"
+      ],
+      "games": [
+        "array"
+      ],
+      "gamesDrawn": [
+        "number"
+      ],
+      "gamesWon": [
+        "object"
+      ],
+      "gamesWon[]": [
+        "number"
+      ],
+      "games[]": [
+        "object"
+      ],
+      "games[].boards": [
+        "array"
+      ],
+      "games[].boards[]": [
+        "object"
+      ],
+      "games[].boards[].breaker": [
+        "string"
+      ],
+      "games[].boards[].breakerPerson": [
+        "string"
+      ],
+      "games[].boards[].points": [
+        "number"
+      ],
+      "games[].boards[].queenPerson": [
+        "string"
+      ],
+      "games[].boards[].queenScored": [
+        "boolean"
+      ],
+      "games[].boards[].queenTo": [
+        "null",
+        "string"
+      ],
+      "games[].boards[].winner": [
+        "string"
+      ],
+      "games[].score": [
+        "object"
+      ],
+      "games[].score[]": [
+        "number"
+      ],
+      "games[].winner": [
+        "null",
+        "string"
+      ],
+      "outcome": [
+        "null",
+        "object"
+      ],
+      "outcome.kind": [
+        "string"
+      ],
+      "outcome.loser": [
+        "string"
+      ],
+      "outcome.method": [
+        "string"
+      ],
+      "outcome.winner": [
+        "string"
+      ],
+      "penalties": [
+        "array"
+      ],
+      "penalties[]": [
+        "object"
+      ],
+      "penalties[].delta": [
+        "number"
+      ],
+      "penalties[].person": [
+        "string"
+      ],
+      "penalties[].side": [
+        "string"
+      ],
+      "phase": [
+        "string"
+      ],
+      "tossTaken": [
+        "boolean"
+      ]
+    }
+  },
+  "version": "1.0.0"
+}

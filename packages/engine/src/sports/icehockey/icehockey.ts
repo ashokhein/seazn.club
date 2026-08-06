@@ -144,12 +144,31 @@ export const icehockey = makePeriodModule({
     { key: "pim", label: "PIM", direction: "asc", display: false },
     { key: "goals_pp", label: "PP goals", direction: "desc", display: false },
     { key: "goals_sh", label: "SH goals", direction: "desc", display: false },
+    // Penalty-shot conversion, DISPLAY ONLY. Declared so `validateCascade` can
+    // see the ledgers a future ratio comparator would need; IIHF ranks
+    // points → H2H → GD → GF, so nothing consults them for ORDER today, and
+    // `display: false` keeps them out of the standings table.
+    { key: "sp_ps_awarded", label: "PS awarded", direction: "desc", display: false },
+    { key: "sp_ps_scored", label: "PS scored", direction: "desc", display: false },
+    { key: "sp_ps_resolved", label: "PS resolved", direction: "desc", display: false },
   ],
   // Event Code §220 — H2H sub-group first, then overall (maps directly onto
   // the existing comparator registry, v6/00 §1).
   defaultTiebreakers: ["points", "h2h_points", "h2h_diff", "h2h_for", "diff", "for", "seed"],
   officialLabel: { scorer: "Scorekeeper" },
   shootoutLabel: "GWS",
+  // IIHF Rule 87 / NHL Rule 84.4 — the game-winning shot is credited as a goal
+  // in the official score (2-2 on the GWS is recorded 3-2). Derived at the
+  // score layer; the shoot-out itself scores no player goals. FIH does not do
+  // this, so `hockey` leaves the flag off.
+  shootoutWinnerGoal: true,
+  // NHL Rule 84.4 / IIHF Rule 84 — overtime is 3-on-3 and a penalised team is
+  // never reduced below that: the NON-offending team gains a skater, so a
+  // penalty in OT reads 4v3 rather than 5v4 and two coincidental ones stay 3v3.
+  // Reads `defaults.overtime.skaters` above. FIH cards reduce the offender and
+  // nobody gains, so `hockey` leaves the flag off even though its `fih-detail`
+  // config declares `skaters`.
+  overtimeSkaterAdvantage: true,
   timelineEntitlement: "scoring.match_timeline",
   playerStats,
   // SPEC-1 — IIHF penalty classes the discipline rules editor may ban on
