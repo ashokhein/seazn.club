@@ -1,6 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { TAG, apiJson, activeOrg, expectNoHorizontalScroll, addEntrantsViaApi } from "./helpers";
+import {
+  TAG,
+  apiJson,
+  activeOrg,
+  expectNoHorizontalScroll,
+  addEntrantsViaApi,
+  createStageAndGenerate,
+} from "./helpers";
 
 // v3/02 §4 viewport gate — runs ONLY in the mobile-se / mobile-14 projects
 // (375×667, 390×844). Every audited route must render with zero page-level
@@ -111,6 +118,112 @@ test("console routes: no horizontal scroll", async ({ page }) => {
   for (const path of routes) {
     await auditRoute(page, path);
   }
+});
+
+/**
+ * T15 — the z3 solver action bar and its result strip at phone width.
+ *
+ * THIS TEST CANNOT LIVE IN `z3-auto-schedule.spec.ts`. The `mobile-se`
+ * (375×667) and `mobile-14` (390×844) projects are declared with
+ * `testMatch: /mobile\.spec\.ts/`, so they run this one file and nothing else —
+ * a new spec file gets desktop coverage only, however it is named. The 375px
+ * gate for the feature is therefore a section here, by construction.
+ *
+ * Self-contained: it seeds its own competition rather than borrowing the file's
+ * shared division, which has no stage and so renders no action bar at all.
+ *
+ * Three things are asserted, in the order they can be:
+ *   - the three actions are hit-testable. `min-h-11 sm:min-h-0` on all three is
+ *     the only reason they clear 44px — the shared `py-1.5 text-xs` button
+ *     renders 28px, and the override is mobile-only, so nothing at desktop
+ *     width would notice it being dropped.
+ *   - the strip renders and its own content is not clipped. The metrics grid
+ *     carries `overflow-hidden`, which means a grid that outgrew its container
+ *     would silently truncate rather than push the page wide — invisible to the
+ *     page-level scroll check below, and the reason this is measured separately.
+ *   - no horizontal page scroll, checked AFTER the strip has rendered. The strip
+ *     is the widest thing this surface ever shows; running the check on the
+ *     board before a run would prove nothing about the element under test.
+ */
+test("z3 schedule actions + result strip hold at phone width", async ({ page, request }) => {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    ends_on: "2030-12-31",
+    name: `Mobile Solver ${TAG}`,
+    visibility: "private",
+  });
+  const div = await apiJson<{ id: string }>(
+    request,
+    `/api/v1/competitions/${comp.data!.id}/divisions`,
+    "POST",
+    {
+      name: "Solver",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    },
+  );
+  const solverDivisionId = div.data!.id;
+  await addEntrantsViaApi(request, solverDivisionId, ["Ash M", "Brook M", "Clay M", "Dune M"]);
+  const { fixtureIds } = await createStageAndGenerate(request, solverDivisionId);
+  expect(fixtureIds.length).toBe(6);
+  const settings = await apiJson(
+    request,
+    `/api/v1/divisions/${solverDivisionId}/schedule-settings`,
+    "PUT",
+    {
+      tz: "UTC",
+      config: {
+        startAt: new Date(Date.UTC(2026, 8, 21, 9, 0)).toISOString(),
+        matchMinutes: 30,
+        gapMinutes: 0,
+        courts: ["Court A", "Court B"],
+        perEntrantMinRest: 0,
+        blackouts: [],
+        sessionWindows: [],
+      },
+    },
+  );
+  expect(settings.status).toBe(200);
+
+  await page.goto(`/divisions/${solverDivisionId}/schedule?tab=board`, { waitUntil: "load" });
+
+  // Ids, not labels (#465): "Auto-schedule {name}" interpolates the division
+  // name and "Improve times" is not the word "Polish".
+  const auto = page.getByTestId("schedule-auto");
+  const reflow = page.getByTestId("schedule-reflow");
+  const polish = page.getByTestId("schedule-polish");
+  for (const [name, button] of [
+    ["schedule-auto", auto],
+    ["schedule-reflow", reflow],
+    ["schedule-polish", polish],
+  ] as const) {
+    await expect(button, `${name} is not visible at this width`).toBeVisible({ timeout: 30_000 });
+    const box = await button.boundingBox();
+    expect(box, `${name} has no box`).not.toBeNull();
+    expect(box!.height, `${name} touch target is ${box!.height}px`).toBeGreaterThanOrEqual(44);
+  }
+
+  await auto.click();
+  const strip = page.getByTestId("schedule-result-strip");
+  await expect(strip).toBeVisible({ timeout: 45_000 });
+  // The whole round trip, not just the proposal: `autoRun` clears `busy` in its
+  // `finally`, after the apply POST and the refresh.
+  await expect(auto).toBeEnabled({ timeout: 45_000 });
+  await expect(page.getByTestId("schedule-result-headline")).toBeVisible();
+
+  // Nothing inside the strip is clipped or scrolled sideways — including the
+  // metrics grid, whose `overflow-hidden` would otherwise hide the failure.
+  const clipped = await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>('[data-testid="schedule-result-strip"]');
+    if (!root) return ["the strip was not in the DOM"];
+    const suspects: HTMLElement[] = [root, ...Array.from(root.querySelectorAll<HTMLElement>("dl,p"))];
+    return suspects
+      .filter((el) => el.scrollWidth - el.clientWidth > 1)
+      .map((el) => `${el.tagName.toLowerCase()} ${el.scrollWidth}px content in ${el.clientWidth}px`);
+  });
+  expect(clipped, "result strip content is clipped at this width").toEqual([]);
+
+  await expectNoHorizontalScroll(page);
 });
 
 test("public surfaces: no horizontal scroll (v3/11 gap 12)", async ({ browser }) => {
