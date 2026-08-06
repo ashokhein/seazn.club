@@ -132,6 +132,29 @@ Append one line per ruling: date, session, decision, reason. Never delete.
   scores a genuine zero rather than "no data" — that blocks every future metric,
   including S8's, and is fixed here. Conversion rate itself is deferred: a later
   session emits it cheaply once a consumer exists.
+- 2026-08-06 — S1 — **a deliberate fold change ships as a RED code commit
+  followed by its re-baseline commit.** The policy requires the re-baseline to
+  be isolated in its own commit, so the commit that changes the fold necessarily
+  reds the corpora until the next one lands. That transient red is the designed
+  cost of isolation, not an accident: the alternative — one commit carrying both
+  — is exactly the mixing the policy exists to prevent, and is what `1f56bd5e`
+  did. Reviewers should read the pair, and `git bisect` over an engine fold
+  change should expect it.
+- 2026-08-06 — S1 — **slimming needed THREE commits, and the order is forced.**
+  The equivalence suites compare a slim corpus against a full one and read the
+  full one from disk; once the committed corpora are slim, that reads the slim
+  corpus twice, compares it with itself and asserts nothing **while staying
+  green**. `unslimCorpus` derives the full form by re-folding the stored ledger
+  — an identity on a corpus that is already full, so the harness lands and is
+  green BEFORE the corpora move; the strict "the committed file IS the canonical
+  slim form" assertion is false until they have moved, so it trails them.
+  Harness (`ffe1260c`) → corpora (`7beff7d4`) → assertion (`b182dd6d`), each
+  green standing alone. Recorded because the obvious two-commit split is
+  circular and the discovery cost a full re-baseline cycle.
+- 2026-08-06 — S1 — corpus slimming shipped: **4,507,821 → 1,746,013 bytes
+  (−61.3%)**, `changedStates=0` and `eventsIdentical=true` on all eleven, and
+  `schema:snapshot` reports 0 written / 11 already current — the shape-growth
+  anchor clause held, so no committed snapshot moved.
 - _(append below)_
 
 ## Open questions for the owner
