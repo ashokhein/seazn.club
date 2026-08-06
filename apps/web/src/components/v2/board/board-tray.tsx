@@ -33,6 +33,10 @@ export function BoardTray({
 }) {
   const msg = useMsg();
   const [openMobile, setOpenMobile] = useState(false);
+  // Nothing left over, nothing to dock. The ABSENCE is the assertable fact and
+  // it is why the two hooks below carry a `data-count`: "the board repainted
+  // after an apply" is exactly "every card left this tray", and until these ids
+  // existed the only handle on that was translated copy inside an aria-label.
   if (unscheduled.length === 0) return null;
 
   const groups = divisions
@@ -85,6 +89,8 @@ export function BoardTray({
     <>
       {/* Desktop: right dock */}
       <aside
+        data-testid="board-tray"
+        data-count={unscheduled.length}
         className="hidden w-64 shrink-0 self-start rounded-xl border border-slate-200 bg-slate-50/60 p-3 lg:sticky lg:top-20 lg:block"
         aria-label={msg("board.tray.aria")}
       >
@@ -99,6 +105,8 @@ export function BoardTray({
       <div className="lg:hidden">
         <button
           type="button"
+          data-testid="board-tray-mobile"
+          data-count={unscheduled.length}
           onClick={() => setOpenMobile((o) => !o)}
           aria-expanded={openMobile}
           className="fixed inset-x-3 bottom-3 z-30 flex min-h-11 items-center justify-between rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 shadow-lg"
