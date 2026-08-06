@@ -1780,6 +1780,23 @@ export async function moveFixture(
  * `competitionId` is a parameter rather than a re-read: both callers have
  * already selected the division row, and re-selecting it inside would make the
  * gate's view of the world one statement newer than the lock's.
+ *
+ * THE OFFICIALS SQL BUCKETS ON `settings.orgTz`, NOT `settings.displayTz`.
+ * "Which calendar day is this fixture on" is day math, and day math runs on the
+ * governing clock (#397; and `ScheduleSettingsOut` says of `displayTz` in as
+ * many words: "DISPLAY ONLY. Never use it to decide which calendar day something
+ * is on"). The two diverge exactly when a division carries the V305 venue
+ * override — `displayTz` is division → org → UTC, `orgTz` is org → UTC — and a
+ * blackout is an ORG-level record, one row per official per date, shared by
+ * every division they work; bucketing it per-division made one date mean two
+ * different days inside one competition. Concretely: org Europe/London,
+ * division America/New_York, fixture 02:00Z on 10 Aug. The display lane files
+ * it under the 9th, so a blackout on the 10th raises nothing and one on the 9th
+ * raises a phantom. Pre-existing, but #230 item 2 promoted this warning from an
+ * advisory badge to a PUBLISH-GATE input, so both directions now cost the
+ * organiser something: a missed acknowledge step, or a spurious one.
+ * Pinned by `schedule-officials-day-zone.test.ts`, on a fixture where the two
+ * zones disagree — one where they agree passes under either spelling.
  */
 async function validateScheduleIn(
   tx: Tx,
@@ -1809,7 +1826,7 @@ async function validateScheduleIn(
     where f.division_id = ${divisionId} and fo.response = 'declined'
     union
     -- unavailable: an accepted/pending official is blacked out on the
-    -- fixture's date (venue zone), i.e. a schedule clash
+    -- fixture's calendar day, i.e. a schedule clash
     select fo.fixture_id, 'warn.official_unavailable' as code
     from fixture_officials fo
     join fixtures f on f.id = fo.fixture_id
@@ -1818,10 +1835,9 @@ async function validateScheduleIn(
     where f.division_id = ${divisionId}
       and fo.response in ('accepted','pending')
       and f.scheduled_at is not null
-      -- venue lane (V305): settings already carries the RESOLVED zone
-      -- (division override → org timezone → UTC), and this whole query is
-      -- scoped to one division, so bind it rather than re-joining.
-      and oa.date = (f.scheduled_at at time zone ${settings.displayTz})::date`;
+      -- orgTz, NOT displayTz. See the long note above this function.
+      -- (Backticks are banned in here: this is a tagged template.)
+      and oa.date = (f.scheduled_at at time zone ${settings.orgTz})::date`;
 
   // A REPORT of the board as it stands. `blocking` here says "impossible", not
   // "refused" (#399) — the board paints those cards red, and it must keep
