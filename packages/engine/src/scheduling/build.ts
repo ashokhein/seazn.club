@@ -285,12 +285,16 @@ export interface BuildInput {
    * its `current` slot, which is the whole point of asking.
    *
    * AN EMPTY ARRAY MEANS "no board", not "an empty board" — a first-ever build
-   * would otherwise report every card it placed as moved. Optional and
-   * additive: a caller that omits it gets exactly the old behaviour.
+   * would otherwise report every card it placed as moved.
    *
-   * Rows for fixtures this run does not place are still consulted — one that
-   * vanishes from the answer is counted as moved — so pass the board for the
-   * cards this run may touch, not the whole competition.
+   * Rows for fixtures this run does not place are still consulted: one that
+   * vanishes from the answer is reported through `lost`. So pass the board for
+   * the cards this run may touch, not the whole competition, and do not filter
+   * it down to the cards you expect back — that is precisely the signal.
+   *
+   * Optional and additive. Omitting it leaves `moved` measured against the
+   * greedy seed and `lost` at 0, which is what every caller got before this
+   * field existed.
    */
   current?: readonly Assignment[];
   rlimit?: number;
@@ -320,7 +324,30 @@ export interface BuildResult {
   tiersCompleted: number;
   budgetExpired: boolean;
   elapsedMs: number;
+  /**
+   * Rows on this board that changed slot relative to the baseline — the
+   * caller's `current` when there is one, and the greedy seed otherwise.
+   *
+   * RELOCATIONS ONLY. It never exceeds `assignments.length`, which is what makes
+   * "moved N" printable beside a board of that size. A card the run could not
+   * place is `lost`, not this (R21): folding the two made a single substitution
+   * read as 2 and let the number outgrow the board it described.
+   */
   moved: number;
+  /**
+   * Baseline rows that are NOT on this board — matches the caller had scheduled
+   * and this run could not place.
+   *
+   * ALWAYS 0 without `current`, and that is a definition rather than a gap
+   * (R21). The greedy seed is this run's own first guess and not a board anybody
+   * was shown, so the solver dropping a seed row to fit two better ones is
+   * ordinary progress; only the caller's real board can lose a match.
+   *
+   * Separate from `moved` because the two are different events and only one is
+   * alarming — cards moving is what the organiser asked for, a card falling off
+   * the board is not, and a single conflated number cannot say which happened.
+   */
+  lost: number;
   /**
    * What the RUN cost, in z3 resource units, measured off z3's own counter
    * (R11). The whole run — every tier check and every window the fallback
@@ -622,24 +649,45 @@ async function solveBuild(
    * directions: under `current` it is a card the organiser had not scheduled at
    * all, and under the seed it is one greedy could not place.
    *
-   * AND SO DOES A BASELINE ROW MISSING FROM THE BOARD — a card this run could
-   * not place. Counting only the board's own rows meant a run that LOST a card
-   * reported `moved: 0` whenever the survivors kept their slots, which is the
-   * most alarming outcome there is described as the most reassuring one. That
-   * was unreachable while the baseline was the seed (T0 maximises `placed`, so
-   * the answer never drops below it) and became reachable the moment the
-   * baseline could be the caller's board instead.
+   * ROWS ONLY — a card this run could not place is `lostFrom`'s business, not
+   * this one's (R21). Folding the two together made a single substitution read
+   * as 2 (the card swapped in counted as moved, the card dropped counted again)
+   * and let `moved` exceed the size of the board it describes. A strip printing
+   * "moved N" cannot honestly print an N larger than the board.
    */
   const movedFrom = (board: readonly Assignment[]): number => {
-    const baseline = currentBoard ?? seedAssignments;
-    const was = new Map(baseline.map((a) => [a.fixtureId, a]));
-    const onBoard = new Set(board.map((a) => a.fixtureId));
-    const relocated = board.filter((a) => {
+    const was = new Map((currentBoard ?? seedAssignments).map((a) => [a.fixtureId, a]));
+    return board.filter((a) => {
       const before = was.get(a.fixtureId);
       return before === undefined || before.court !== a.court || before.startAt !== a.startAt;
     }).length;
-    const lost = baseline.filter((a) => !onBoard.has(a.fixtureId)).length;
-    return relocated + lost;
+  };
+
+  /**
+   * Baseline rows this run could not place — matches that were on the caller's
+   * board and are not on the answer.
+   *
+   * SCOPED TO `currentBoard`, and zero without one (R21). Against the greedy
+   * seed the question is not meaningful: the seed is this run's own first guess,
+   * not a board anybody was shown, and the solver dropping a greedy card to fit
+   * two better ones is ordinary progress rather than a loss. Measured on the
+   * shape that proves it — one slot per court, `a=(E1,E2) b=(E1,E3) c=(E2,E4)`:
+   * greedy places only `a`, z3 places `b` and `c`, and counting the seed's `a`
+   * as lost took `moved` to 3 on a two-row board.
+   *
+   * That case is also why the previous justification here was wrong. It claimed
+   * a seed baseline could never lose a row because T0 maximises `placed` — but
+   * `isStrictlyBetter` only requires `placed >=`, so the solver may drop one
+   * card while adding two, and the set can change even when the count does not.
+   *
+   * Its own field rather than folded into `moved`, because the two are different
+   * events and only one of them is alarming: cards moving is what the organiser
+   * asked for, a card falling off the board is not.
+   */
+  const lostFrom = (board: readonly Assignment[]): number => {
+    if (currentBoard === undefined) return 0;
+    const onBoard = new Set(board.map((a) => a.fixtureId));
+    return currentBoard.filter((a) => !onBoard.has(a.fixtureId)).length;
   };
 
   const greedy = (status: BuildStatus, budgetExpired = false): BuildResult => ({
@@ -656,6 +704,7 @@ async function solveBuild(
     // genuinely moved from where the organiser had it, and saying otherwise is
     // the same false "nothing moved" the solver paths were fixed for.
     moved: movedFrom(seedAssignments),
+    lost: lostFrom(seedAssignments),
     rlimitSpent: runBudget.current?.spent ?? 0,
     lnsWindowRlimits,
   });
@@ -1167,6 +1216,7 @@ async function solveBuild(
   }
 
   const moved = movedFrom(incumbent);
+  const lost = lostFrom(incumbent);
 
   // `already_optimal` needs BOTH halves: every tier ran to a verdict, and
   // nothing to show for it. Without the first it would claim a proof on a board
@@ -1194,6 +1244,7 @@ async function solveBuild(
     budgetExpired,
     elapsedMs: elapsed(),
     moved,
+    lost,
     rlimitSpent: budget.spent,
     lnsWindowRlimits,
   };

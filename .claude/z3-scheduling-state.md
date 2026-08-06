@@ -197,3 +197,33 @@ both easy to reintroduce at the seam:
 Three things `current` is NOT: it is not `existing` (the immovable board — conflating
 them puts the organiser's own cards in their own way); it does not constrain the solve;
 and it does not replace `locked` for a card that must not move at all.
+
+## Task 7 fix round 3 — RULING R21, and a wrong number I shipped to review
+
+**I claimed seed-baseline behaviour was unchanged by the `lost` term. It was not**, and
+the reviewer's repro reproduces at my HEAD: one slot per court, `a=(E1,E2) b=(E1,E3)
+c=(E2,E4)` — greedy places only `a`, z3 places `b,c`, and **`moved` came back 3 on a
+two-row board.** The justification the code carried was false too: `isStrictlyBetter`
+requires only `placed >=`, so the solver may drop a greedy card while adding two, and
+the SET can change even when the count rises. Both false docstrings corrected.
+
+**R21, two parts.** `lost` is scoped to `currentBoard` — 0 without one, by definition,
+because the seed is this run's own first guess and not a board anybody was shown. And
+`lost` is now **its own `BuildResult` field**, with `moved` counting relocations only:
+`relocated + lost` conflated two different events, so a single substitution read as 2
+and the number could outgrow the board it described. `moved` is "rows that changed slot
+relative to the baseline"; `lost` is "baseline rows this run could not place".
+
+`BuildResult.lost` is REQUIRED, not optional — it is `moved`'s sibling, and an optional
+one invites "undefined means 0". Checked against `wt-z3-web`: nothing there constructs a
+`BuildResult` (only `BuildResult["engine"]` as a parameter type at `schedule.ts:1157`,
+and a read of `.moved` at `:910`), so this should not break the web typecheck — **T12 to
+confirm at merge.** The strip may want to render `lost` separately: it is the alarming
+half, and `moved` no longer carries it.
+
+**The repeated defect in this task, recorded: CHOOSING THE FIXTURE IS THE TEST.** Three
+instances now — the round-1 lock-ordering case, the 60_000-budget case, and mutant K —
+plus this one, which is the same shape at one remove: I inferred "unchanged" from a green
+suite instead of constructing the board where the two rules disagree. Before writing the
+assertion, verify the two behaviours produce DIFFERENT numbers on the board picked, and
+state both numbers.

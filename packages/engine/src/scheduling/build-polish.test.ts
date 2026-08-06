@@ -217,16 +217,16 @@ describe("buildSchedule — polish", () => {
     await resetZ3();
   }, 120_000);
 
-  it("counts a card the run could not place as moved, not as nothing", async () => {
+  it("reports a card the run could not place as LOST, not as nothing", async () => {
     // ONE slot, two fixtures: whatever happens, one card comes off the board.
     // Greedy takes 09:00 for `a` and the solver can do no better, so the
-    // SURVIVOR keeps its slot — and counting only the board's own rows then
-    // reports `moved: 0` for a run that lost a match. The most alarming outcome
-    // there is, described as the most reassuring one.
+    // SURVIVOR keeps its slot — and looking only at the board's own rows then
+    // reports "nothing moved" for a run that lost a match. The most alarming
+    // outcome there is, described as the most reassuring one.
     //
-    // Unreachable while the baseline was the seed (T0 maximises `placed`, so the
-    // answer never drops below it) and reachable the moment it can be the
-    // caller's board instead.
+    // Reachable only against the CALLER's board: against the greedy seed a
+    // dropped row is this run's own first guess being improved on, not a loss
+    // (R21, and see the seed-baseline case below).
     const oneSlot: SlotConfig & { courts: string[] } = {
       ...config,
       courts: ["C1"],
@@ -247,10 +247,56 @@ describe("buildSchedule — polish", () => {
       ],
     });
     expect(out.metrics.placed).toBe(1);
-    // The survivor really did keep its slot, so the only thing left to count is
-    // the card that vanished.
+    // The survivor really did keep its slot, so `moved` has nothing to count...
     expect(out.assignments.find((x) => x.fixtureId === "a")?.startAt).toBe(T0);
-    expect(out.moved).toBe(1);
+    expect(out.moved).toBe(0);
+    // ...and the card that vanished is reported on its own channel (R21).
+    // Asserted as a PAIR: the old conflated number could not tell this board
+    // apart from one where a card had merely shifted slot.
+    expect(out.lost).toBe(1);
+    await resetZ3();
+  }, 120_000);
+
+  it("does not count a seed row the solver dropped as lost", async () => {
+    // R21, and the case that was missing when the `lost` term first landed —
+    // which is how it reached review reporting `moved: 3` on a two-row board.
+    //
+    // CHOOSING THE FIXTURE IS THE TEST. This shape is picked because the scoped
+    // and unscoped rules genuinely DISAGREE on it: one slot per court,
+    // `a=(E1,E2) b=(E1,E3) c=(E2,E4)`. Greedy walks in id order, takes `a`, and
+    // is then blocked on both — `b` shares E1, `c` shares E2. `b` and `c` share
+    // nobody, so the solver drops `a` and places both. Measured: greedy `[a]`,
+    // z3 `[b, c]`.
+    //
+    //   scoped (correct): moved 2, lost 0
+    //   unscoped:         moved 3, on a 2-row board
+    //
+    // It also refutes the reasoning the old code carried. "A seed baseline can
+    // never lose a row because T0 maximises `placed`" is false:
+    // `isStrictlyBetter` requires only `placed >=`, so the SET can change while
+    // the count rises — and here it changes completely.
+    const oneEach: SlotConfig & { courts: string[] } = {
+      ...config,
+      sessionWindows: [{ from: T0, to: T0 + 30 * MIN }],
+    };
+    const fixtures: SchedulableFixture[] = [
+      { id: "a", roundNo: 1, home: "E1", away: "E2" },
+      { id: "b", roundNo: 1, home: "E1", away: "E3" },
+      { id: "c", roundNo: 1, home: "E2", away: "E4" },
+    ];
+    // No `current`: the seed is the baseline, which is what every caller gets
+    // today and what this case exists to protect.
+    const out = await buildSchedule({ fixtures, config: oneEach });
+    expect(out.assignments.map((a) => a.fixtureId).sort()).toEqual(["b", "c"]);
+
+    // `a` fell out of the answer, and against the seed that is ordinary progress
+    // rather than a loss.
+    expect(out.lost).toBe(0);
+    // Both rows are new to the baseline, so both count as moved — and no more.
+    expect(out.moved).toBe(2);
+    // The invariant the conflated number broke, stated in its own right: a strip
+    // rendering "moved N" beside this board cannot print an N larger than it.
+    expect(out.moved).toBeLessThanOrEqual(out.assignments.length);
     await resetZ3();
   }, 120_000);
 
