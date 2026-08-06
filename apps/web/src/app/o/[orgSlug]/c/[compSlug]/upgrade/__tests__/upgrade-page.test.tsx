@@ -756,8 +756,8 @@ describe("ended — the pass is on the record but has stopped applying", () => {
     expect(await render()).toContain(t(uiEn, "upgrade.owned.nextBody", { org: "Riverside CC" }));
   });
 
-  it("offers Create next year's edition alongside Go Pro", async () => {
-    // The pass cannot be bought again for THIS competition, but next season's
+  it("offers Create the next edition alongside Go Pro", async () => {
+    // The pass cannot be bought again for THIS competition, but the next
     // edition is a different competition and can have its own. It is the only
     // honest yes left on the page.
     endedPass({ reason: "terminal" });

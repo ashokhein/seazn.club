@@ -944,7 +944,7 @@
   "pass.entry.ended": "Event Pass ended",
   "pass.entry.ended.reasonTerminal": "Nothing is deleted — this competition is finished or archived, so its Event Pass has stopped lifting its limits.",
   "pass.entry.ended.reasonPastEnds": "Nothing is deleted — this competition is past its end date, so its Event Pass has stopped lifting its limits. Update the end date if it is still running.",
-  "pass.entry.ended.nextEdition": "Create next year's edition",
+  "pass.entry.ended.nextEdition": "Create the next edition",
   "pass.entry.closed.updateEndDate": "Update the end date",
   "upgrade.closed.title": "This competition is closed to Event Passes",
   "upgrade.closed.reasonTerminal": "This competition is finished or archived, so an Event Pass can no longer be bought for it.",

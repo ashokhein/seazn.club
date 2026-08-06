@@ -944,7 +944,7 @@
   "pass.entry.ended": "Event Pass terminé",
   "pass.entry.ended.reasonTerminal": "Rien n'est supprimé — cette compétition est terminée ou archivée, donc son Event Pass a cessé de relever ses limites.",
   "pass.entry.ended.reasonPastEnds": "Rien n'est supprimé — cette compétition a dépassé sa date de fin, donc son Event Pass a cessé de relever ses limites. Modifiez la date de fin si elle est toujours en cours.",
-  "pass.entry.ended.nextEdition": "Créer l'édition de l'année prochaine",
+  "pass.entry.ended.nextEdition": "Créer la prochaine édition",
   "pass.entry.closed.updateEndDate": "Mettre à jour la date de fin",
   "upgrade.closed.title": "Cette compétition est fermée aux Event Pass",
   "upgrade.closed.reasonTerminal": "Cette compétition est terminée ou archivée : un Event Pass ne peut plus être acheté pour elle.",

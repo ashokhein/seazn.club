@@ -70,10 +70,11 @@ const CLOSED_LINKS: Record<PassLockReason, { href: string; label: string }> = {
  *
  * Every assertion in this file is about COPY or about markup STRUCTURE, never
  * about encoding — and an apostrophe is enough to break both directions of
- * that. "Create next year's edition" arrives as `year&#x27;s`, which fails a
- * positive `toContain` loudly and, far worse, makes a NEGATIVE one pass
- * vacuously. Two of the four locales' new strings carry apostrophes
- * (fr "l'année", "n'est"), so this is not a one-string workaround.
+ * that. An apostrophe arrives as `&#x27;`, which fails a positive `toContain`
+ * loudly and, far worse, makes a NEGATIVE one pass vacuously. Keep the decode
+ * even when the strings under test happen not to carry one today: the French
+ * reasons still do ("Rien n'est supprimé"), and a copy edit that reintroduces
+ * an apostrophe must not silently turn an assertion here into a no-op.
  */
 const decode = (html: string) =>
   html
