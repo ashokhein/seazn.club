@@ -8,7 +8,7 @@ WORKDIR /app
 # serverExternalPackages (pdfkit, exceljs, z3-solver). Leave it out and the
 # install succeeds, `next build` succeeds, and the standalone server cannot
 # resolve any of them at runtime — z3 then falls back to LLM repair, which is a
-# designed path, so nothing surfaces an error.
+# designed path, so nothing surfaces an error..
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/
 COPY packages/engine/package.json packages/engine/
