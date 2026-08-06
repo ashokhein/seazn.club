@@ -1,0 +1,801 @@
+{
+  "configSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "abandonPolicy": {
+        "default": "replay",
+        "enum": [
+          "award",
+          "replay"
+        ],
+        "type": "string"
+      },
+      "awardScore": {
+        "default": {
+          "goals": 3
+        },
+        "properties": {
+          "goals": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "goals"
+        ],
+        "type": "object"
+      },
+      "extraTime": {
+        "default": {
+          "enabled": false,
+          "halfMinutes": 15
+        },
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "halfMinutes": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled",
+          "halfMinutes"
+        ],
+        "type": "object"
+      },
+      "fairPlay": {
+        "default": true,
+        "type": "boolean"
+      },
+      "halfMinutes": {
+        "default": 45,
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "halves": {
+        "const": 2,
+        "default": 2,
+        "type": "number"
+      },
+      "maxSubs": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "periodSeconds": {
+        "additionalProperties": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "propertyNames": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "points": {
+        "default": {
+          "draw": 1,
+          "loss": 0,
+          "win": 3
+        },
+        "properties": {
+          "draw": {
+            "default": 1,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "loss": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "shootoutLoss": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "shootoutWin": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "win": {
+            "default": 3,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "rollingSubs": {
+        "type": "boolean"
+      },
+      "shootout": {
+        "default": false,
+        "type": "boolean"
+      },
+      "sinBinMinutes": {
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "subWindows": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "teamSize": {
+        "maximum": 11,
+        "minimum": 2,
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "eventSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "anyOf": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "assist": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minute": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ownGoal": {
+            "type": "boolean"
+          },
+          "penalty": {
+            "type": "boolean"
+          },
+          "scorer": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "by"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "color": {
+            "enum": [
+              "red",
+              "second_yellow",
+              "yellow"
+            ],
+            "type": "string"
+          },
+          "minute": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "delaying_restart",
+              "denying_goal_by_handball",
+              "denying_obvious_goalscoring_opportunity",
+              "dissent",
+              "entering_or_leaving_without_permission",
+              "failure_to_respect_distance",
+              "offensive_language",
+              "persistent_offences",
+              "second_caution",
+              "serious_foul_play",
+              "spitting",
+              "unsporting_behaviour",
+              "violent_conduct"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "by",
+          "color"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minute": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "off": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "on": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "by",
+          "off",
+          "on"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "addedMinutes": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "phase": {
+            "enum": [
+              "ET_FT",
+              "ET_HT",
+              "FT",
+              "HT"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "scored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "by",
+          "scored"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "goalkeeper": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minute": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "outcome": {
+            "enum": [
+              "missed",
+              "post",
+              "saved"
+            ],
+            "type": "string"
+          },
+          "taker": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "by",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minute": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "minutes": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "delaying_restart",
+              "denying_goal_by_handball",
+              "denying_obvious_goalscoring_opportunity",
+              "dissent",
+              "entering_or_leaving_without_permission",
+              "failure_to_respect_distance",
+              "offensive_language",
+              "persistent_offences",
+              "second_caution",
+              "serious_foul_play",
+              "spitting",
+              "unsporting_behaviour",
+              "violent_conduct"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "by"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "additionalProperties": false,
+            "properties": {
+              "elapsed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "period": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "elapsed",
+              "period"
+            ],
+            "type": "object"
+          },
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minute": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "person": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "by"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "generatedBy": "testkit/schema-snapshot.ts",
+  "key": "football",
+  "snapshotVersion": 1,
+  "state": {
+    "paths": {
+      "asOf": [
+        "object"
+      ],
+      "asOf.elapsed": [
+        "number"
+      ],
+      "asOf.period": [
+        "string"
+      ],
+      "cards": [
+        "array"
+      ],
+      "cards[]": [
+        "object"
+      ],
+      "cards[].at": [
+        "object"
+      ],
+      "cards[].at.elapsed": [
+        "number"
+      ],
+      "cards[].at.period": [
+        "string"
+      ],
+      "cards[].color": [
+        "string"
+      ],
+      "cards[].person": [
+        "string"
+      ],
+      "cards[].side": [
+        "string"
+      ],
+      "entrants": [
+        "object"
+      ],
+      "entrants[]": [
+        "string"
+      ],
+      "goals": [
+        "object"
+      ],
+      "goals[]": [
+        "number"
+      ],
+      "outcome": [
+        "null",
+        "object"
+      ],
+      "outcome.kind": [
+        "string"
+      ],
+      "outcome.loser": [
+        "string"
+      ],
+      "outcome.method": [
+        "string"
+      ],
+      "outcome.score": [
+        "object"
+      ],
+      "outcome.score[]": [
+        "number"
+      ],
+      "outcome.winner": [
+        "string"
+      ],
+      "penalties": [
+        "array"
+      ],
+      "penalties[]": [
+        "object"
+      ],
+      "penalties[].at": [
+        "object"
+      ],
+      "penalties[].at.elapsed": [
+        "number"
+      ],
+      "penalties[].at.period": [
+        "string"
+      ],
+      "penalties[].goalkeeper": [
+        "string"
+      ],
+      "penalties[].outcome": [
+        "string"
+      ],
+      "penalties[].side": [
+        "string"
+      ],
+      "penalties[].taker": [
+        "string"
+      ],
+      "periods": [
+        "array"
+      ],
+      "periods[]": [
+        "object"
+      ],
+      "periods[].addedMinutes": [
+        "number"
+      ],
+      "periods[].phase": [
+        "string"
+      ],
+      "periods[][]": [
+        "number"
+      ],
+      "phase": [
+        "string"
+      ],
+      "replayFlagged": [
+        "boolean"
+      ],
+      "shootout": [
+        "null",
+        "object"
+      ],
+      "shootout.kicks": [
+        "array"
+      ],
+      "shootout.kicks[]": [
+        "object"
+      ],
+      "shootout.kicks[].scored": [
+        "boolean"
+      ],
+      "shootout.kicks[].side": [
+        "string"
+      ],
+      "squads": [
+        "object"
+      ],
+      "squads[]": [
+        "object"
+      ],
+      "squads[].bench": [
+        "array"
+      ],
+      "squads[].bench[]": [
+        "string"
+      ],
+      "squads[].offUsed": [
+        "array"
+      ],
+      "squads[].offUsed[]": [
+        "string"
+      ],
+      "squads[].onPitch": [
+        "array"
+      ],
+      "squads[].onPitch[]": [
+        "string"
+      ],
+      "squads[].sentOff": [
+        "array"
+      ],
+      "squads[].sinBin": [
+        "array"
+      ],
+      "squads[].sinBinLog": [
+        "array"
+      ],
+      "squads[].sinBinLog[]": [
+        "object"
+      ],
+      "squads[].sinBinLog[].expiresAt": [
+        "object"
+      ],
+      "squads[].sinBinLog[].expiresAt.elapsed": [
+        "number"
+      ],
+      "squads[].sinBinLog[].expiresAt.period": [
+        "string"
+      ],
+      "squads[].sinBinLog[].minutes": [
+        "number"
+      ],
+      "squads[].sinBinLog[].person": [
+        "string"
+      ],
+      "squads[].sinBinLog[].reason": [
+        "string"
+      ],
+      "squads[].sinBinLog[].startedAt": [
+        "object"
+      ],
+      "squads[].sinBinLog[].startedAt.elapsed": [
+        "number"
+      ],
+      "squads[].sinBinLog[].startedAt.period": [
+        "string"
+      ],
+      "squads[].sinBin[]": [
+        "object"
+      ],
+      "squads[].sinBin[].expiresAt": [
+        "object"
+      ],
+      "squads[].sinBin[].expiresAt.elapsed": [
+        "number"
+      ],
+      "squads[].sinBin[].expiresAt.period": [
+        "string"
+      ],
+      "squads[].sinBin[].minutes": [
+        "number"
+      ],
+      "squads[].sinBin[].person": [
+        "string"
+      ],
+      "squads[].sinBin[].reason": [
+        "string"
+      ],
+      "squads[].sinBin[].startedAt": [
+        "object"
+      ],
+      "squads[].sinBin[].startedAt.elapsed": [
+        "number"
+      ],
+      "squads[].sinBin[].startedAt.period": [
+        "string"
+      ],
+      "squads[].subWindows": [
+        "array"
+      ],
+      "squads[].subWindows[]": [
+        "object"
+      ],
+      "squads[].subWindows[].elapsed": [
+        "number"
+      ],
+      "squads[].subWindows[].period": [
+        "string"
+      ]
+    }
+  },
+  "version": "1.0.0"
+}

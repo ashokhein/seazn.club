@@ -104,6 +104,33 @@ jobs:
           npm run i18n:gen-keys
           git diff --exit-code apps/web/src/lib/i18n-keys.ts || {
             echo "i18n-keys.ts is stale — run 'npm run i18n:gen-keys' and commit."; exit 1; }
+      # Engine schema-snapshot drift gate (#429 scope item 2). The frozen golden
+      # corpora compare recorded bytes, so they red only on a state path some
+      # stream WRITES; a config knob no stream sets or an enum member no seed
+      # picks can be narrowed with all eleven corpora green. The committed
+      # sports/**/<key>.schema.json files are taken from the DECLARATION, so
+      # they cover the unexercised half, and this step is what makes them
+      # load-bearing rather than decorative.
+      #
+      # DELIBERATELY NOT gated on the `engine-changes` filter, unlike the
+      # coverage and sim-matrix steps below: those are expensive, this is ~1 s,
+      # and a drift gate that skips is a drift gate that reports success. It
+      # needs no DB and no build — the job-level `pnpm install` is the only
+      # prerequisite, and it touches no *.golden.json (no UPDATE_GOLDEN /
+      # REBASELINE_GOLDEN is involved; see packages/engine/src/testkit/GOLDEN-POLICY.md).
+      #
+      # `git status --porcelain`, not `git diff`: a NEW sport module's snapshot
+      # is written as an UNTRACKED file, which `git diff` does not see at all.
+      - name: Engine schema-snapshot drift gate (#429)
+        run: |
+          npm run schema:snapshot --workspace packages/engine
+          drift="$(git status --porcelain -- ':(glob)packages/engine/src/sports/**/*.schema.json')"
+          if [ -n "$drift" ]; then
+            echo "$drift"
+            echo "Engine schema snapshots are stale — run 'npm run schema:snapshot --workspace packages/engine' and commit."
+            git diff -- ':(glob)packages/engine/src/sports/**/*.schema.json'
+            exit 1
+          fi
       # eslint gate (#344). Nothing ran lint in CI before, and `main` carried 31
       # errors for long enough that none of them were recent. BLOCKING, not
       # advisory: an advisory gate on a repo that already had 31 errors just
