@@ -399,7 +399,7 @@ describe("jsonObjectMembers — the source-text split the order-stability rests 
 // ------------------------------------------------ the cfg tolerance's limit
 //
 // W4a (#425) T10. `rebaselineCorpus` swaps the RECORDED cfg back into every
-// re-folded state (`keepRecordedCfg`), wholesale, and that reads at a glance
+// re-folded state (`keepRecordedConfig`), wholesale, and that reads at a glance
 // like "a cfg change can never red a golden". It is narrower than that, and the
 // difference is what a reader must not over-trust:
 //
@@ -410,7 +410,7 @@ describe("jsonObjectMembers — the source-text split the order-stability rests 
 //     around the harness with a compile-time preset instead of a config field.
 //     The tolerance CANNOT be narrowed without re-breaking that.
 //   - A CHANGED value on a recorded cfg key still reds, and — the part worth
-//     pinning — a re-baseline does not launder it. `keepRecordedCfg` writes the
+//     pinning — a re-baseline does not launder it. `keepRecordedConfig` writes the
 //     old value back, so the very next replay reds on the same key again. It can
 //     leave a red red; it cannot turn a red green.
 //
@@ -486,7 +486,7 @@ describe("rebaselineCorpus — what the cfg tolerance does and does not hide", (
     const state = rebaselinedState(corpus);
     expect((state.cfg as Record<string, unknown>).halfMinutes).toBe(40);
     // The whole point: re-baselining a corpus reddened by a cfg change leaves it
-    // reddened. `keepRecordedCfg` can hold a red open; it cannot close one.
+    // reddened. `keepRecordedConfig` can hold a red open; it cannot close one.
     expect(stateMismatch(fresh, JSON.stringify(state), "cfg")).toContain("cfg.halfMinutes");
   });
 
