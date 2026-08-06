@@ -3203,7 +3203,7 @@
   "board.result.alreadyOptimal": "Ya era la mejor disposición: no quedaba nada por mejorar.",
   "board.result.busy": "Programado rápidamente: el optimizador estaba ocupado. Vuelve a intentarlo para obtener un cuadro mejor.",
   "board.result.unavailable": "Programado rápidamente: el optimizador no estaba disponible. El cuadro es válido, solo que sin optimizar.",
-  "board.result.notSearched": "Programado rápidamente: el optimizador no pudo analizar este cuadro. Los tiempos de partido, intervalo y descanso que has configurado no coinciden en un paso común, así que no se puede afirmar si existe un cuadro mejor. Ajústalos para que compartan un paso y vuelve a ejecutarlo.",
+  "board.result.notSearched": "Programado rápidamente: el optimizador no pudo analizar este cuadro, así que nada de lo que aparece aquí afirma que exista uno mejor. Los tiempos de partido, intervalo y descanso que has configurado no coinciden en un paso común; ajústalos y vuelve a ejecutarlo.",
   "board.result.verifierRejected": "Programado con el planificador estándar. El cuadro es válido.",
   "board.result.infeasibleAllPlaced": "No se pudieron respetar todos los partidos fijados, pero todo encontró hueco.",
   "board.result.partial.one": "{placed} de {total} programados: un partido no se pudo colocar.",
