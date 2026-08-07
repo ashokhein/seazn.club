@@ -2,7 +2,7 @@
 //
 // WHAT IT PROTECTS. `autoSchedule` had no rate limit at all, and its per-call
 // cost went from a sub-millisecond greedy pass to up to `AUTO_SOLVER_WALL_MS`
-// (8s) of z3 that is SERIALISED across the whole process — `withZ3Lock` is a
+// (20s) of z3 that is SERIALISED across the whole process — `withZ3Lock` is a
 // correctness device (`resetZ3` kills pthreads process-wide), not a throughput
 // knob. So one authenticated organiser clicking repeatedly stalls every other
 // org's solver on that instance. The key is the ORG, not the instance: the

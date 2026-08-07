@@ -18,6 +18,35 @@ function fmtDuration(minutes: number): string {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
+interface HardRule {
+  type: string;
+  count?: number;
+  scope?: { kind: string; divisionId?: string };
+  [key: string]: unknown;
+}
+
+/** The one `max_fixtures_per_day` rule scoped to this whole division, if any —
+ *  other hard rules (from the AI parser, per-entrant scopes, etc) are left
+ *  alone by both this and {@link withMaxFixturesPerDay}. */
+export function readMaxFixturesPerDay(hard: HardRule[] | undefined, divisionId: string): number | undefined {
+  return hard?.find(
+    (r) => r.type === "max_fixtures_per_day" && r.scope?.kind === "division" && r.scope.divisionId === divisionId,
+  )?.count;
+}
+
+/** Replaces (or removes, when `count` is undefined) this division's whole-scope
+ *  `max_fixtures_per_day` rule, preserving every other hard rule untouched. */
+export function withMaxFixturesPerDay(
+  hard: HardRule[] | undefined,
+  divisionId: string,
+  count: number | undefined,
+): HardRule[] {
+  const rest = (hard ?? []).filter(
+    (r) => !(r.type === "max_fixtures_per_day" && r.scope?.kind === "division" && r.scope.divisionId === divisionId),
+  );
+  if (count === undefined) return rest;
+  return [...rest, { type: "max_fixtures_per_day", count, scope: { kind: "division", divisionId } }];
+}
 interface Constraints {
   restMin?: number;
   noBackToBack?: boolean;
@@ -25,6 +54,7 @@ interface Constraints {
   parallelism?: "block" | "mixed";
   crossPersonClash?: "warn" | "hard";
   startWindows?: { target: { kind: string; id: string }; notBefore?: string; notAfter?: string }[];
+  hard?: HardRule[];
 }
 interface Settings {
   division_id: string;
@@ -76,6 +106,8 @@ export function ConstraintsPanel({
       setBusy(false);
     }
   }
+
+  const maxPerDay = readMaxFixturesPerDay(constraints.hard, divisionId);
 
   const save = (next: Constraints) =>
     run(async () => {
@@ -168,6 +200,32 @@ export function ConstraintsPanel({
               }
             />
             min
+          </span>
+        </label>
+
+        <label className="flex flex-col items-start gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-5">
+          <span className="min-w-0">
+            <span className="block text-sm text-slate-800">{msg("constraints.maxPerDay.label")}</span>
+            <span className="mt-0.5 block text-xs text-slate-400">
+              {msg("constraints.maxPerDay.hint")}
+            </span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2 text-sm text-slate-500">
+            <input
+              type="number"
+              min={1}
+              inputMode="numeric"
+              placeholder={msg("constraints.maxPerDay.placeholder")}
+              className="input w-20 text-right"
+              value={maxPerDay ?? ""}
+              disabled={!canEdit || busy}
+              onChange={(e) => {
+                const raw = e.target.value;
+                const count = raw === "" ? undefined : Math.max(1, Math.trunc(Number(raw)));
+                void save({ ...constraints, hard: withMaxFixturesPerDay(constraints.hard, divisionId, count) });
+              }}
+            />
+            {msg("constraints.maxPerDay.unit")}
           </span>
         </label>
 

@@ -80,6 +80,57 @@ function board(opts: { n: number; days: number; slotsPerCourtDay: number }): {
   return { fixtures, config };
 }
 
+// `isolate: false` on a thread pool means this file shares one z3 instance
+// with its neighbours, and the WASM heap only ever grows. Reset both ends of
+// the whole file, not just the block that first needed it — the R22 wiring
+// test below also drives `buildSchedule` through the encode spy.
+beforeAll(async () => {
+  await resetZ3();
+});
+afterEach(() => {
+  vi.doUnmock("./build-encode.ts");
+  vi.resetModules();
+});
+afterAll(async () => {
+  await resetZ3();
+});
+
+/** Loads `build.ts` with `encodeBuild` counted. The real implementation still
+ *  runs — this records that the step happened, it does not replace it. */
+async function withEncodeSpy(): Promise<{
+  calls: { n: number };
+  mod: typeof import("./build.ts");
+}> {
+  const calls = { n: 0 };
+  // BEFORE the mock, and this line is load-bearing. This file imports
+  // `./build.ts` STATICALLY at the top for `MAX_SOLVE_ENCODING`, so by the
+  // time any test runs, `build.ts` is already in the module cache holding a
+  // direct reference to the REAL `encodeBuild`. Without this reset the
+  // `await import("./build.ts")` below hands back that cached copy, the spy
+  // is wired to nothing, and `calls.n` is 0 whatever the solver does —
+  // which is precisely the assertion the first test makes. MEASURED: with
+  // the R23 guard deleted from `build.ts`, the file still passed 5/5.
+  //
+  // The second test escaped it only by accident, because `afterEach` had
+  // already reset the modules by the time it ran — which is why it read as
+  // a working spy and hid the fact that the first one was inert.
+  vi.resetModules();
+  vi.doMock("./build-encode.ts", async () => {
+    const actual =
+      await vi.importActual<typeof import("./build-encode.ts")>(
+        "./build-encode.ts",
+      );
+    return {
+      ...actual,
+      encodeBuild: (input: Parameters<typeof actual.encodeBuild>[0]) => {
+        calls.n += 1;
+        return actual.encodeBuild(input);
+      },
+    };
+  });
+  return { calls, mod: await import("./build.ts") };
+}
+
 describe("R23 — the wall bounds the encode path, not just the search loops", () => {
   // A SMALL board, and the size is the point.
   //
@@ -110,55 +161,6 @@ describe("R23 — the wall bounds the encode path, not just the search loops", (
   // file stops being the heaviest z3 test in the suite.
   const small = board({ n: 20, days: 1, slotsPerCourtDay: 12 });
 
-  beforeAll(async () => {
-    // `isolate: false` on a thread pool means this file shares one z3 instance
-    // with its neighbours, and the WASM heap only ever grows. Reset both ends.
-    await resetZ3();
-  });
-  afterEach(() => {
-    vi.doUnmock("./build-encode.ts");
-    vi.resetModules();
-  });
-  afterAll(async () => {
-    await resetZ3();
-  });
-
-  /** Loads `build.ts` with `encodeBuild` counted. The real implementation still
-   *  runs — this records that the step happened, it does not replace it. */
-  const withEncodeSpy = async (): Promise<{
-    calls: { n: number };
-    mod: typeof import("./build.ts");
-  }> => {
-    const calls = { n: 0 };
-    // BEFORE the mock, and this line is load-bearing. This file imports
-    // `./build.ts` STATICALLY at the top for `MAX_SOLVE_ENCODING`, so by the
-    // time any test runs, `build.ts` is already in the module cache holding a
-    // direct reference to the REAL `encodeBuild`. Without this reset the
-    // `await import("./build.ts")` below hands back that cached copy, the spy
-    // is wired to nothing, and `calls.n` is 0 whatever the solver does —
-    // which is precisely the assertion the first test makes. MEASURED: with
-    // the R23 guard deleted from `build.ts`, the file still passed 5/5.
-    //
-    // The second test escaped it only by accident, because `afterEach` had
-    // already reset the modules by the time it ran — which is why it read as
-    // a working spy and hid the fact that the first one was inert.
-    vi.resetModules();
-    vi.doMock("./build-encode.ts", async () => {
-      const actual =
-        await vi.importActual<typeof import("./build-encode.ts")>(
-          "./build-encode.ts",
-        );
-      return {
-        ...actual,
-        encodeBuild: (input: Parameters<typeof actual.encodeBuild>[0]) => {
-          calls.n += 1;
-          return actual.encodeBuild(input);
-        },
-      };
-    });
-    return { calls, mod: await import("./build.ts") };
-  };
-
   it("returns the greedy seed without encoding when the wall is already gone", async () => {
     const grid = buildGrid({ config: small.config });
     // 20 x 48 = 960 fixture-slots. Pinned so a lattice change cannot quietly
@@ -175,11 +177,13 @@ describe("R23 — the wall bounds the encode path, not just the search loops", (
       wallMs: 1,
     });
 
-    // THE ASSERTION. The guard at `build.ts:1043` sits between the WASM boot
-    // and `encodeBuild`; if it is removed, the run still returns a greedy board
-    // from the guard at `:1059` — same `engine`, same `placed`, same
-    // `budgetExpired` — just slower. The call count is the ONLY observable that
-    // separates the two.
+    // THE ASSERTION. Two guards can produce this same shape now — the R22 size
+    // gate (`canSolveWithin`, scaled by this same `wallMs: 1` down to a budget
+    // of ~0, refused ahead of the queue and the lock) and, for a board that
+    // clears it, the wall check at `build.ts:1043` between the WASM boot and
+    // `encodeBuild`. Both report the run as budget-insufficient the same way
+    // (see `greedyOnly`'s doc comment), so which one fires is not observable
+    // from the result shape — only `encodeBuild` never running is.
     expect(calls.n).toBe(0);
 
     // It bails rather than throwing, and it bails to the SEED — D6 ("never
@@ -290,4 +294,35 @@ describe("R22 — canSolveWithin is the one place the size gate lives", () => {
     expect(grid.slots.length).toBe(0);
     expect(canSolveWithin(inside.fixtures, wide, 8_000)).toBe(false);
   });
+
+  // THE GATE WAS UNWIRED. `canSolveWithin` answered `false` for exactly this
+  // board (asserted above), but nothing on the `buildSchedule` path ever asked
+  // it — every caller, including the production web layer, ran `outside`
+  // straight into `encodeBuild` and the first `push()` and paid the full R23
+  // overrun before the wall guard downstream finally caught it. This is the
+  // gate actually stopping the call, not just answering the question.
+  it("buildSchedule itself refuses a board outside the gate, without encoding it", async () => {
+    const { calls, mod } = await withEncodeSpy();
+    const out = await mod.buildSchedule({
+      fixtures: outside.fixtures,
+      config: outside.config,
+      wallMs: 8_000,
+    });
+
+    expect(calls.n).toBe(0);
+    expect({
+      engine: out.engine,
+      status: out.status,
+      budgetExpired: out.budgetExpired,
+      rlimitSpent: out.rlimitSpent,
+    }).toEqual({
+      engine: "greedy",
+      status: "not_searched",
+      // `true`, not the queue-cap refusal's `false` — this board will refuse
+      // again on retry at this same `wallMs`, which is what `budgetExpired`
+      // means here. See `greedyOnly`'s doc comment for the distinction.
+      budgetExpired: true,
+      rlimitSpent: 0,
+    });
+  }, 120_000);
 });
