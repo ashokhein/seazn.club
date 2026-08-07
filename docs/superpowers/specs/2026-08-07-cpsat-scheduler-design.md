@@ -257,10 +257,17 @@ hand-synced JSON shape:
   WASM), not edge, so `grpc-js`'s raw TCP/HTTP2 needs are fine.
 - **Python side** (`services/cp-sat`): `grpcio-tools` generates server
   stubs from the same `.proto`.
-- **Transport**: Fly's private network (6PN/WireGuard, already
-  encrypted) — plain insecure gRPC channel over `<app>.internal:<port>`,
-  matching the existing Fly/Supabase/Upstash infra pattern, no extra
-  TLS layer needed.
+- **Transport**: Fly's private network — apps in the same org are
+  connected by a mesh of WireGuard tunnels (6PN), reachable over
+  `<app>.internal:<port>` DNS with no extra config needed between apps
+  in one org (confirmed against Fly's own docs,
+  fly.io/docs/networking/private-networking). WireGuard itself
+  encrypts the link. Whether to layer gRPC's own TLS on top anyway is
+  a separate call Fly's docs don't take a position on either way —
+  common practice runs plaintext gRPC over 6PN, but that's convention,
+  not a documented Fly guarantee; worth an explicit decision (not an
+  assumption) before this ships, weighing effort against the org's own
+  risk tolerance for defense-in-depth.
 - **Versioning**: proto field numbers are backward-compatible by
   construction — fields can be added without breaking the other side
   mid-rollout, which a hand-maintained JSON contract doesn't give for
@@ -270,16 +277,54 @@ Not yet drafted — the message shape should be finalized once the
 constraint-family port is fully validated (rather than locking a
 contract to the bench's exploratory shape).
 
+## Target wall budget for the service: ~8-10s
+
+**This is a target for the CP-SAT service once built — NOT a change to
+`apps/web`'s live `AUTO_SOLVER_WALL_MS` (currently 20s, z3).** z3 is a
+different solver with different convergence behavior; the CP-SAT bench
+findings below don't transfer to it, and `AUTO_SOLVER_WALL_MS` was
+deliberately raised from 8s to 20s earlier this session (commit
+`47208f3d`, already merged) specifically to give z3 more room — nothing
+here reopens that.
+
+`max_time_in_seconds` is a ceiling, not a fixed duration: CP-SAT returns
+the instant it proves optimal, so a fast-converging board costs nothing
+extra from a bigger wall. Measured directly (`scratchpad/cpsat-bench/
+walltime_check.py`):
+
+| Board | Wall | Result |
+|---|---|---|
+| prod-37×77k | 5s | converges in 2.4s — same at 8s/20s/30s tested elsewhere |
+| knee-140×144 | 15s | 1/4 tiers, T0 itself never finishes |
+| knee-140×144 | 30s | **identical** — still 1/4 tiers |
+| knee-160×216 | 15s | 2/4 tiers |
+| knee-160×216 | 30s | **identical** — still 2/4 tiers |
+
+Doubling the wall (15s→30s) bought the two unconverged boards zero
+extra progress — not "a bit more, diminishing returns," literally
+identical tier counts both times. So the production board (the shape
+that matters) is fully solved well under 8s regardless of ceiling, and
+the boards that DON'T converge don't benefit from a bigger ceiling
+either, at least not up to 30s — extending further is not evidenced to
+help without separate solver-craft work on the search itself (see item
+2 below). Net: an 8-10s ceiling captures 100% of the observed benefit;
+nothing measured justifies going higher.
+
 ## Open items before real service scaffolding
 
 1. No z3 bench exists at `gapMinutes>0` for a true apples-to-apples
    baseline — unclear whether an equivalent interval-based
    reformulation would help z3 too (never attempted against it).
 2. The 140-300-fixture, 4-court boards still don't finish the full
-   T0-T3 objective chain within an 8s wall (bottlenecked on
-   `NoOverlap` search width now, not encoding size).
-3. The T3-only, zero-constraint symmetry finding (see above) — not
-   chased, flagged for a future solver-tuning pass.
+   T0-T3 objective chain even at a 30s wall (confirmed no improvement
+   15s→30s) — bottlenecked on the search itself (T0's own placement
+   search on a tight lattice), not encoding size and not wall size.
+   Needs solver-craft (decomposition, better search hints, a smarter
+   T0 strategy), not more patience.
+3. The T3-only, zero-constraint symmetry finding — downgraded to
+   low-priority: it's a bare-scaffolding probe artifact, the real
+   constrained model never exhibits it (production board proves
+   `imbalance=0` optimal in ~2.5s regardless).
 4. `proto/scheduler.proto` message shapes not yet drafted.
 5. Worker-pool sizing and per-org concurrency/rate cap not yet decided
    — needed regardless of the encoding fix, since removing z3's
