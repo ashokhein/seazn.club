@@ -55,6 +55,17 @@ existing test's premise became stale)
 | 09 | E2E + smoke coverage | not started |
 | 10 | Regression audit (`disruption-signals.test.ts`) | not started |
 
+## Parallel execution
+
+Safe to run alongside the sibling `2026-08-07-cpsat-service-prompts/`
+programme in a SEPARATE worktree/branch — file sets are disjoint except
+a soft overlap in `apps/web/src/dictionaries/*/ui.json` (this programme
+adds blackout-editor/court-removal keys via Prompts 06/08; the other
+adds one `cp-sat` engine-label key) — a merge-time conflict at worst,
+not a live-clobber risk, as long as each runs in its own worktree
+rather than the same working directory. Do not run both in the same
+checkout simultaneously.
+
 ## Owner decisions — settled, do not re-ask
 
 | Decision | Answer |

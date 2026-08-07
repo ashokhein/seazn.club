@@ -65,6 +65,17 @@ green in production for one deploy cycle, not same-day)
 | 09 | CI workflow | not started |
 | 10 | Remove BUILD/POLISH's z3 code | **blocked** — do not start until 01-09 are live in production for one full deploy cycle |
 
+## Parallel execution
+
+Safe to run alongside the sibling `2026-08-07-datetime-ux-prompts/`
+programme in a SEPARATE worktree/branch — file sets are disjoint except
+a soft overlap in `apps/web/src/dictionaries/*/ui.json` (this programme
+adds one `cp-sat` engine-label key via Prompt 06b; the other adds
+blackout/court-removal keys) — a merge-time conflict at worst, not a
+live-clobber risk, as long as each runs in its own worktree rather than
+the same working directory. Do not run both in the same checkout
+simultaneously.
+
 ## Owner decisions — settled, do not re-ask
 
 | Decision | Answer |
