@@ -958,12 +958,24 @@ function greedyResult(
 /**
  * The greedy board and nothing else — for a caller that never reaches the
  * solver at all, so nothing has been spent and the result says so honestly.
+ *
+ * `budgetExpired` defaults false for the queue-cap case (Gap 4): a
+ * `solver_busy` refusal is about CONTENTION, not this board's size — the same
+ * call could succeed a moment later against an empty queue, which is not what
+ * "expired" means. The R22 size gate is the opposite: refusing THIS wallMs
+ * against THIS board is deterministic and will refuse again on retry, which is
+ * exactly the budget-insufficiency `canSolveWithin` itself is documented to
+ * mean ("not inside this wall") — so its caller passes `true`.
  */
-function greedyOnly(input: BuildInput, status: BuildStatus): BuildResult {
+function greedyOnly(
+  input: BuildInput,
+  status: BuildStatus,
+  budgetExpired = false,
+): BuildResult {
   const t0 = performance.now();
   const seed = greedySeed(input);
   return greedyResult(seed, status, {
-    budgetExpired: false,
+    budgetExpired,
     elapsedMs: performance.now() - t0,
     rlimitSpent: 0,
     lnsWindowRlimits: [],
@@ -1008,6 +1020,17 @@ export function buildSchedule(input: BuildInput): Promise<BuildResult> {
   // whole point of it. Order therefore costs nothing either way in the answer
   // and everything in the latency.
   if (queued >= MAX_SOLVER_QUEUE) return Promise.resolve(greedyOnly(input, "solver_busy"));
+  // The R22 size gate, called from the ONE place every caller passes through.
+  // `canSolveWithin` has existed since Task 13 as a pure predicate the web
+  // layer was supposed to call before ever reaching here — it never was
+  // (`git grep canSolveWithin` outside this file and its own tests turns up
+  // only the offline bench). So a board over the gate paid the full R23
+  // uninterruptible cost (encode + first push) before the wall guard caught
+  // it downstream, instead of being refused for the price of one `buildGrid`.
+  // Wiring it in here, ahead of the queue and the lock, covers every caller at
+  // once and keeps the threshold in the one place it is meant to live.
+  if (!canSolveWithin(input.fixtures, input.config, input.wallMs ?? DEFAULT_BUILD_WALL_MS, input.existing ?? []))
+    return Promise.resolve(greedyOnly(input, "not_searched", true));
   queued++;
   // `withZ3Lock` is NOT reentrant. It is taken exactly here, and nothing below
   // may take it again — `loadZ3` deliberately does not, neither does anything

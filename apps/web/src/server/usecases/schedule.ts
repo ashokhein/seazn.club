@@ -18,6 +18,7 @@ import { EngineError } from "@seazn/engine/core";
 import {
   boardMetrics,
   buildSchedule,
+  calendarDaysCovering,
   conflictKey,
   dayKeyInTz,
   deltaConflicts,
@@ -33,6 +34,7 @@ import {
   type BuildResult,
   type BuildStatus,
   type Conflict,
+  type HardConstraint,
   type OrderDependency,
   type RuleFixture,
   type SchedulableFixture,
@@ -837,15 +839,33 @@ export async function autoSchedule(
       .filter((f) => pinnedIds.has(f.id))
       .map((f) => toAssignment(f, settings.config.matchMinutes, people));
 
-    const config = boundSolverWindow(
-      toVerifyConfig(settings, all, roundToMinute(Date.now()), siblings.ruleFixtures),
+    const declaredConfig = toVerifyConfig(settings, all, roundToMinute(Date.now()), siblings.ruleFixtures);
+    const windowedConfig = boundSolverWindow(
+      declaredConfig,
       schedulable,
       board,
       // REFLOW alone proposes cards that are already placed, so REFLOW alone
-      // needs the window widened to contain them. Passing them on a BUILD would
-      // stretch the lattice around a board that pass is about to replace.
+      // needs the window widened to contain them. Passing them on a BUILD
+      // would stretch the lattice around a board that pass is about to
+      // replace.
       body.mode === "reflow" ? [...placedNow, ...pinnedNow] : [],
     );
+    // BUILD, with an organiser-set end date, only. POLISH and REFLOW are
+    // contracts about NOT moving a card that doesn't need moving (R20/#452) —
+    // a default the organiser never asked for would fight that on any board
+    // that already exists across days one way, forcing churn to satisfy a cap
+    // nobody set. A fresh BUILD has no existing board to disturb, which is
+    // exactly the reported bug's shape — but only when `declaredConfig.window`
+    // is finite, i.e. `endAt` was actually set: `boundSolverWindow` fills in
+    // an UNFINISHED window from wherever the greedy seed's fixtures happened
+    // to land, and that derived span is not a date range the organiser
+    // configured, so a board with no end date at all must not get a cap it
+    // never asked for either.
+    const hasExplicitRange = declaredConfig.window !== undefined && Number.isFinite(declaredConfig.window.to);
+    const config =
+      body.mode === "build" && hasExplicitRange
+        ? withDefaultDaySpread(windowedConfig, stage.division_id, schedulable.length)
+        : windowedConfig;
 
     return {
       schedulable,
@@ -1048,9 +1068,16 @@ const SOLVER_SLACK_MS = 24 * 60 * MS_PER_MIN;
  * board it is spent in full, every time, and hands back a 30-second HTTP
  * response for a board that stopped improving long before.
  *
- * 8 seconds is where the measurements level off. On that same board 2s and 5s
- * differ (court imbalance 90 -> 30 minutes) and 5s and 10s do not; small boards
- * finish and prove themselves optimal in well under a second regardless.
+ * 8 seconds is where a 15-fixture, 2-court board's measurements level off —
+ * 2s and 5s differ (court imbalance 90 -> 30 minutes), 5s and 10s do not, and
+ * small boards finish and prove themselves optimal in well under a second
+ * regardless. THAT BOARD IS NOT REPRESENTATIVE. Re-measured on a 40-80 fixture,
+ * 4-5 court board (`packages/engine/scripts/bench-build.ts --sizes=40,60,80
+ * --per-entrant=2 --wall=8000` vs `--wall=20000`): 40 plateaus by 8s same as
+ * before, but 60 keeps improving (makespan 1760->1600 at 8s, ->1480 at 20s,
+ * idle only catches up at 20s) and 80 does not even reach a z3 result at 8s
+ * (falls straight to greedy) while 20s gets one improved board. 20 seconds is
+ * where THIS range levels off — re-run the sweep before moving it again.
  *
  * Expiring is ORDINARY, not a failure: `budget_expired` rides the wire and the
  * result strip says how many improvement targets the run got through. What is
@@ -1061,7 +1088,7 @@ const SOLVER_SLACK_MS = 24 * 60 * MS_PER_MIN;
  * Task 13's bench sets the DETERMINISTIC budget (`rlimit`); this is only the
  * outer safety cap, and should be revisited once that lands.
  */
-export const AUTO_SOLVER_WALL_MS = 8_000;
+export const AUTO_SOLVER_WALL_MS = 20_000;
 
 /**
  * The per-ORG cooldown on the auto pass. Ten runs per five minutes.
@@ -1073,15 +1100,20 @@ export const AUTO_SOLVER_WALL_MS = 8_000;
  * monopolising a queue everybody shares, not aggregate load — and a global
  * limiter would punish precisely the tenants being starved. The key is the org.
  *
- * WHERE THE NUMBERS COME FROM. Ten runs x 8s is 80s of solver inside a 300s
- * window, so one org can never take more than ~27% of an instance's solver
- * capacity however hard it is driven — while a human organiser iterating on a
- * board is never blocked, because ten is enough to try all three buttons
- * (Auto / Re-flow / Polish) three times over with a settings change between
- * each. Anyone clicking faster than one run per 30 seconds sustained is not
- * reading the results.
+ * WHERE THE NUMBERS COME FROM. Ten runs x `AUTO_SOLVER_WALL_MS` is bounded to
+ * ~27% of an instance's solver capacity, whatever the wall is currently set
+ * to — `max` stays 10 (the UX reason below is about button-presses, not
+ * capacity, and does not move with the wall) and `windowSeconds` is re-derived
+ * to hold the ratio: `10 * wallMs / 0.2667`. At `wallMs = 20_000` that is
+ * 10 * 20 / 0.2667 = 750s (12.5 min). One org can never take more than ~27% of
+ * an instance's solver capacity however hard it is driven — while a human
+ * organiser iterating on a board is never blocked, because ten is enough to
+ * try all three buttons (Auto / Re-flow / Polish) three times over with a
+ * settings change between each. Anyone clicking faster than one run per 75
+ * seconds sustained is not reading the results.
  *
  * BOTH NUMBERS ARE POLICY, not a derived constant — they are here to be moved.
+ * Re-derive `windowSeconds` the same way if `AUTO_SOLVER_WALL_MS` moves again.
  *
  * FAIL-OPEN, deliberately, and matching every other limiter on this surface
  * (`ai-plan` 5/hr, `ai-plan-competition` 3/hr, `ai-officials` 5/hr). A Redis
@@ -1100,7 +1132,7 @@ export const AUTO_SOLVER_WALL_MS = 8_000;
  * `schedule-auto-solver-busy-latency.test.ts`, which now runs with the limiter
  * live for exactly that reason.
  */
-export const AUTO_SCHEDULE_COOLDOWN: RateLimitConfig = { max: 10, windowSeconds: 300 };
+export const AUTO_SCHEDULE_COOLDOWN: RateLimitConfig = { max: 10, windowSeconds: 750 };
 
 /**
  * A FINITE search window, replacing an open-ended one.
@@ -1173,6 +1205,69 @@ export function boundSolverWindow<T extends SlotConfig & VerifyConfig>(
           ...mustContain.map((a) => a.endAt),
         ) + SOLVER_SLACK_MS;
   return { ...config, window: { from, to } };
+}
+
+/**
+ * The auto pass's default `max_fixtures_per_day`, applied only when the
+ * organiser set none of their own for this division — and, at its one call
+ * site, only for BUILD. POLISH and REFLOW exist specifically to NOT move a
+ * card that doesn't need moving (R20 / #452); a default the organiser never
+ * asked for would fight that on any board that already exists spread one way
+ * across days, forcing churn to satisfy a cap nobody set. BUILD has no
+ * existing board to disturb, which is exactly the reported bug's shape.
+ *
+ * The solver's own objective has nothing that spreads a board across a
+ * multi-day window — T1 (`build.ts`) MINIMIZES `makespanMinutes`, which pulls
+ * every fixture toward the earliest reachable day, and a wide window with a
+ * tight one behave identically without a day cap forcing the difference. A
+ * seven-day window and a one-day window both pile every match onto day one.
+ *
+ * `max_fixtures_per_day` is the one hard rule that already does this, fully
+ * wired end to end (`build-encode.ts` groups by `dayKeyInTz` and encodes an
+ * `AtMost` per day) — an organiser can already set it through the AI parser
+ * or the constraints panel. This only fills the gap for a run that set
+ * neither: `ceil(fixtures / availableDays)` spreads them roughly evenly
+ * across the window's own dates instead of leaving day two onward empty by
+ * default. An explicit whole-division rule from either surface always wins
+ * untouched — this never overwrites one.
+ */
+export function withDefaultDaySpread<T extends SlotConfig & VerifyConfig>(
+  config: T,
+  divisionId: string,
+  fixtureCount: number,
+): T {
+  const existingHard = config.constraints?.hard ?? [];
+  const hasExplicitCap = existingHard.some(
+    (h) => h.type === "max_fixtures_per_day" && h.scope.kind === "division" && h.scope.divisionId === divisionId,
+  );
+  if (hasExplicitCap || fixtureCount <= 0 || config.window === undefined || config.tz === undefined) return config;
+
+  // Same padded-by-one-day-at-each-end shape `build-grid.ts` and `repair.ts`
+  // already rely on (`calendarDaysCovering`'s own doc comment) — undo the pad
+  // rather than reimplement day counting a third way.
+  const days = calendarDaysCovering(config.window, config.tz).length - 2;
+  if (days <= 1) return config;
+
+  const hard: HardConstraint[] = [
+    ...existingHard,
+    {
+      type: "max_fixtures_per_day",
+      count: Math.max(1, Math.ceil(fixtureCount / days)),
+      scope: { kind: "division", divisionId },
+    },
+  ];
+  return {
+    ...config,
+    constraints: {
+      noBackToBack: false,
+      startWindows: [],
+      fieldFairness: "off",
+      parallelism: "mixed",
+      crossPersonClash: "warn",
+      ...config.constraints,
+      hard,
+    },
+  };
 }
 
 /**
