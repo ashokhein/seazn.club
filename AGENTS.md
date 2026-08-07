@@ -88,6 +88,14 @@ before diagnosing a real bug:
 
 ## Standing project rules
 
+- **Read `docs/superpowers/RULES.md` first.** Owner's full standing
+  policy — skills to actually use (not just cite), TS7/Node26, agent
+  topology (Scout/Implementer/Reviewer, all Sonnet, xHigh for
+  Implementer/Reviewer), all 4 required test types per task
+  (unit/E2E/smoke/regression), greenfield schema stance, mobile+desktop
+  UI bar, pre-commit OpenAPI drift check, and the no-new-issues /
+  fix-inline-unless-blast-radius rule. Every dispatch brief should
+  restate the relevant parts inline or point here explicitly.
 - **Never enable `.github/workflows/e2e.yml`.** Disabled deliberately;
   verify e2e locally (prod build + `E2E_PROD_TARGET`).
 - Smoke CI runs on **PRs only** — merging locally and pushing to `main`
